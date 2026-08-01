@@ -111,7 +111,8 @@ class ErrorBoundary extends React.Component {
 function useDb() {
   const [db, setDb] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [connectionError, setConnectionError] = useState(null);
+  const [saveError, setSaveError] = useState(null);
   const lastAttempt = useRef(null);
 
   useEffect(() => {
@@ -120,10 +121,10 @@ function useDb() {
         const data = snap.exists ? snap.data() : null;
         setDb({ ...emptyDb(), ...(data && typeof data === "object" ? data : {}) });
         setLoading(false);
-        setError(null);
+        setConnectionError(null);
       },
       (err) => {
-        setError(`Couldn't connect to the shared database${err?.message ? `: ${err.message}` : ""}.`);
+        setConnectionError(`Couldn't connect to the shared database${err?.message ? `: ${err.message}` : ""}.`);
         setDb((cur) => cur || emptyDb());
         setLoading(false);
       }
@@ -136,11 +137,13 @@ function useDb() {
     lastAttempt.current = next;
     try {
       await DOC_REF.set(next);
-      setError(null);
+      setSaveError(null);
     } catch (e) {
-      setError(`Couldn't save that change${e?.message ? `: ${e.message}` : ""}. Try again.`);
+      setSaveError(`Couldn't save that change${e?.message ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
+
+  const error = saveError || connectionError;
 
   const retry = useCallback(() => {
     if (lastAttempt.current) persist(lastAttempt.current);
