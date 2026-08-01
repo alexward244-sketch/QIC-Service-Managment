@@ -445,6 +445,14 @@ function CottagesView({ db, persist }) {
                 </div>
                 <div className="mt-3 text-xs text-[#75716A] space-y-1">
                   <div>Site: <span className="text-[#1E1A13] font-medium">{site ? site.number : "Unassigned"}</span></div>
+                  {(c.year || c.modelNumber) && (
+                    <div>
+                      {c.year && <span>{c.year}</span>}
+                      {c.year && c.modelNumber && <span> · </span>}
+                      {c.modelNumber && <span>Model {c.modelNumber}</span>}
+                    </div>
+                  )}
+                  {c.serialNumber && <div>Serial: {c.serialNumber}</div>}
                   {c.features && <div>Features: {c.features}</div>}
                 </div>
                 <div className="mt-4 flex justify-end">
@@ -485,10 +493,22 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
   const [color, setColor] = useState(initial?.color || "");
   const [siteId, setSiteId] = useState(initial?.siteId || "");
   const [features, setFeatures] = useState(initial?.features || "");
+  const [serialNumber, setSerialNumber] = useState(initial?.serialNumber || "");
+  const [year, setYear] = useState(initial?.year || "");
+  const [modelNumber, setModelNumber] = useState(initial?.modelNumber || "");
 
   const submit = () => {
     if (!name.trim()) return;
-    onSave({ id: initial?.id || uid(), name: name.trim(), color: color.trim(), siteId: siteId || null, features: features.trim() });
+    onSave({
+      id: initial?.id || uid(),
+      name: name.trim(),
+      color: color.trim(),
+      siteId: siteId || null,
+      features: features.trim(),
+      serialNumber: serialNumber.trim(),
+      year: year.trim(),
+      modelNumber: modelNumber.trim(),
+    });
   };
 
   return (
@@ -507,6 +527,17 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
           ))}
         </select>
       </Field>
+      <div className="grid sm:grid-cols-3 gap-x-3">
+        <Field label="Year">
+          <input className={inputCls} value={year} onChange={(e) => setYear(e.target.value)} placeholder="e.g. 2019" />
+        </Field>
+        <Field label="Model Number">
+          <input className={inputCls} value={modelNumber} onChange={(e) => setModelNumber(e.target.value)} placeholder="e.g. RC-42" />
+        </Field>
+        <Field label="Serial Number">
+          <input className={inputCls} value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} placeholder="e.g. SN-882910" />
+        </Field>
+      </div>
       <Field label="Features / Notes">
         <textarea className={inputCls} rows={2} value={features} onChange={(e) => setFeatures(e.target.value)} placeholder="e.g. 2BR, wood stove, lake view" />
       </Field>
