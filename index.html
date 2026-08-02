@@ -61,6 +61,7 @@ const emptyDb = () => ({
   quotes: [],
   staff: [],
   activityLog: [],
+  recurringTasks: [],
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5 },
 });
 
@@ -84,6 +85,22 @@ const STAFF_STATUS_DOT = {
   "On Site": "bg-[#C1652F]",
   "Off Duty": "bg-[#9A968D]",
 };
+const FREQUENCY_OPTIONS = [
+  { label: "Weekly", days: 7 },
+  { label: "Every 2 weeks", days: 14 },
+  { label: "Monthly", days: 30 },
+  { label: "Quarterly", days: 91 },
+  { label: "Every 6 months", days: 182 },
+  { label: "Yearly", days: 365 },
+];
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isOverdue(wo) {
+  return wo.status !== "Completed" && wo.date && wo.date < todayISO();
+}
 
 // The signed-in user's email, made available to any component without prop-drilling.
 const CurrentUserContext = React.createContext(null);
@@ -288,6 +305,7 @@ function EmptyState({ text, action }) {
 function SitesView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  const [detailId, setDetailId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
 
@@ -364,12 +382,17 @@ function SitesView({ db, persist }) {
                 .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }))
                 .map((s) => (
                   <tr key={s.id} className="border-t border-[#EEEBE5] hover:bg-[#FFFDFA]">
-                    <td className="px-4 py-2.5 font-semibold text-[#1E1A13]">{s.number}</td>
+                    <td className="px-4 py-2.5 font-semibold text-[#1E1A13]">
+                      <button className="hover:underline" onClick={() => setDetailId(s.id)}>{s.number}</button>
+                    </td>
                     <td className="px-4 py-2.5 text-[#4B4740]">{s.section || "—"}</td>
                     <td className="px-4 py-2.5 text-[#4B4740]">{s.hookups || "—"}</td>
                     <td className="px-4 py-2.5 text-[#4B4740] max-w-xs truncate">{s.notes || "—"}</td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex gap-3 justify-end text-xs">
+                        <button className="text-[#377249] hover:underline" onClick={() => setDetailId(s.id)}>
+                          View
+                        </button>
                         <button className="text-[#377249] hover:underline" onClick={() => setModal({ mode: "edit", data: s })}>
                           Edit
                         </button>
@@ -391,6 +414,18 @@ function SitesView({ db, persist }) {
         </Modal>
       )}
 
+      {detailId && (
+        <SiteDetailModal
+          site={db.sites.find((s) => s.id === detailId)}
+          db={db}
+          onClose={() => setDetailId(null)}
+          onEdit={(s) => {
+            setDetailId(null);
+            setModal({ mode: "edit", data: s });
+          }}
+        />
+      )}
+
       {confirm.target && (
         <ConfirmDeleteModal
           label={`site ${db.sites.find((s) => s.id === confirm.target)?.number ?? ""}`}
@@ -398,6 +433,76 @@ function SitesView({ db, persist }) {
           onCancel={confirm.clear}
         />
       )}
+    </div>
+  );
+}
+
+function SiteDetailModal({ site, db, onClose, onEdit }) {
+  if (!site) return null;
+  const cottages = db.cottages.filter((c) => c.siteId === site.id);
+  const customers = db.customers.filter((c) => c.siteId === site.id);
+  const workOrders = db.workOrders.filter((w) => w.siteId === site.id);
+  const quotes = db.quotes.filter((q) => q.siteId === site.id);
+
+  return (
+    <Modal title={`Site ${site.number}`} onClose={onClose} wide>
+      <div className="text-sm text-[#4B4740] mb-4 space-y-1">
+        {site.section && <div>Section: {site.section}</div>}
+        {site.hookups && <div>Hookups: {site.hookups}</div>}
+        {site.notes && <div>Notes: {site.notes}</div>}
+      </div>
+
+      <DetailSection title="Cottages" empty="No cottages on this site.">
+        {cottages.map((c) => (
+          <div key={c.id} className="text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0">{c.name}</div>
+        ))}
+      </DetailSection>
+
+      <DetailSection title="Customers" empty="No customers linked to this site.">
+        {customers.map((c) => (
+          <div key={c.id} className="text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0">
+            {c.name}{c.phone ? ` · ${c.phone}` : ""}
+          </div>
+        ))}
+      </DetailSection>
+
+      <DetailSection title="Work Orders" empty="No work orders for this site.">
+        {workOrders.map((w) => (
+          <div key={w.id} className="flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0">
+            <span className="text-[#1E1A13]">{w.title}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}`}>{w.status}</span>
+          </div>
+        ))}
+      </DetailSection>
+
+      <DetailSection title="Quotes" empty="No quotes for this site.">
+        {quotes.map((q) => (
+          <div key={q.id} className="flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0">
+            <span className="text-[#1E1A13]">{q.title}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}`}>{q.status}</span>
+          </div>
+        ))}
+      </DetailSection>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Close</button>
+        <button
+          onClick={() => onEdit(site)}
+          className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
+        >
+          Edit Site
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function DetailSection({ title, empty, children }) {
+  const hasContent = React.Children.count(children) > 0;
+  return (
+    <div className="mb-4">
+      <h4 className="text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5">{title}</h4>
+      {hasContent ? <div>{children}</div> : <p className="text-xs text-[#9A968D] italic">{empty}</p>}
     </div>
   );
 }
@@ -640,6 +745,7 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
 function CustomersView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  const [detailId, setDetailId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
 
@@ -708,7 +814,7 @@ function CustomersView({ db, persist }) {
                 <th className="px-4 py-2.5">Email</th>
                 <th className="px-4 py-2.5">Address</th>
                 <th className="px-4 py-2.5">Site</th>
-                <th className="px-4 py-2.5 w-32"></th>
+                <th className="px-4 py-2.5 w-40"></th>
               </tr>
             </thead>
             <tbody>
@@ -716,13 +822,18 @@ function CustomersView({ db, persist }) {
                 const site = db.sites.find((s) => s.id === c.siteId);
                 return (
                   <tr key={c.id} className="border-t border-[#EEEBE5] hover:bg-[#FFFDFA]">
-                    <td className="px-4 py-2.5 font-semibold text-[#1E1A13]">{c.name}</td>
+                    <td className="px-4 py-2.5 font-semibold text-[#1E1A13]">
+                      <button className="hover:underline" onClick={() => setDetailId(c.id)}>{c.name}</button>
+                    </td>
                     <td className="px-4 py-2.5 text-[#4B4740]">{c.phone || "—"}</td>
                     <td className="px-4 py-2.5 text-[#4B4740]">{c.email || "—"}</td>
                     <td className="px-4 py-2.5 text-[#4B4740] max-w-[14rem] truncate">{c.address || "—"}</td>
                     <td className="px-4 py-2.5 text-[#4B4740]">{site ? site.number : "—"}</td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex gap-3 justify-end text-xs">
+                        <button className="text-[#377249] hover:underline" onClick={() => setDetailId(c.id)}>
+                          View
+                        </button>
                         <button className="text-[#377249] hover:underline" onClick={() => setModal({ mode: "edit", data: c })}>
                           Edit
                         </button>
@@ -745,6 +856,18 @@ function CustomersView({ db, persist }) {
         </Modal>
       )}
 
+      {detailId && (
+        <CustomerDetailModal
+          customer={db.customers.find((c) => c.id === detailId)}
+          db={db}
+          onClose={() => setDetailId(null)}
+          onEdit={(c) => {
+            setDetailId(null);
+            setModal({ mode: "edit", data: c });
+          }}
+        />
+      )}
+
       {confirm.target && (
         <ConfirmDeleteModal
           label={db.customers.find((c) => c.id === confirm.target)?.name ?? "this customer"}
@@ -753,6 +876,59 @@ function CustomersView({ db, persist }) {
         />
       )}
     </div>
+  );
+}
+
+function CustomerDetailModal({ customer, db, onClose, onEdit }) {
+  if (!customer) return null;
+  const site = db.sites.find((s) => s.id === customer.siteId);
+  const cottages = site ? db.cottages.filter((c) => c.siteId === site.id) : [];
+  const workOrders = site ? db.workOrders.filter((w) => w.siteId === site.id) : [];
+  const quotes = db.quotes.filter((q) => q.customerId === customer.id);
+
+  return (
+    <Modal title={customer.name} onClose={onClose} wide>
+      <div className="text-sm text-[#4B4740] mb-4 space-y-1">
+        {customer.phone && <div>Phone: {customer.phone}</div>}
+        {customer.email && <div>Email: {customer.email}</div>}
+        {customer.address && <div>Address: {customer.address}</div>}
+        <div>Site: {site ? site.number : "Unassigned"}</div>
+      </div>
+
+      <DetailSection title="Cottages" empty="No cottages linked through their site.">
+        {cottages.map((c) => (
+          <div key={c.id} className="text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0">{c.name}</div>
+        ))}
+      </DetailSection>
+
+      <DetailSection title="Work Orders" empty="No work orders linked through their site.">
+        {workOrders.map((w) => (
+          <div key={w.id} className="flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0">
+            <span className="text-[#1E1A13]">{w.title}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}`}>{w.status}</span>
+          </div>
+        ))}
+      </DetailSection>
+
+      <DetailSection title="Quotes" empty="No quotes for this customer.">
+        {quotes.map((q) => (
+          <div key={q.id} className="flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0">
+            <span className="text-[#1E1A13]">{q.title}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}`}>{q.status}</span>
+          </div>
+        ))}
+      </DetailSection>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Close</button>
+        <button
+          onClick={() => onEdit(customer)}
+          className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
+        >
+          Edit Customer
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -865,6 +1041,7 @@ function PartsView({ db, persist }) {
   };
 
   const filtered = db.parts.filter((p) => !filter || p.name.toLowerCase().includes(filter.toLowerCase()));
+  const needsReorder = db.parts.filter((p) => Number(p.quantity) <= (Number(p.reorderThreshold) || 2));
 
   return (
     <div>
@@ -889,6 +1066,35 @@ function PartsView({ db, persist }) {
           </button>
         </div>
       </div>
+
+      {needsReorder.length > 0 && (
+        <div className="rounded-xl border border-[#e0bfa6] bg-[#F5E3D9] p-4 mb-5">
+          <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+            <h3 className="text-sm font-semibold text-[#a8532a]">
+              Needs Reordering ({needsReorder.length})
+            </h3>
+            <button
+              onClick={() =>
+                downloadPrintableItems(
+                  needsReorder,
+                  (p) => `<div class="wo"><div class="wo-head"><div><div class="label">Reorder</div><h1>${escapeHtml(p.name)}</h1></div><div class="meta"><div>In stock: ${escapeHtml(String(p.quantity))}</div><div>Threshold: ${escapeHtml(String(p.reorderThreshold || 2))}</div></div></div></div>`,
+                  "parts-reorder-list"
+                )
+              }
+              className="text-xs px-2.5 py-1 rounded-md border border-[#a8532a]/40 text-[#a8532a] hover:bg-white/40 font-medium whitespace-nowrap"
+            >
+              Print list
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {needsReorder.map((p) => (
+              <span key={p.id} className="text-xs bg-white/60 text-[#a8532a] px-2 py-1 rounded-full font-medium">
+                {p.name} ({p.quantity} left)
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {db.parts.length === 0 ? (
         <EmptyState
@@ -918,7 +1124,7 @@ function PartsView({ db, persist }) {
                 .slice()
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map((p) => {
-                  const lowStock = Number(p.quantity) <= 2;
+                  const lowStock = Number(p.quantity) <= (Number(p.reorderThreshold) || 2);
                   const priceWithTax = Number(p.price) * (1 + taxRate / 100);
                   return (
                     <tr key={p.id} className="border-t border-[#EEEBE5] hover:bg-[#FFFDFA]">
@@ -972,6 +1178,7 @@ function PartForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || "");
   const [price, setPrice] = useState(initial?.price ?? "");
   const [quantity, setQuantity] = useState(initial?.quantity ?? "");
+  const [reorderThreshold, setReorderThreshold] = useState(initial?.reorderThreshold ?? 2);
 
   const submit = () => {
     if (!name.trim()) return;
@@ -980,6 +1187,7 @@ function PartForm({ initial, onSave, onCancel }) {
       name: name.trim(),
       price: price === "" ? 0 : Number(price),
       quantity: quantity === "" ? 0 : Number(quantity),
+      reorderThreshold: reorderThreshold === "" ? 2 : Number(reorderThreshold),
     });
   };
 
@@ -1010,6 +1218,17 @@ function PartForm({ initial, onSave, onCancel }) {
           placeholder="0"
         />
       </Field>
+      <Field label="Reorder Threshold">
+        <input
+          type="number"
+          step="1"
+          min="0"
+          className={inputCls}
+          value={reorderThreshold}
+          onChange={(e) => setReorderThreshold(e.target.value)}
+          placeholder="2"
+        />
+      </Field>
       <div className="flex justify-end gap-2 mt-4">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Cancel</button>
         <button type="button" onClick={submit} className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium">Save Part</button>
@@ -1038,6 +1257,7 @@ function DashboardView({ db, onGoToTab }) {
   const taxRate = db.settings?.taxRate ?? 13;
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
+  const overdueCount = db.workOrders.filter(isOverdue).length;
   const sitesNeedingService = new Set(openWorkOrders.map((w) => w.siteId).filter(Boolean)).size;
   const pendingQuoteValue = db.quotes
     .filter((q) => q.status === "Draft" || q.status === "Sent")
@@ -1057,8 +1277,14 @@ function DashboardView({ db, onGoToTab }) {
         <p className="text-sm text-[#75716A]">Today's overview across the campground.</p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
         <StatCard label="Open Work Orders" value={openWorkOrders.length} onClick={() => onGoToTab("workorders")} />
+        <StatCard
+          label="Overdue"
+          value={overdueCount}
+          tone={overdueCount > 0 ? "text-[#a8532a]" : undefined}
+          onClick={() => onGoToTab("workorders")}
+        />
         <StatCard
           label="Urgent Items"
           value={urgentCount}
@@ -1996,6 +2222,11 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
             {wo.priority}
           </span>
         )}
+        {isOverdue(wo) && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white">
+            Overdue
+          </span>
+        )}
       </div>
       <div className="text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3">
         {site && <span>Site {site.number}</span>}
@@ -2029,6 +2260,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
 function WorkOrdersView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  const [recurringOpen, setRecurringOpen] = useState(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
 
@@ -2082,13 +2314,19 @@ function WorkOrdersView({ db, persist }) {
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Work Orders</h2>
           <p className="text-sm text-[#75716A]">The board — drag status forward as jobs move along.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <input
             className={inputCls + " w-48"}
             placeholder="Search work orders…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
+          <button
+            onClick={() => setRecurringOpen(true)}
+            className="px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+          >
+            Recurring Tasks
+          </button>
           {filtered.length > 0 && (
             <button
               onClick={() => downloadPrintable(filtered, db, filter ? "work-orders-filtered" : "work-orders-all")}
@@ -2166,6 +2404,10 @@ function WorkOrdersView({ db, persist }) {
         </Modal>
       )}
 
+      {recurringOpen && (
+        <RecurringTasksModal db={db} persist={persist} onClose={() => setRecurringOpen(false)} />
+      )}
+
       {confirm.target && (
         <ConfirmDeleteModal
           label={db.workOrders.find((w) => w.id === confirm.target)?.title ?? "this work order"}
@@ -2173,6 +2415,161 @@ function WorkOrdersView({ db, persist }) {
           onCancel={confirm.clear}
         />
       )}
+    </div>
+  );
+}
+
+function RecurringTasksModal({ db, persist, onClose }) {
+  const [formOpen, setFormOpen] = useState(null);
+  const confirm = useConfirm();
+  const actor = useCurrentActor();
+  const tasks = db.recurringTasks || [];
+
+  const save = (task) => {
+    const exists = tasks.some((t) => t.id === task.id);
+    const recurringTasks = exists ? tasks.map((t) => (t.id === task.id ? task : t)) : [...tasks, task];
+    const activityLog = addLog(db, actor, exists ? `Updated recurring task "${task.title}"` : `Added recurring task "${task.title}"`);
+    persist({ ...db, recurringTasks, activityLog });
+    setFormOpen(null);
+  };
+
+  const remove = (id) => {
+    const task = tasks.find((t) => t.id === id);
+    const activityLog = addLog(db, actor, `Removed recurring task "${task?.title ?? ""}"`);
+    persist({ ...db, recurringTasks: tasks.filter((t) => t.id !== id), activityLog });
+    confirm.clear();
+  };
+
+  return (
+    <Modal title="Recurring Maintenance Tasks" onClose={onClose} wide>
+      <p className="text-sm text-[#75716A] mb-4">
+        These automatically create a new work order on schedule, so nothing seasonal gets forgotten.
+      </p>
+
+      {tasks.length === 0 ? (
+        <p className="text-sm text-[#9A968D] italic mb-4">No recurring tasks set up yet.</p>
+      ) : (
+        <div className="space-y-2 mb-4">
+          {tasks.map((t) => {
+            const site = db.sites.find((s) => s.id === t.siteId);
+            const cottage = db.cottages.find((c) => c.id === t.cottageId);
+            const freq = FREQUENCY_OPTIONS.find((f) => f.days === t.frequencyDays);
+            return (
+              <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-[#1E1A13] truncate">{t.title}</div>
+                  <div className="text-xs text-[#75716A] truncate">
+                    {freq ? freq.label : `Every ${t.frequencyDays} days`}
+                    {site ? ` · Site ${site.number}` : ""}
+                    {cottage ? ` · ${cottage.name}` : ""}
+                    {" · Next: "}{t.nextDueDate}
+                  </div>
+                </div>
+                <div className="flex gap-3 text-xs flex-shrink-0">
+                  <button className="text-[#377249] hover:underline" onClick={() => setFormOpen({ mode: "edit", data: t })}>
+                    Edit
+                  </button>
+                  <button className="text-[#a8532a] hover:underline" onClick={() => confirm.ask(t.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {formOpen ? (
+        <div className="border-t border-[#E2DED5] pt-4">
+          <RecurringTaskForm
+            initial={formOpen.data}
+            sites={db.sites}
+            cottages={db.cottages}
+            onSave={save}
+            onCancel={() => setFormOpen(null)}
+          />
+        </div>
+      ) : (
+        <div className="flex justify-between items-center border-t border-[#E2DED5] pt-4">
+          <button onClick={() => setFormOpen({ mode: "new" })} className="text-sm text-[#377249] hover:underline font-medium">
+            + Add recurring task
+          </button>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Close</button>
+        </div>
+      )}
+
+      {confirm.target && (
+        <ConfirmDeleteModal
+          label={tasks.find((t) => t.id === confirm.target)?.title ?? "this recurring task"}
+          onConfirm={() => remove(confirm.target)}
+          onCancel={confirm.clear}
+        />
+      )}
+    </Modal>
+  );
+}
+
+function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
+  const [title, setTitle] = useState(initial?.title || "");
+  const [description, setDescription] = useState(initial?.description || "");
+  const [siteId, setSiteId] = useState(initial?.siteId || "");
+  const [cottageId, setCottageId] = useState(initial?.cottageId || "");
+  const [frequencyDays, setFrequencyDays] = useState(initial?.frequencyDays || 30);
+  const [nextDueDate, setNextDueDate] = useState(initial?.nextDueDate || todayISO());
+
+  const submit = () => {
+    if (!title.trim()) return;
+    onSave({
+      id: initial?.id || uid(),
+      title: title.trim(),
+      description: description.trim(),
+      siteId: siteId || null,
+      cottageId: cottageId || null,
+      frequencyDays: Number(frequencyDays),
+      nextDueDate,
+    });
+  };
+
+  return (
+    <div onKeyDown={(e) => { if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit(); }}>
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <Field label="Title">
+          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Winterize docks" autoFocus />
+        </Field>
+        <Field label="Frequency">
+          <select className={inputCls} value={frequencyDays} onChange={(e) => setFrequencyDays(e.target.value)}>
+            {FREQUENCY_OPTIONS.map((f) => (
+              <option key={f.days} value={f.days}>{f.label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Site">
+          <select className={inputCls} value={siteId} onChange={(e) => setSiteId(e.target.value)}>
+            <option value="">None</option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>Site {s.number}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Cottage">
+          <select className={inputCls} value={cottageId} onChange={(e) => setCottageId(e.target.value)}>
+            <option value="">None</option>
+            {cottages.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Next Due Date">
+          <input type="date" className={inputCls} value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Description">
+        <textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this task involves" />
+      </Field>
+      <div className="flex justify-end gap-2 mt-3">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Cancel</button>
+        <button type="button" onClick={submit} className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium">Save Recurring Task</button>
+      </div>
     </div>
   );
 }
@@ -2350,9 +2747,129 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, onSave, onCance
 
 // ---------- App shell ----------
 
+// ---------- Calendar ----------
+
+function CalendarView({ db, onGoToTab }) {
+  const [cursor, setCursor] = useState(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  const itemsByDate = {};
+  db.workOrders.forEach((w) => {
+    if (!w.date) return;
+    (itemsByDate[w.date] = itemsByDate[w.date] || []).push({ kind: "Work Order", title: w.title, status: w.status, id: w.id });
+  });
+  db.quotes.forEach((q) => {
+    if (!q.date) return;
+    (itemsByDate[q.date] = itemsByDate[q.date] || []).push({ kind: "Quote", title: q.title, status: q.status, id: q.id });
+  });
+
+  const first = new Date(cursor.year, cursor.month, 1);
+  const startWeekday = first.getDay();
+  const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const monthLabel = first.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const pad = (n) => String(n).padStart(2, "0");
+  const dateStr = (d) => `${cursor.year}-${pad(cursor.month + 1)}-${pad(d)}`;
+
+  const goMonth = (delta) => {
+    setSelectedDate(null);
+    setCursor((c) => {
+      const d = new Date(c.year, c.month + delta, 1);
+      return { year: d.getFullYear(), month: d.getMonth() };
+    });
+  };
+
+  const selectedItems = selectedDate ? itemsByDate[selectedDate] || [] : [];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
+        <div>
+          <h2 className="font-serif text-2xl text-[#377249] font-semibold">Calendar</h2>
+          <p className="text-sm text-[#75716A]">Work orders and quotes by date.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => goMonth(-1)} className="w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]">‹</button>
+          <span className="text-sm font-semibold text-[#1E1A13] w-36 text-center">{monthLabel}</span>
+          <button onClick={() => goMonth(1)} className="w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]">›</button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden">
+        <div className="grid grid-cols-7 bg-[#F1EEE9] text-[10px] uppercase tracking-wider text-[#75716A] font-semibold">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+            <div key={d} className="px-2 py-2 text-center">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7">
+          {cells.map((d, i) => {
+            if (d === null) return <div key={`e${i}`} className="border-t border-[#EEEBE5] min-h-[70px]" />;
+            const ds = dateStr(d);
+            const items = itemsByDate[ds] || [];
+            const isToday = ds === todayISO();
+            const isSelected = ds === selectedDate;
+            return (
+              <button
+                key={ds}
+                onClick={() => setSelectedDate(ds)}
+                className={`border-t border-l border-[#EEEBE5] min-h-[70px] p-1.5 text-left align-top hover:bg-[#F1EEE9] transition ${
+                  isSelected ? "bg-[#DDF1E1]" : ""
+                }`}
+              >
+                <div className={`text-[11px] font-medium mb-1 ${isToday ? "text-[#377249] font-bold" : "text-[#4B4740]"}`}>{d}</div>
+                <div className="flex flex-wrap gap-0.5">
+                  {items.slice(0, 3).map((it, idx) => (
+                    <span
+                      key={idx}
+                      className={`w-1.5 h-1.5 rounded-full ${it.kind === "Work Order" ? "bg-[#377249]" : "bg-[#3E7A72]"}`}
+                    />
+                  ))}
+                  {items.length > 3 && <span className="text-[9px] text-[#9A968D]">+{items.length - 3}</span>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedDate && (
+        <div className="rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4">
+          <h3 className="font-serif text-base font-semibold text-[#1E1A13] mb-3">{selectedDate}</h3>
+          {selectedItems.length === 0 ? (
+            <p className="text-xs text-[#75716A]">Nothing on this date.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {selectedItems.map((it, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => onGoToTab(it.kind === "Work Order" ? "workorders" : "quotes")}
+                  className="w-full flex items-center justify-between gap-3 text-sm py-1.5 border-b border-[#EEEBE5] last:border-0 hover:bg-[#F1EEE9] text-left px-1 rounded"
+                >
+                  <span className="text-[#1E1A13]">
+                    <span className="text-[10px] uppercase tracking-wide text-[#75716A] mr-2">{it.kind}</span>
+                    {it.title}
+                  </span>
+                  <span className="text-xs text-[#75716A] flex-shrink-0">{it.status}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const TABS = [
   { key: "dashboard", label: "Dashboard" },
   { key: "workorders", label: "Work Orders" },
+  { key: "calendar", label: "Calendar" },
   { key: "sites", label: "Sites" },
   { key: "cottages", label: "Cottages" },
   { key: "customers", label: "Customers" },
@@ -2365,8 +2882,58 @@ function AppContent() {
   const { db, loading, error, persist, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [importPending, setImportPending] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const importInputRef = useRef(null);
   const actor = useCurrentActor();
+  const generatedRef = useRef(false);
+
+  // Auto-generate work orders from due recurring tasks, once per load.
+  useEffect(() => {
+    if (!db || generatedRef.current) return;
+    const tasks = db.recurringTasks || [];
+    if (tasks.length === 0) return;
+    const today = todayISO();
+    let anyDue = false;
+    const newWorkOrders = [];
+    const updatedTasks = tasks.map((t) => {
+      if (t.nextDueDate > today) return t;
+      anyDue = true;
+      let nextDue = t.nextDueDate;
+      while (nextDue <= today) {
+        newWorkOrders.push({
+          id: uid(),
+          title: t.title,
+          description: t.description || "",
+          siteId: t.siteId || null,
+          cottageId: t.cottageId || null,
+          assignedTo: "",
+          status: "Open",
+          priority: "Medium",
+          date: today,
+          completedDate: null,
+          partsUsed: [],
+        });
+        const d = new Date(nextDue + "T00:00:00");
+        d.setDate(d.getDate() + t.frequencyDays);
+        nextDue = d.toISOString().slice(0, 10);
+      }
+      return { ...t, nextDueDate: nextDue };
+    });
+    generatedRef.current = true;
+    if (anyDue) {
+      const activityLog = addLog(
+        db,
+        actor,
+        `Auto-generated ${newWorkOrders.length} work order${newWorkOrders.length === 1 ? "" : "s"} from recurring tasks`
+      );
+      persist({
+        ...db,
+        workOrders: [...db.workOrders, ...newWorkOrders],
+        recurringTasks: updatedTasks,
+        activityLog,
+      });
+    }
+  }, [db, actor, persist]);
 
   if (loading || !db) {
     return (
@@ -2403,9 +2970,37 @@ function AppContent() {
     setImportPending(null);
   };
 
+  const selectTab = (key) => {
+    setTab(key);
+    setMobileNavOpen(false);
+  };
+
   return (
     <div className="min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]">
-      <aside className="w-[230px] flex-shrink-0 bg-[#FFFDFA] border-r border-[#E2DED5] flex flex-col p-3.5">
+      {/* Mobile top bar */}
+      <div className="sm:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 py-3">
+        <button
+          onClick={() => setMobileNavOpen(true)}
+          className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-[#F1EEE9] flex-shrink-0"
+          aria-label="Open menu"
+        >
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+          </svg>
+        </button>
+        <div className="font-serif text-[15px] text-[#1E1A13]">Campground Maintenance</div>
+      </div>
+
+      {/* Mobile backdrop */}
+      {mobileNavOpen && (
+        <div className="sm:hidden fixed inset-0 z-30 bg-black/30" onClick={() => setMobileNavOpen(false)} />
+      )}
+
+      <aside
+        className={`w-[230px] flex-shrink-0 bg-[#FFFDFA] border-r border-[#E2DED5] flex flex-col p-3.5 fixed sm:static inset-y-0 left-0 z-40 transform transition-transform duration-200 ${
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+        } sm:translate-x-0`}
+      >
         <div className="flex items-center gap-2.5 px-2 pb-6">
           <div className="w-8 h-8 rounded-[9px] bg-[#377249] flex items-center justify-center text-white flex-shrink-0">
             <IconTag className="w-4 h-4" />
@@ -2417,7 +3012,7 @@ function AppContent() {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => selectTab(t.key)}
               className={`flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${
                 tab === t.key ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"
               }`}
@@ -2450,7 +3045,7 @@ function AppContent() {
         </div>
       </aside>
 
-      <div className="flex-1 min-w-0 px-6 sm:px-8 py-6">
+      <div className="flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6">
         {error && (
           <div className="mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2">
             <span>{error}</span>
@@ -2461,13 +3056,14 @@ function AppContent() {
         )}
 
         <main>
-          {tab === "dashboard" && <DashboardView db={db} onGoToTab={setTab} />}
+          {tab === "dashboard" && <DashboardView db={db} onGoToTab={selectTab} />}
           {tab === "workorders" && <WorkOrdersView db={db} persist={persist} />}
+          {tab === "calendar" && <CalendarView db={db} onGoToTab={selectTab} />}
           {tab === "sites" && <SitesView db={db} persist={persist} />}
           {tab === "cottages" && <CottagesView db={db} persist={persist} />}
           {tab === "customers" && <CustomersView db={db} persist={persist} />}
           {tab === "parts" && <PartsView db={db} persist={persist} />}
-          {tab === "quotes" && <QuotesView db={db} persist={persist} onGoToWorkOrders={() => setTab("workorders")} />}
+          {tab === "quotes" && <QuotesView db={db} persist={persist} onGoToWorkOrders={() => selectTab("workorders")} />}
           {tab === "staff" && <StaffView db={db} persist={persist} />}
         </main>
       </div>
