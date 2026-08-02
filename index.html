@@ -85,6 +85,10 @@ const STAFF_STATUS_DOT = {
   "On Site": "bg-[#C1652F]",
   "Off Duty": "bg-[#9A968D]",
 };
+const RATE_OPTIONS = [
+  { label: "Service Tech", rate: 110 },
+  { label: "Labor Tech", rate: 65 },
+];
 const FREQUENCY_OPTIONS = [
   { label: "Weekly", days: 7 },
   { label: "Every 2 weeks", days: 14 },
@@ -1442,6 +1446,7 @@ function StaffView({ db, persist }) {
               <tr className="bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider">
                 <th className="px-4 py-2.5">Name</th>
                 <th className="px-4 py-2.5">Phone</th>
+                <th className="px-4 py-2.5">Email</th>
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5 w-32"></th>
               </tr>
@@ -1454,6 +1459,7 @@ function StaffView({ db, persist }) {
                     {s.name}
                   </td>
                   <td className="px-4 py-2.5 text-[#4B4740]">{s.phone || "—"}</td>
+                  <td className="px-4 py-2.5 text-[#4B4740]">{s.email || "—"}</td>
                   <td className="px-4 py-2.5">
                     <select
                       value={s.status}
@@ -1502,11 +1508,12 @@ function StaffView({ db, persist }) {
 function StaffForm({ initial, onSave, onCancel }) {
   const [name, setName] = useState(initial?.name || "");
   const [phone, setPhone] = useState(initial?.phone || "");
+  const [email, setEmail] = useState(initial?.email || "");
   const [status, setStatus] = useState(initial?.status || "Available");
 
   const submit = () => {
     if (!name.trim()) return;
-    onSave({ id: initial?.id || uid(), name: name.trim(), phone: phone.trim(), status });
+    onSave({ id: initial?.id || uid(), name: name.trim(), phone: phone.trim(), email: email.trim(), status });
   };
 
   return (
@@ -1516,6 +1523,9 @@ function StaffForm({ initial, onSave, onCancel }) {
       </Field>
       <Field label="Phone">
         <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+      </Field>
+      <Field label="Email">
+        <input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} />
       </Field>
       <Field label="Status">
         <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -1725,7 +1735,6 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
             customers={db.customers}
             parts={db.parts}
             taxRate={taxRate}
-            defaultLaborRate={db.settings?.laborRate ?? 65}
             defaultShopSuppliesPercent={db.settings?.shopSuppliesPercent ?? 5}
             onSave={save}
             onCancel={() => setModal(null)}
@@ -1744,7 +1753,7 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
   );
 }
 
-function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaultLaborRate, defaultShopSuppliesPercent, onSave, onCancel }) {
+function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaultShopSuppliesPercent, onSave, onCancel }) {
   const [title, setTitle] = useState(initial?.title || "");
   const [date, setDate] = useState(initial?.date || new Date().toISOString().slice(0, 10));
   const [status, setStatus] = useState(initial?.status || "Draft");
@@ -1757,9 +1766,13 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   );
   const [partToAdd, setPartToAdd] = useState("");
   const [laborHours, setLaborHours] = useState(initial?.laborHours ?? "");
-  const [laborRate, setLaborRate] = useState(initial?.laborRate ?? defaultLaborRate ?? 65);
+  const [laborRateType, setLaborRateType] = useState(
+    RATE_OPTIONS.find((r) => r.rate === initial?.laborRate)?.label || RATE_OPTIONS[1].label
+  );
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState(initial?.shopSuppliesPercent ?? defaultShopSuppliesPercent ?? 5);
   const [serviceCall, setServiceCall] = useState(initial?.serviceCall ?? "");
+
+  const laborRate = RATE_OPTIONS.find((r) => r.label === laborRateType)?.rate ?? RATE_OPTIONS[1].rate;
 
   const updateLine = (id, field, value) => {
     setLineItems((items) => items.map((li) => (li.id === id ? { ...li, [field]: value } : li)));
@@ -1781,7 +1794,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   };
 
   const lineItemsSubtotal = lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
-  const laborCost = (Number(laborHours) || 0) * (Number(laborRate) || 0);
+  const laborCost = (Number(laborHours) || 0) * laborRate;
   const shopSupplies = (lineItemsSubtotal + laborCost) * ((Number(shopSuppliesPercent) || 0) / 100);
   const serviceCallAmt = Number(serviceCall) || 0;
   const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCallAmt;
@@ -1810,7 +1823,8 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
       notes: notes.trim(),
       lineItems: cleanItems,
       laborHours: Number(laborHours) || 0,
-      laborRate: Number(laborRate) || 0,
+      laborRate,
+      laborRateType,
       shopSuppliesPercent: Number(shopSuppliesPercent) || 0,
       serviceCall: Number(serviceCall) || 0,
     });
@@ -1946,16 +1960,12 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
               placeholder="0"
             />
           </Field>
-          <Field label="Rate per Hour ($)">
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              className={inputCls}
-              value={laborRate}
-              onChange={(e) => setLaborRate(e.target.value)}
-              placeholder="0.00"
-            />
+          <Field label="Rate Type">
+            <select className={inputCls} value={laborRateType} onChange={(e) => setLaborRateType(e.target.value)}>
+              {RATE_OPTIONS.map((r) => (
+                <option key={r.label} value={r.label}>{r.label} (${r.rate.toFixed(2)}/hr)</option>
+              ))}
+            </select>
           </Field>
           <Field label="Shop Supplies (%)">
             <input
@@ -1990,7 +2000,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
               <td className="py-0.5 text-right text-[#1E1A13]">{formatPrice(lineItemsSubtotal)}</td>
             </tr>
             <tr>
-              <td className="pr-4 py-0.5 text-[#75716A]">Labor</td>
+              <td className="pr-4 py-0.5 text-[#75716A]">Labor ({laborRateType})</td>
               <td className="py-0.5 text-right text-[#1E1A13]">{formatPrice(laborCost)}</td>
             </tr>
             <tr>
@@ -2053,6 +2063,7 @@ function buildWorkOrderHtml(wo, db) {
         ${customer ? `<tr><td class="k">Customer</td><td>${escapeHtml(customer.name)}</td></tr>` : ""}
         <tr><td class="k">Cottage</td><td>${cottage ? escapeHtml(cottage.name) + (cottage.color ? ` — ${escapeHtml(cottage.color)}` : "") : "—"}</td></tr>
         <tr><td class="k">Assigned to</td><td>${escapeHtml(wo.assignedTo || "—")}</td></tr>
+        ${Number(wo.laborHours) > 0 ? `<tr><td class="k">Labor</td><td>${escapeHtml(String(wo.laborHours))} hrs × ${escapeHtml(wo.laborRateType || "Rate")} (${formatPrice(wo.laborRate || 0)}/hr) = ${formatPrice((Number(wo.laborHours) || 0) * (Number(wo.laborRate) || 0))}</td></tr>` : ""}
         ${wo.completedDate ? `<tr><td class="k">Completed</td><td>${escapeHtml(wo.completedDate)}</td></tr>` : ""}
       </table>
       <div class="label">Description</div>
@@ -2121,7 +2132,7 @@ function buildQuoteHtml(quote, db, taxRate) {
       <div style="display:flex; justify-content:flex-end;">
         <table style="font-size:13px;">
           ${lineItemsSubtotal ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Parts / line items</td><td style="text-align:right;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-          ${laborHours ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labor (${laborHours} hr &times; ${formatPrice(laborRate)})</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
+          ${laborHours ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labor (${laborHours} hr &times; ${quote.laborRateType || "Rate"} @ ${formatPrice(laborRate)})</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
           ${quote.shopSuppliesPercent ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Shop supplies (${quote.shopSuppliesPercent}%)</td><td style="text-align:right;">${formatPrice(shopSupplies)}</td></tr>` : ""}
           ${serviceCall ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Service call</td><td style="text-align:right;">${formatPrice(serviceCall)}</td></tr>` : ""}
           <tr><td style="padding:2px 16px 2px 0; color:#555; border-top:1px solid #ccc;">Subtotal</td><td style="text-align:right; border-top:1px solid #ccc;">${formatPrice(subtotal)}</td></tr>
@@ -2236,6 +2247,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
         {customer && <span>{customer.name}</span>}
         {cottage && <span>{cottage.name}</span>}
         {wo.assignedTo && <span>Assigned: {wo.assignedTo}</span>}
+        {Number(wo.laborHours) > 0 && <span>{wo.laborHours} hrs · {wo.laborRateType}</span>}
       </div>
       {wo.description && <p className="text-xs text-[#4B4740] mt-2 leading-relaxed">{wo.description}</p>}
       {isDone && wo.completedDate && (
@@ -2590,6 +2602,11 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, onSa
   const [date, setDate] = useState(initial?.date || new Date().toISOString().slice(0, 10));
   const [partsUsed, setPartsUsed] = useState(initial?.partsUsed || []);
   const [partToAdd, setPartToAdd] = useState("");
+  const [laborHours, setLaborHours] = useState(initial?.laborHours ?? "");
+  const [laborRateType, setLaborRateType] = useState(initial?.laborRateType || RATE_OPTIONS[1].label);
+
+  const laborRate = RATE_OPTIONS.find((r) => r.label === laborRateType)?.rate ?? RATE_OPTIONS[1].rate;
+  const laborCost = (Number(laborHours) || 0) * laborRate;
 
   const siteCustomer = siteId ? (customers || []).find((c) => c.siteId === siteId) : null;
 
@@ -2633,6 +2650,9 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, onSa
       priority,
       date,
       completedDate: initial?.completedDate || (status === "Completed" ? new Date().toISOString().slice(0, 10) : null),
+      laborHours: Number(laborHours) || 0,
+      laborRate,
+      laborRateType,
       partsUsed: partsUsed
         .filter((pu) => (Number(pu.quantity) || 0) > 0)
         .map((pu) => ({ partId: pu.partId, quantity: Number(pu.quantity) || 0 })),
@@ -2699,7 +2719,28 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, onSa
             ))}
           </select>
         </Field>
+        <Field label="Hours Worked">
+          <input
+            type="number"
+            min="0"
+            step="0.25"
+            className={inputCls}
+            value={laborHours}
+            onChange={(e) => setLaborHours(e.target.value)}
+            placeholder="0"
+          />
+        </Field>
+        <Field label="Rate Type">
+          <select className={inputCls} value={laborRateType} onChange={(e) => setLaborRateType(e.target.value)}>
+            {RATE_OPTIONS.map((r) => (
+              <option key={r.label} value={r.label}>{r.label} (${r.rate.toFixed(2)}/hr)</option>
+            ))}
+          </select>
+        </Field>
       </div>
+      {Number(laborHours) > 0 && (
+        <p className="text-xs text-[#75716A] -mt-2 mb-3">Labor cost: {formatPrice(laborCost)}</p>
+      )}
       <Field label="Description">
         <textarea className={inputCls} rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What needs doing, parts needed, etc." />
       </Field>
