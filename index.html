@@ -2034,6 +2034,7 @@ function escapeHtml(str) {
 function buildWorkOrderHtml(wo, db) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const customer = site ? db.customers.find((c) => c.siteId === site.id) : null;
   return `
     <div class="wo">
       <div class="wo-head">
@@ -2049,6 +2050,7 @@ function buildWorkOrderHtml(wo, db) {
       </div>
       <table class="wo-table">
         <tr><td class="k">Site</td><td>${site ? escapeHtml(site.number) + (site.section ? ` (${escapeHtml(site.section)})` : "") : "—"}</td></tr>
+        ${customer ? `<tr><td class="k">Customer</td><td>${escapeHtml(customer.name)}</td></tr>` : ""}
         <tr><td class="k">Cottage</td><td>${cottage ? escapeHtml(cottage.name) + (cottage.color ? ` — ${escapeHtml(cottage.color)}` : "") : "—"}</td></tr>
         <tr><td class="k">Assigned to</td><td>${escapeHtml(wo.assignedTo || "—")}</td></tr>
         ${wo.completedDate ? `<tr><td class="k">Completed</td><td>${escapeHtml(wo.completedDate)}</td></tr>` : ""}
@@ -2199,6 +2201,7 @@ function exportDatabase(db) {
 function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const customer = site ? db.customers.find((c) => c.siteId === site.id) : null;
   const isDone = wo.status === "Completed";
 
   return (
@@ -2230,6 +2233,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
       </div>
       <div className="text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3">
         {site && <span>Site {site.number}</span>}
+        {customer && <span>{customer.name}</span>}
         {cottage && <span>{cottage.name}</span>}
         {wo.assignedTo && <span>Assigned: {wo.assignedTo}</span>}
       </div>
@@ -2398,6 +2402,7 @@ function WorkOrdersView({ db, persist }) {
             cottages={db.cottages}
             staff={db.staff}
             parts={db.parts}
+            customers={db.customers}
             onSave={save}
             onCancel={() => setModal(null)}
           />
@@ -2574,7 +2579,7 @@ function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
   );
 }
 
-function WorkOrderForm({ initial, sites, cottages, staff, parts, onSave, onCancel }) {
+function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, onSave, onCancel }) {
   const [title, setTitle] = useState(initial?.title || "");
   const [description, setDescription] = useState(initial?.description || "");
   const [siteId, setSiteId] = useState(initial?.siteId || "");
@@ -2585,6 +2590,16 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, onSave, onCance
   const [date, setDate] = useState(initial?.date || new Date().toISOString().slice(0, 10));
   const [partsUsed, setPartsUsed] = useState(initial?.partsUsed || []);
   const [partToAdd, setPartToAdd] = useState("");
+
+  const siteCustomer = siteId ? (customers || []).find((c) => c.siteId === siteId) : null;
+
+  const handleCottageChange = (val) => {
+    setCottageId(val);
+    const chosen = (cottages || []).find((c) => c.id === val);
+    if (chosen && chosen.siteId) {
+      setSiteId(chosen.siteId);
+    }
+  };
 
   const addPartUsed = () => {
     const part = (parts || []).find((p) => p.id === partToAdd);
@@ -2641,8 +2656,15 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, onSave, onCance
             ))}
           </select>
         </Field>
+        {(siteId || cottageId) && (
+          <Field label="Customer">
+            <div className={inputCls + " bg-[#F1EEE9] text-[#4B4740]"}>
+              {siteCustomer ? siteCustomer.name : "No customer on this site"}
+            </div>
+          </Field>
+        )}
         <Field label="Cottage">
-          <select className={inputCls} value={cottageId} onChange={(e) => setCottageId(e.target.value)}>
+          <select className={inputCls} value={cottageId} onChange={(e) => handleCottageChange(e.target.value)}>
             <option value="">None</option>
             {cottages.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
