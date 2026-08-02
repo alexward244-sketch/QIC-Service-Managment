@@ -59,11 +59,55 @@ const emptyDb = () => ({
   workOrders: [],
   parts: [],
   quotes: [],
+  staff: [],
+  activityLog: [],
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5 },
 });
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const STATUS = ["Open", "In Progress", "Completed"];
+const PRIORITY = ["Low", "Medium", "High", "Urgent"];
+const PRIORITY_STYLES = {
+  Low: "bg-[#F1EEE9] text-[#75716A]",
+  Medium: "bg-[#DCEBE8] text-[#3E7A72]",
+  High: "bg-[#FBEEDA] text-[#9A6B1F]",
+  Urgent: "bg-[#F5E3D9] text-[#a8532a]",
+};
+const WO_STATUS_STYLES = {
+  Open: "bg-[#F1EEE9] text-[#4B4740]",
+  "In Progress": "bg-[#DCEBE8] text-[#3E7A72]",
+  Completed: "bg-[#DDF1E1] text-[#28633C]",
+};
+const STAFF_STATUS = ["Available", "On Site", "Off Duty"];
+const STAFF_STATUS_DOT = {
+  Available: "bg-[#28633C]",
+  "On Site": "bg-[#C1652F]",
+  "Off Duty": "bg-[#9A968D]",
+};
+
+// The signed-in user's email, made available to any component without prop-drilling.
+const CurrentUserContext = React.createContext(null);
+function useCurrentActor() {
+  const email = React.useContext(CurrentUserContext);
+  return email || "Unknown";
+}
+
+// Prepends a log entry and caps the log at 200 entries so it can't grow forever.
+function addLog(db, actor, summary) {
+  const entry = { id: uid(), ts: new Date().toISOString(), actor, summary };
+  return [entry, ...(db.activityLog || [])].slice(0, 200);
+}
+
+function timeAgo(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return `${days}d ago`;
+}
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -243,33 +287,52 @@ function EmptyState({ text, action }) {
 
 function SitesView({ db, persist }) {
   const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
+  const actor = useCurrentActor();
 
   const save = (site) => {
     const exists = db.sites.some((s) => s.id === site.id);
     const sites = exists ? db.sites.map((s) => (s.id === site.id ? site : s)) : [...db.sites, site];
-    persist({ ...db, sites });
+    const activityLog = addLog(db, actor, exists ? `Updated site ${site.number}` : `Added site ${site.number}`);
+    persist({ ...db, sites, activityLog });
     setModal(null);
   };
 
   const remove = (id) => {
-    persist({ ...db, sites: db.sites.filter((s) => s.id !== id) });
+    const site = db.sites.find((s) => s.id === id);
+    const activityLog = addLog(db, actor, `Removed site ${site?.number ?? ""}`);
+    persist({ ...db, sites: db.sites.filter((s) => s.id !== id), activityLog });
     confirm.clear();
   };
 
+  const filtered = db.sites.filter((s) => {
+    if (!filter) return true;
+    const hay = `${s.number} ${s.section || ""} ${s.hookups || ""} ${s.notes || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
         <div>
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Sites</h2>
           <p className="text-sm text-[#75716A]">Site numbers, sections, and hookup notes.</p>
         </div>
-        <button
-          onClick={() => setModal({ mode: "new" })}
-          className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm"
-        >
-          + New Site
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            className={inputCls + " w-48"}
+            placeholder="Search sites…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <button
+            onClick={() => setModal({ mode: "new" })}
+            className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+          >
+            + New Site
+          </button>
+        </div>
       </div>
 
       {db.sites.length === 0 ? (
@@ -281,6 +344,8 @@ function SitesView({ db, persist }) {
             </button>
           }
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState text="No sites match your search." />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[#E2DED5]">
           <table className="w-full text-sm">
@@ -294,7 +359,7 @@ function SitesView({ db, persist }) {
               </tr>
             </thead>
             <tbody>
-              {db.sites
+              {filtered
                 .slice()
                 .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }))
                 .map((s) => (
@@ -389,33 +454,52 @@ function colorDot(name) {
 
 function CottagesView({ db, persist }) {
   const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
+  const actor = useCurrentActor();
 
   const save = (c) => {
     const exists = db.cottages.some((x) => x.id === c.id);
     const cottages = exists ? db.cottages.map((x) => (x.id === c.id ? c : x)) : [...db.cottages, c];
-    persist({ ...db, cottages });
+    const activityLog = addLog(db, actor, exists ? `Updated cottage ${c.name}` : `Added cottage ${c.name}`);
+    persist({ ...db, cottages, activityLog });
     setModal(null);
   };
 
   const remove = (id) => {
-    persist({ ...db, cottages: db.cottages.filter((c) => c.id !== id) });
+    const cottage = db.cottages.find((c) => c.id === id);
+    const activityLog = addLog(db, actor, `Removed cottage ${cottage?.name ?? ""}`);
+    persist({ ...db, cottages: db.cottages.filter((c) => c.id !== id), activityLog });
     confirm.clear();
   };
 
+  const filtered = db.cottages.filter((c) => {
+    if (!filter) return true;
+    const hay = `${c.name} ${c.color || ""} ${c.features || ""} ${c.year || ""} ${c.modelNumber || ""} ${c.serialNumber || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
         <div>
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Cottages</h2>
           <p className="text-sm text-[#75716A]">Cottage name, colour, and linked site.</p>
         </div>
-        <button
-          onClick={() => setModal({ mode: "new" })}
-          className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm"
-        >
-          + New Cottage
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            className={inputCls + " w-48"}
+            placeholder="Search cottages…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <button
+            onClick={() => setModal({ mode: "new" })}
+            className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+          >
+            + New Cottage
+          </button>
+        </div>
       </div>
 
       {db.cottages.length === 0 ? (
@@ -427,9 +511,11 @@ function CottagesView({ db, persist }) {
             </button>
           }
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState text="No cottages match your search." />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {db.cottages.map((c) => {
+          {filtered.map((c) => {
             const site = db.sites.find((s) => s.id === c.siteId);
             return (
               <div key={c.id} className="rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 relative overflow-hidden">
@@ -553,33 +639,52 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
 
 function CustomersView({ db, persist }) {
   const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
+  const actor = useCurrentActor();
 
   const save = (c) => {
     const exists = db.customers.some((x) => x.id === c.id);
     const customers = exists ? db.customers.map((x) => (x.id === c.id ? c : x)) : [...db.customers, c];
-    persist({ ...db, customers });
+    const activityLog = addLog(db, actor, exists ? `Updated customer ${c.name}` : `Added customer ${c.name}`);
+    persist({ ...db, customers, activityLog });
     setModal(null);
   };
 
   const remove = (id) => {
-    persist({ ...db, customers: db.customers.filter((c) => c.id !== id) });
+    const customer = db.customers.find((c) => c.id === id);
+    const activityLog = addLog(db, actor, `Removed customer ${customer?.name ?? ""}`);
+    persist({ ...db, customers: db.customers.filter((c) => c.id !== id), activityLog });
     confirm.clear();
   };
 
+  const filtered = db.customers.filter((c) => {
+    if (!filter) return true;
+    const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.address || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
         <div>
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Customers</h2>
           <p className="text-sm text-[#75716A]">Names, contact info, and their assigned site.</p>
         </div>
-        <button
-          onClick={() => setModal({ mode: "new" })}
-          className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm"
-        >
-          + New Customer
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            className={inputCls + " w-48"}
+            placeholder="Search customers…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <button
+            onClick={() => setModal({ mode: "new" })}
+            className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+          >
+            + New Customer
+          </button>
+        </div>
       </div>
 
       {db.customers.length === 0 ? (
@@ -591,6 +696,8 @@ function CustomersView({ db, persist }) {
             </button>
           }
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState text="No customers match your search." />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[#E2DED5]">
           <table className="w-full text-sm">
@@ -605,7 +712,7 @@ function CustomersView({ db, persist }) {
               </tr>
             </thead>
             <tbody>
-              {db.customers.map((c) => {
+              {filtered.map((c) => {
                 const site = db.sites.find((s) => s.id === c.siteId);
                 return (
                   <tr key={c.id} className="border-t border-[#EEEBE5] hover:bg-[#FFFDFA]">
@@ -737,20 +844,27 @@ function TaxRateControl({ db, persist }) {
 
 function PartsView({ db, persist }) {
   const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
+  const actor = useCurrentActor();
   const taxRate = db.settings?.taxRate ?? 13;
 
   const save = (part) => {
     const exists = db.parts.some((p) => p.id === part.id);
     const parts = exists ? db.parts.map((p) => (p.id === part.id ? part : p)) : [...db.parts, part];
-    persist({ ...db, parts });
+    const activityLog = addLog(db, actor, exists ? `Updated part ${part.name}` : `Added part ${part.name}`);
+    persist({ ...db, parts, activityLog });
     setModal(null);
   };
 
   const remove = (id) => {
-    persist({ ...db, parts: db.parts.filter((p) => p.id !== id) });
+    const part = db.parts.find((p) => p.id === id);
+    const activityLog = addLog(db, actor, `Removed part ${part?.name ?? ""}`);
+    persist({ ...db, parts: db.parts.filter((p) => p.id !== id), activityLog });
     confirm.clear();
   };
+
+  const filtered = db.parts.filter((p) => !filter || p.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
     <div>
@@ -759,7 +873,13 @@ function PartsView({ db, persist }) {
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Parts</h2>
           <p className="text-sm text-[#75716A]">Name, price, and quantity in stock.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            className={inputCls + " w-44"}
+            placeholder="Search parts…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
           <TaxRateControl db={db} persist={persist} />
           <button
             onClick={() => setModal({ mode: "new" })}
@@ -779,6 +899,8 @@ function PartsView({ db, persist }) {
             </button>
           }
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState text="No parts match your search." />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[#E2DED5]">
           <table className="w-full text-sm">
@@ -792,7 +914,7 @@ function PartsView({ db, persist }) {
               </tr>
             </thead>
             <tbody>
-              {db.parts
+              {filtered
                 .slice()
                 .sort((a, b) => a.name.localeCompare(b.name))
                 .map((p) => {
@@ -896,6 +1018,294 @@ function PartForm({ initial, onSave, onCancel }) {
   );
 }
 
+// ---------- Dashboard ----------
+
+function StatCard({ label, value, onClick, tone }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className={`text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 ${onClick ? "hover:border-[#377249]/40 transition cursor-pointer" : "cursor-default"}`}
+    >
+      <div className="text-xs text-[#75716A] mb-1.5">{label}</div>
+      <div className={`text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}`}>{value}</div>
+    </button>
+  );
+}
+
+function DashboardView({ db, onGoToTab }) {
+  const taxRate = db.settings?.taxRate ?? 13;
+  const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
+  const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
+  const sitesNeedingService = new Set(openWorkOrders.map((w) => w.siteId).filter(Boolean)).size;
+  const pendingQuoteValue = db.quotes
+    .filter((q) => q.status === "Draft" || q.status === "Sent")
+    .reduce((sum, q) => sum + computeQuoteTotals(q, taxRate).total, 0);
+
+  const recentWorkOrders = db.workOrders
+    .slice()
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .slice(0, 6);
+
+  const recentActivity = (db.activityLog || []).slice(0, 8);
+
+  return (
+    <div>
+      <div className="mb-5">
+        <h2 className="font-serif text-2xl text-[#377249] font-semibold">Dashboard</h2>
+        <p className="text-sm text-[#75716A]">Today's overview across the campground.</p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Open Work Orders" value={openWorkOrders.length} onClick={() => onGoToTab("workorders")} />
+        <StatCard
+          label="Urgent Items"
+          value={urgentCount}
+          tone={urgentCount > 0 ? "text-[#a8532a]" : undefined}
+          onClick={() => onGoToTab("workorders")}
+        />
+        <StatCard label="Sites Needing Service" value={sitesNeedingService} onClick={() => onGoToTab("sites")} />
+        <StatCard label="Pending Quote Value" value={formatPrice(pendingQuoteValue)} onClick={() => onGoToTab("quotes")} />
+      </div>
+
+      <div className="grid lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4">
+          <h3 className="font-serif text-base font-semibold text-[#1E1A13] mb-3">Recent Work Orders</h3>
+          {recentWorkOrders.length === 0 ? (
+            <p className="text-xs text-[#75716A]">No work orders yet.</p>
+          ) : (
+            <div>
+              {recentWorkOrders.map((w) => {
+                const site = db.sites.find((s) => s.id === w.siteId);
+                const cottage = db.cottages.find((c) => c.id === w.cottageId);
+                const where = site ? `Site ${site.number}` : cottage ? cottage.name : "—";
+                return (
+                  <div key={w.id} className="flex items-center justify-between gap-3 py-2 border-b border-[#EEEBE5] last:border-0">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-[#1E1A13] truncate">{w.title}</div>
+                      <div className="text-xs text-[#75716A] truncate">
+                        {where}
+                        {w.assignedTo ? ` · ${w.assignedTo}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 flex-shrink-0">
+                      {w.priority && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[w.priority] || ""}`}>
+                          {w.priority}
+                        </span>
+                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}`}>
+                        {w.status}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4">
+          <h3 className="font-serif text-base font-semibold text-[#1E1A13] mb-3">Staff Availability</h3>
+          {db.staff.length === 0 ? (
+            <p className="text-xs text-[#75716A]">No staff added yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {db.staff.map((s) => (
+                <div key={s.id} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STAFF_STATUS_DOT[s.status] || "bg-[#E2DED5]"}`} />
+                    <span className="text-[#1E1A13] truncate">{s.name}</span>
+                  </div>
+                  <span className="text-xs text-[#75716A] flex-shrink-0">{s.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4">
+        <h3 className="font-serif text-base font-semibold text-[#1E1A13] mb-3">Recent Activity</h3>
+        {recentActivity.length === 0 ? (
+          <p className="text-xs text-[#75716A]">Nothing logged yet.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {recentActivity.map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-[#4B4740] truncate">{entry.summary}</span>
+                <span className="text-[#9A968D] flex-shrink-0">{timeAgo(entry.ts)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Staff ----------
+
+function StaffView({ db, persist }) {
+  const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
+  const confirm = useConfirm();
+  const actor = useCurrentActor();
+
+  const save = (person) => {
+    const exists = db.staff.some((s) => s.id === person.id);
+    const staff = exists ? db.staff.map((s) => (s.id === person.id ? person : s)) : [...db.staff, person];
+    const activityLog = addLog(db, actor, exists ? `Updated staff member ${person.name}` : `Added staff member ${person.name}`);
+    persist({ ...db, staff, activityLog });
+    setModal(null);
+  };
+
+  const remove = (id) => {
+    const person = db.staff.find((s) => s.id === id);
+    const activityLog = addLog(db, actor, `Removed staff member ${person?.name ?? ""}`);
+    persist({ ...db, staff: db.staff.filter((s) => s.id !== id), activityLog });
+    confirm.clear();
+  };
+
+  const updateStatus = (person, status) => {
+    const activityLog = addLog(db, actor, `${person.name} marked ${status}`);
+    persist({ ...db, staff: db.staff.map((s) => (s.id === person.id ? { ...s, status } : s)), activityLog });
+  };
+
+  const filtered = db.staff.filter((s) => !filter || `${s.name} ${s.phone || ""}`.toLowerCase().includes(filter.toLowerCase()));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
+        <div>
+          <h2 className="font-serif text-2xl text-[#377249] font-semibold">Staff</h2>
+          <p className="text-sm text-[#75716A]">Your crew and who's available right now.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            className={inputCls + " w-44"}
+            placeholder="Search staff…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <button
+            onClick={() => setModal({ mode: "new" })}
+            className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+          >
+            + New Staff
+          </button>
+        </div>
+      </div>
+
+      {db.staff.length === 0 ? (
+        <EmptyState
+          text="No staff added yet."
+          action={
+            <button onClick={() => setModal({ mode: "new" })} className="text-[#C1652F] text-sm font-medium underline">
+              Add a staff member
+            </button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState text="No staff match your search." />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-[#E2DED5]">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider">
+                <th className="px-4 py-2.5">Name</th>
+                <th className="px-4 py-2.5">Phone</th>
+                <th className="px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5 w-32"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((s) => (
+                <tr key={s.id} className="border-t border-[#EEEBE5] hover:bg-[#FFFDFA]">
+                  <td className="px-4 py-2.5 font-semibold text-[#1E1A13]">
+                    <span className={`inline-block w-2 h-2 rounded-full mr-2 ${STAFF_STATUS_DOT[s.status] || "bg-[#E2DED5]"}`} />
+                    {s.name}
+                  </td>
+                  <td className="px-4 py-2.5 text-[#4B4740]">{s.phone || "—"}</td>
+                  <td className="px-4 py-2.5">
+                    <select
+                      value={s.status}
+                      onChange={(e) => updateStatus(s, e.target.value)}
+                      className="text-xs rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-[#4B4740] focus:outline-none focus:ring-2 focus:ring-[#377249]/30"
+                    >
+                      {STAFF_STATUS.map((st) => (
+                        <option key={st} value={st}>{st}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <div className="flex gap-3 justify-end text-xs">
+                      <button className="text-[#377249] hover:underline" onClick={() => setModal({ mode: "edit", data: s })}>
+                        Edit
+                      </button>
+                      <button className="text-[#a8532a] hover:underline" onClick={() => confirm.ask(s.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <Modal title={modal.mode === "new" ? "New Staff Member" : "Edit Staff Member"} onClose={() => setModal(null)}>
+          <StaffForm initial={modal.data} onSave={save} onCancel={() => setModal(null)} />
+        </Modal>
+      )}
+
+      {confirm.target && (
+        <ConfirmDeleteModal
+          label={db.staff.find((s) => s.id === confirm.target)?.name ?? "this staff member"}
+          onConfirm={() => remove(confirm.target)}
+          onCancel={confirm.clear}
+        />
+      )}
+    </div>
+  );
+}
+
+function StaffForm({ initial, onSave, onCancel }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [phone, setPhone] = useState(initial?.phone || "");
+  const [status, setStatus] = useState(initial?.status || "Available");
+
+  const submit = () => {
+    if (!name.trim()) return;
+    onSave({ id: initial?.id || uid(), name: name.trim(), phone: phone.trim(), status });
+  };
+
+  return (
+    <div onKeyDown={(e) => { if (e.key === "Enter") submit(); }}>
+      <Field label="Name">
+        <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      </Field>
+      <Field label="Phone">
+        <input className={inputCls} value={phone} onChange={(e) => setPhone(e.target.value)} />
+      </Field>
+      <Field label="Status">
+        <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
+          {STAFF_STATUS.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </Field>
+      <div className="flex justify-end gap-2 mt-4">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Cancel</button>
+        <button type="button" onClick={submit} className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium">Save Staff</button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Quotes ----------
 
 const QUOTE_STATUS = ["Draft", "Sent", "Accepted", "Declined"];
@@ -907,40 +1317,87 @@ const QUOTE_STATUS_STYLES = {
   Declined: "bg-[#F5E3D9] text-[#a8532a]",
 };
 
-function QuotesView({ db, persist }) {
+function QuotesView({ db, persist, onGoToWorkOrders }) {
   const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
+  const actor = useCurrentActor();
   const taxRate = db.settings?.taxRate ?? 13;
 
   const save = (quote) => {
     const exists = db.quotes.some((q) => q.id === quote.id);
     const quotes = exists ? db.quotes.map((q) => (q.id === quote.id ? quote : q)) : [...db.quotes, quote];
-    persist({ ...db, quotes });
+    const activityLog = addLog(db, actor, exists ? `Updated quote "${quote.title}"` : `Created quote "${quote.title}"`);
+    persist({ ...db, quotes, activityLog });
     setModal(null);
   };
 
   const remove = (id) => {
-    persist({ ...db, quotes: db.quotes.filter((q) => q.id !== id) });
+    const quote = db.quotes.find((q) => q.id === id);
+    const activityLog = addLog(db, actor, `Removed quote "${quote?.title ?? ""}"`);
+    persist({ ...db, quotes: db.quotes.filter((q) => q.id !== id), activityLog });
     confirm.clear();
   };
 
   const updateStatus = (quote, status) => {
-    persist({ ...db, quotes: db.quotes.map((q) => (q.id === quote.id ? { ...q, status } : q)) });
+    const activityLog = addLog(db, actor, `Quote "${quote.title}" marked ${status}`);
+    persist({ ...db, quotes: db.quotes.map((q) => (q.id === quote.id ? { ...q, status } : q)), activityLog });
   };
+
+  const convertToWorkOrder = (quote) => {
+    const newId = uid();
+    const lineItemNotes = quote.lineItems.length
+      ? "Line items:\n" + quote.lineItems.map((li) => `- ${li.description} (x${li.quantity})`).join("\n")
+      : "";
+    const newWorkOrder = {
+      id: newId,
+      title: quote.title,
+      description: [quote.notes, lineItemNotes].filter(Boolean).join("\n\n"),
+      siteId: quote.siteId || null,
+      cottageId: quote.cottageId || null,
+      assignedTo: "",
+      status: "Open",
+      priority: "Medium",
+      date: new Date().toISOString().slice(0, 10),
+      completedDate: null,
+      partsUsed: quote.lineItems.filter((li) => li.partId).map((li) => ({ partId: li.partId, quantity: li.quantity })),
+    };
+    const quotes = db.quotes.map((q) => (q.id === quote.id ? { ...q, workOrderId: newId } : q));
+    const activityLog = addLog(db, actor, `Converted quote "${quote.title}" to a work order`);
+    persist({ ...db, workOrders: [...db.workOrders, newWorkOrder], quotes, activityLog });
+    if (onGoToWorkOrders) onGoToWorkOrders();
+  };
+
+  const filtered = db.quotes.filter((q) => {
+    if (!filter) return true;
+    const site = db.sites.find((s) => s.id === q.siteId);
+    const cottage = db.cottages.find((c) => c.id === q.cottageId);
+    const customer = db.customers.find((c) => c.id === q.customerId);
+    const hay = `${q.title} ${site?.number || ""} ${cottage?.name || ""} ${customer?.name || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
         <div>
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Quotes</h2>
           <p className="text-sm text-[#75716A]">Job estimates you can link to a site, cottage, or customer.</p>
         </div>
-        <button
-          onClick={() => setModal({ mode: "new" })}
-          className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm"
-        >
-          + New Quote
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            className={inputCls + " w-44"}
+            placeholder="Search quotes…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <button
+            onClick={() => setModal({ mode: "new" })}
+            className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+          >
+            + New Quote
+          </button>
+        </div>
       </div>
 
       {db.quotes.length === 0 ? (
@@ -952,6 +1409,8 @@ function QuotesView({ db, persist }) {
             </button>
           }
         />
+      ) : filtered.length === 0 ? (
+        <EmptyState text="No quotes match your search." />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[#E2DED5]">
           <table className="w-full text-sm">
@@ -962,11 +1421,11 @@ function QuotesView({ db, persist }) {
                 <th className="px-4 py-2.5">Date</th>
                 <th className="px-4 py-2.5">Status</th>
                 <th className="px-4 py-2.5">Total (incl. tax)</th>
-                <th className="px-4 py-2.5 w-40"></th>
+                <th className="px-4 py-2.5 w-52"></th>
               </tr>
             </thead>
             <tbody>
-              {db.quotes
+              {filtered
                 .slice()
                 .sort((a, b) => (a.date < b.date ? 1 : -1))
                 .map((q) => {
@@ -996,7 +1455,7 @@ function QuotesView({ db, persist }) {
                       </td>
                       <td className="px-4 py-2.5 text-[#4B4740]">{formatPrice(total)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <div className="flex gap-3 justify-end text-xs">
+                        <div className="flex gap-3 justify-end items-center text-xs flex-wrap">
                           <button className="text-[#377249] hover:underline" onClick={() => setModal({ mode: "edit", data: q })}>
                             Edit
                           </button>
@@ -1012,6 +1471,12 @@ function QuotesView({ db, persist }) {
                           >
                             Print
                           </button>
+                          {q.status === "Accepted" && !q.workOrderId && (
+                            <button className="text-[#377249] hover:underline font-medium" onClick={() => convertToWorkOrder(q)}>
+                              Convert
+                            </button>
+                          )}
+                          {q.workOrderId && <span className="text-[10px] text-[#75716A] italic">Converted</span>}
                           <button className="text-[#a8532a] hover:underline" onClick={() => confirm.ask(q.id)}>
                             Delete
                           </button>
@@ -1085,7 +1550,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   const addPartLine = () => {
     const part = parts.find((p) => p.id === partToAdd);
     if (!part) return;
-    setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0 }]);
+    setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, partId: part.id }]);
     setPartToAdd("");
   };
 
@@ -1101,7 +1566,13 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
     if (!title.trim()) return;
     const cleanItems = lineItems
       .filter((li) => li.description.trim())
-      .map((li) => ({ id: li.id, description: li.description.trim(), quantity: Number(li.quantity) || 0, unitPrice: Number(li.unitPrice) || 0 }));
+      .map((li) => ({
+        id: li.id,
+        description: li.description.trim(),
+        quantity: Number(li.quantity) || 0,
+        unitPrice: Number(li.unitPrice) || 0,
+        ...(li.partId ? { partId: li.partId } : {}),
+      }));
     onSave({
       id: initial?.id || uid(),
       title: title.trim(),
@@ -1347,6 +1818,7 @@ function buildWorkOrderHtml(wo, db) {
         <div class="meta">
           <div>Date: ${escapeHtml(wo.date)}</div>
           <div>Status: ${escapeHtml(wo.status)}</div>
+          ${wo.priority ? `<div>Priority: ${escapeHtml(wo.priority)}</div>` : ""}
         </div>
       </div>
       <table class="wo-table">
@@ -1486,6 +1958,18 @@ function downloadPrintable(list, db, filenameBase) {
   downloadPrintableItems(list, (wo) => buildWorkOrderHtml(wo, db), filenameBase);
 }
 
+function exportDatabase(db) {
+  const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `campground-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
@@ -1506,7 +1990,14 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
           {wo.date}
         </span>
       </div>
-      <div className="text-xs text-[#75716A] mt-1 flex flex-wrap gap-x-3">
+      <div className="flex items-center gap-2 mt-1.5">
+        {wo.priority && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[wo.priority] || ""}`}>
+            {wo.priority}
+          </span>
+        )}
+      </div>
+      <div className="text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3">
         {site && <span>Site {site.number}</span>}
         {cottage && <span>{cottage.name}</span>}
         {wo.assignedTo && <span>Assigned: {wo.assignedTo}</span>}
@@ -1539,16 +2030,20 @@ function WorkOrdersView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const confirm = useConfirm();
+  const actor = useCurrentActor();
 
   const save = (wo) => {
     const exists = db.workOrders.some((x) => x.id === wo.id);
     const workOrders = exists ? db.workOrders.map((x) => (x.id === wo.id ? wo : x)) : [...db.workOrders, wo];
-    persist({ ...db, workOrders });
+    const activityLog = addLog(db, actor, exists ? `Updated work order "${wo.title}"` : `Created work order "${wo.title}"`);
+    persist({ ...db, workOrders, activityLog });
     setModal(null);
   };
 
   const remove = (id) => {
-    persist({ ...db, workOrders: db.workOrders.filter((w) => w.id !== id) });
+    const wo = db.workOrders.find((w) => w.id === id);
+    const activityLog = addLog(db, actor, `Removed work order "${wo?.title ?? ""}"`);
+    persist({ ...db, workOrders: db.workOrders.filter((w) => w.id !== id), activityLog });
     confirm.clear();
   };
 
@@ -1560,7 +2055,16 @@ function WorkOrdersView({ db, persist }) {
       status: nextStatus,
       completedDate: nextStatus === "Completed" ? new Date().toISOString().slice(0, 10) : wo.completedDate,
     };
-    persist({ ...db, workOrders: db.workOrders.map((w) => (w.id === wo.id ? updated : w)) });
+    let parts = db.parts;
+    if (nextStatus === "Completed" && wo.partsUsed && wo.partsUsed.length) {
+      parts = db.parts.map((p) => {
+        const used = wo.partsUsed.find((pu) => pu.partId === p.id);
+        if (!used) return p;
+        return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
+      });
+    }
+    const activityLog = addLog(db, actor, `Work order "${wo.title}" marked ${nextStatus}`);
+    persist({ ...db, workOrders: db.workOrders.map((w) => (w.id === wo.id ? updated : w)), parts, activityLog });
   };
 
   const filtered = db.workOrders.filter((w) => {
@@ -1650,7 +2154,15 @@ function WorkOrdersView({ db, persist }) {
 
       {modal && (
         <Modal title={modal.mode === "new" ? "New Work Order" : "Edit Work Order"} onClose={() => setModal(null)} wide>
-          <WorkOrderForm initial={modal.data} sites={db.sites} cottages={db.cottages} onSave={save} onCancel={() => setModal(null)} />
+          <WorkOrderForm
+            initial={modal.data}
+            sites={db.sites}
+            cottages={db.cottages}
+            staff={db.staff}
+            parts={db.parts}
+            onSave={save}
+            onCancel={() => setModal(null)}
+          />
         </Modal>
       )}
 
@@ -1665,14 +2177,36 @@ function WorkOrdersView({ db, persist }) {
   );
 }
 
-function WorkOrderForm({ initial, sites, cottages, onSave, onCancel }) {
+function WorkOrderForm({ initial, sites, cottages, staff, parts, onSave, onCancel }) {
   const [title, setTitle] = useState(initial?.title || "");
   const [description, setDescription] = useState(initial?.description || "");
   const [siteId, setSiteId] = useState(initial?.siteId || "");
   const [cottageId, setCottageId] = useState(initial?.cottageId || "");
   const [assignedTo, setAssignedTo] = useState(initial?.assignedTo || "");
   const [status, setStatus] = useState(initial?.status || "Open");
+  const [priority, setPriority] = useState(initial?.priority || "Medium");
   const [date, setDate] = useState(initial?.date || new Date().toISOString().slice(0, 10));
+  const [partsUsed, setPartsUsed] = useState(initial?.partsUsed || []);
+  const [partToAdd, setPartToAdd] = useState("");
+
+  const addPartUsed = () => {
+    const part = (parts || []).find((p) => p.id === partToAdd);
+    if (!part) return;
+    setPartsUsed((items) =>
+      items.some((pu) => pu.partId === part.id)
+        ? items.map((pu) => (pu.partId === part.id ? { ...pu, quantity: (Number(pu.quantity) || 0) + 1 } : pu))
+        : [...items, { partId: part.id, quantity: 1 }]
+    );
+    setPartToAdd("");
+  };
+
+  const updatePartQty = (partId, quantity) => {
+    setPartsUsed((items) => items.map((pu) => (pu.partId === partId ? { ...pu, quantity } : pu)));
+  };
+
+  const removePartUsed = (partId) => {
+    setPartsUsed((items) => items.filter((pu) => pu.partId !== partId));
+  };
 
   const submit = () => {
     if (!title.trim()) return;
@@ -1684,8 +2218,12 @@ function WorkOrderForm({ initial, sites, cottages, onSave, onCancel }) {
       cottageId: cottageId || null,
       assignedTo: assignedTo.trim(),
       status,
+      priority,
       date,
       completedDate: initial?.completedDate || (status === "Completed" ? new Date().toISOString().slice(0, 10) : null),
+      partsUsed: partsUsed
+        .filter((pu) => (Number(pu.quantity) || 0) > 0)
+        .map((pu) => ({ partId: pu.partId, quantity: Number(pu.quantity) || 0 })),
     });
   };
 
@@ -1715,7 +2253,25 @@ function WorkOrderForm({ initial, sites, cottages, onSave, onCancel }) {
           </select>
         </Field>
         <Field label="Assigned To">
-          <input className={inputCls} value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} placeholder="e.g. Dave" />
+          <input
+            className={inputCls}
+            value={assignedTo}
+            onChange={(e) => setAssignedTo(e.target.value)}
+            placeholder="e.g. Dave"
+            list="wo-staff-list"
+          />
+          <datalist id="wo-staff-list">
+            {(staff || []).map((s) => (
+              <option key={s.id} value={s.name} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="Priority">
+          <select className={inputCls} value={priority} onChange={(e) => setPriority(e.target.value)}>
+            {PRIORITY.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
         </Field>
         <Field label="Status">
           <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -1728,6 +2284,62 @@ function WorkOrderForm({ initial, sites, cottages, onSave, onCancel }) {
       <Field label="Description">
         <textarea className={inputCls} rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What needs doing, parts needed, etc." />
       </Field>
+
+      {parts && parts.length > 0 && (
+        <div className="mt-3">
+          <span className="block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold">Parts Used</span>
+          {partsUsed.length > 0 && (
+            <div className="space-y-1.5 mb-2">
+              {partsUsed.map((pu) => {
+                const part = parts.find((p) => p.id === pu.partId);
+                return (
+                  <div key={pu.partId} className="flex items-center gap-2 text-sm">
+                    <span className="flex-1 text-[#1E1A13]">{part ? part.name : "Unknown part"}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      className={inputCls + " w-16"}
+                      value={pu.quantity}
+                      onChange={(e) => updatePartQty(pu.partId, e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePartUsed(pu.partId)}
+                      className="text-[#a8532a] hover:bg-[#F5E3D9] w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+                      aria-label="Remove part"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <select
+              className="rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-xs text-[#1E1A13]"
+              value={partToAdd}
+              onChange={(e) => setPartToAdd(e.target.value)}
+            >
+              <option value="">Add a part used…</option>
+              {parts.map((p) => (
+                <option key={p.id} value={p.id}>{p.name} ({p.quantity} in stock)</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={addPartUsed}
+              disabled={!partToAdd}
+              className="text-xs px-2 py-1 rounded-md border border-[#377249]/30 text-[#377249] hover:bg-[#377249]/10 disabled:opacity-40"
+            >
+              Add
+            </button>
+          </div>
+          <p className="text-[11px] text-[#75716A] mt-1.5">Stock is deducted automatically when this work order is marked Complete.</p>
+        </div>
+      )}
+
       <div className="flex justify-end gap-2 mt-4">
         <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Cancel</button>
         <button type="button" onClick={submit} className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium">Save Work Order</button>
@@ -1739,17 +2351,22 @@ function WorkOrderForm({ initial, sites, cottages, onSave, onCancel }) {
 // ---------- App shell ----------
 
 const TABS = [
+  { key: "dashboard", label: "Dashboard" },
   { key: "workorders", label: "Work Orders" },
   { key: "sites", label: "Sites" },
   { key: "cottages", label: "Cottages" },
   { key: "customers", label: "Customers" },
   { key: "parts", label: "Parts" },
   { key: "quotes", label: "Quotes" },
+  { key: "staff", label: "Staff" },
 ];
 
 function AppContent() {
   const { db, loading, error, persist, retry } = useDb();
-  const [tab, setTab] = useState("workorders");
+  const [tab, setTab] = useState("dashboard");
+  const [importPending, setImportPending] = useState(null);
+  const importInputRef = useRef(null);
+  const actor = useCurrentActor();
 
   if (loading || !db) {
     return (
@@ -1760,6 +2377,31 @@ function AppContent() {
   }
 
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
+
+  const handleImportFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        setImportPending(parsed);
+      } catch (err) {
+        setImportPending({ __invalid: true });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const confirmImport = () => {
+    if (importPending && !importPending.__invalid) {
+      const next = { ...emptyDb(), ...importPending };
+      next.activityLog = addLog(next, actor, "Restored data from a backup file");
+      persist(next);
+    }
+    setImportPending(null);
+  };
 
   return (
     <div className="min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]">
@@ -1786,16 +2428,25 @@ function AppContent() {
           ))}
         </nav>
 
-        <div className="px-3 py-3 border-t border-[#E2DED5] mt-1.5 flex items-center justify-between gap-2">
+        <div className="px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2">
           <div className="text-[11px] text-[#75716A] font-medium">
             {openCount} open work order{openCount === 1 ? "" : "s"}
           </div>
-          <button
-            onClick={() => firebase.auth().signOut()}
-            className="text-[11px] text-[#75716A] hover:text-[#1E1A13] font-medium underline whitespace-nowrap"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-3 text-[11px] flex-wrap">
+            <button onClick={() => exportDatabase(db)} className="text-[#75716A] hover:text-[#1E1A13] font-medium underline">
+              Export backup
+            </button>
+            <button onClick={() => importInputRef.current?.click()} className="text-[#75716A] hover:text-[#1E1A13] font-medium underline">
+              Import backup
+            </button>
+            <button
+              onClick={() => firebase.auth().signOut()}
+              className="text-[#75716A] hover:text-[#1E1A13] font-medium underline whitespace-nowrap"
+            >
+              Sign out
+            </button>
+          </div>
+          <input ref={importInputRef} type="file" accept="application/json" onChange={handleImportFile} className="hidden" />
         </div>
       </aside>
 
@@ -1810,14 +2461,40 @@ function AppContent() {
         )}
 
         <main>
+          {tab === "dashboard" && <DashboardView db={db} onGoToTab={setTab} />}
           {tab === "workorders" && <WorkOrdersView db={db} persist={persist} />}
           {tab === "sites" && <SitesView db={db} persist={persist} />}
           {tab === "cottages" && <CottagesView db={db} persist={persist} />}
           {tab === "customers" && <CustomersView db={db} persist={persist} />}
           {tab === "parts" && <PartsView db={db} persist={persist} />}
-          {tab === "quotes" && <QuotesView db={db} persist={persist} />}
+          {tab === "quotes" && <QuotesView db={db} persist={persist} onGoToWorkOrders={() => setTab("workorders")} />}
+          {tab === "staff" && <StaffView db={db} persist={persist} />}
         </main>
       </div>
+
+      {importPending && (
+        importPending.__invalid ? (
+          <Modal title="Import failed" onClose={() => setImportPending(null)}>
+            <p className="text-sm text-[#4B4740] mb-5">
+              That file doesn't look like a valid backup — it may be corrupted or not a JSON export from this app.
+            </p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setImportPending(null)}
+                className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
+              >
+                OK
+              </button>
+            </div>
+          </Modal>
+        ) : (
+          <ConfirmDeleteModal
+            label="all current data — replacing it with this backup file"
+            onConfirm={confirmImport}
+            onCancel={() => setImportPending(null)}
+          />
+        )
+      )}
     </div>
   );
 }
@@ -1913,7 +2590,11 @@ function AuthGate() {
     return <LoginScreen />;
   }
 
-  return <AppContent />;
+  return (
+    <CurrentUserContext.Provider value={user.email}>
+      <AppContent />
+    </CurrentUserContext.Provider>
+  );
 }
 
 function App() {
