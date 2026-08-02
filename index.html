@@ -314,6 +314,7 @@ function SitesView({ db, persist }) {
   const [filter, setFilter] = useState("");
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
 
@@ -344,6 +345,15 @@ function SitesView({ db, persist }) {
     setBulkOpen(false);
   };
 
+  const bulkEdit = (field, value, ids) => {
+    const idSet = new Set(ids);
+    const sites = db.sites.map((s) => (idSet.has(s.id) ? { ...s, [field]: value } : s));
+    const fieldLabel = { section: "section", hookups: "hookups", notes: "notes" }[field] || field;
+    const activityLog = addLog(db, actor, `Bulk-updated ${fieldLabel} for ${ids.length} site${ids.length === 1 ? "" : "s"}`);
+    persist({ ...db, sites, activityLog });
+    setBulkEditOpen(false);
+  };
+
   const remove = (id) => {
     const site = db.sites.find((s) => s.id === id);
     const activityLog = addLog(db, actor, `Removed site ${site?.number ?? ""}`);
@@ -364,7 +374,7 @@ function SitesView({ db, persist }) {
           <h2 className="font-serif text-2xl text-[#377249] font-semibold">Sites</h2>
           <p className="text-sm text-[#75716A]">Site numbers, sections, and hookup notes.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <input
             className={inputCls + " w-48"}
             placeholder="Search sites…"
@@ -377,6 +387,14 @@ function SitesView({ db, persist }) {
           >
             Bulk Add
           </button>
+          {db.sites.length > 0 && (
+            <button
+              onClick={() => setBulkEditOpen(true)}
+              className="px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+            >
+              Bulk Edit
+            </button>
+          )}
           <button
             onClick={() => setModal({ mode: "new" })}
             className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
@@ -453,6 +471,12 @@ function SitesView({ db, persist }) {
         </Modal>
       )}
 
+      {bulkEditOpen && (
+        <Modal title="Bulk Edit Sites" onClose={() => setBulkEditOpen(false)} wide>
+          <BulkEditSitesForm sites={db.sites} onSave={bulkEdit} onCancel={() => setBulkEditOpen(false)} />
+        </Modal>
+      )}
+
       {detailId && (
         <SiteDetailModal
           site={db.sites.find((s) => s.id === detailId)}
@@ -518,6 +542,97 @@ function BulkAddSitesForm({ onSave, onCancel }) {
           className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
         >
           Add {numbers.length || ""} Site{numbers.length === 1 ? "" : "s"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BulkEditSitesForm({ sites, onSave, onCancel }) {
+  const [field, setField] = useState("section");
+  const [value, setValue] = useState("");
+  const [selected, setSelected] = useState(() => new Set());
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelected(new Set(sites.map((s) => s.id)));
+  const clearAll = () => setSelected(new Set());
+
+  const submit = () => {
+    if (selected.size === 0) return;
+    onSave(field, value, Array.from(selected));
+  };
+
+  const fieldLabel = { section: "Section", hookups: "Hookups", notes: "Notes" }[field];
+  const sortedSites = sites.slice().sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+
+  return (
+    <div>
+      <p className="text-sm text-[#4B4740] mb-3">
+        Set one field to a value, then check off which sites should get it.
+      </p>
+      <div className="grid sm:grid-cols-2 gap-x-4">
+        <Field label="Field to Update">
+          <select className={inputCls} value={field} onChange={(e) => setField(e.target.value)}>
+            <option value="section">Section</option>
+            <option value="hookups">Hookups</option>
+            <option value="notes">Notes</option>
+          </select>
+        </Field>
+        <Field label={`New ${fieldLabel} Value`}>
+          <input
+            className={inputCls}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : "e.g. Access notes"}
+            autoFocus
+          />
+        </Field>
+      </div>
+
+      <div className="flex items-center justify-between mb-2 mt-1">
+        <span className="text-[11px] uppercase tracking-wider text-[#75716A] font-semibold">
+          Apply to ({selected.size} selected)
+        </span>
+        <div className="flex gap-3 text-xs">
+          <button type="button" onClick={selectAll} className="text-[#377249] hover:underline font-medium">Select All</button>
+          <button type="button" onClick={clearAll} className="text-[#75716A] hover:underline font-medium">Clear</button>
+        </div>
+      </div>
+
+      <div className="max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]">
+        {sortedSites.map((s) => (
+          <label key={s.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer">
+            <span className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={selected.has(s.id)}
+                onChange={() => toggle(s.id)}
+                className="accent-[#377249]"
+              />
+              <span className="text-[#1E1A13] font-medium">Site {s.number}</span>
+            </span>
+            <span className="text-xs text-[#75716A] truncate max-w-[10rem]">{s[field] || "—"}</span>
+          </label>
+        ))}
+      </div>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={selected.size === 0}
+          className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+        >
+          Update {selected.size || ""} Site{selected.size === 1 ? "" : "s"}
         </button>
       </div>
     </div>
