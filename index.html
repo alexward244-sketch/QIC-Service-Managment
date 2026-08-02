@@ -13,6 +13,9 @@
 <!-- Tailwind (utility classes) -->
 <script src="https://cdn.tailwindcss.com"></script>
 
+<!-- SheetJS (Excel export) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
 <!-- Firebase (compat SDK — plain globals, no build step needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -310,6 +313,7 @@ function SitesView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [detailId, setDetailId] = useState(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
 
@@ -319,6 +323,25 @@ function SitesView({ db, persist }) {
     const activityLog = addLog(db, actor, exists ? `Updated site ${site.number}` : `Added site ${site.number}`);
     persist({ ...db, sites, activityLog });
     setModal(null);
+  };
+
+  const bulkAdd = (numbers) => {
+    const existingNumbers = new Set(db.sites.map((s) => s.number.trim().toLowerCase()));
+    const newSites = [];
+    numbers.forEach((n) => {
+      const trimmed = n.trim();
+      if (!trimmed) return;
+      if (existingNumbers.has(trimmed.toLowerCase())) return;
+      existingNumbers.add(trimmed.toLowerCase());
+      newSites.push({ id: uid(), number: trimmed, section: "", hookups: "", notes: "" });
+    });
+    if (newSites.length === 0) {
+      setBulkOpen(false);
+      return;
+    }
+    const activityLog = addLog(db, actor, `Bulk-added ${newSites.length} site${newSites.length === 1 ? "" : "s"}`);
+    persist({ ...db, sites: [...db.sites, ...newSites], activityLog });
+    setBulkOpen(false);
   };
 
   const remove = (id) => {
@@ -348,6 +371,12 @@ function SitesView({ db, persist }) {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
+          <button
+            onClick={() => setBulkOpen(true)}
+            className="px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+          >
+            Bulk Add
+          </button>
           <button
             onClick={() => setModal({ mode: "new" })}
             className="px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
@@ -418,6 +447,12 @@ function SitesView({ db, persist }) {
         </Modal>
       )}
 
+      {bulkOpen && (
+        <Modal title="Bulk Add Sites" onClose={() => setBulkOpen(false)}>
+          <BulkAddSitesForm onSave={bulkAdd} onCancel={() => setBulkOpen(false)} />
+        </Modal>
+      )}
+
       {detailId && (
         <SiteDetailModal
           site={db.sites.find((s) => s.id === detailId)}
@@ -437,6 +472,54 @@ function SitesView({ db, persist }) {
           onCancel={confirm.clear}
         />
       )}
+    </div>
+  );
+}
+
+function BulkAddSitesForm({ onSave, onCancel }) {
+  const [text, setText] = useState("");
+
+  const numbers = text
+    .split(/[\n,]/)
+    .map((n) => n.trim())
+    .filter(Boolean);
+
+  const submit = () => {
+    if (numbers.length === 0) return;
+    onSave(numbers);
+  };
+
+  return (
+    <div>
+      <p className="text-sm text-[#4B4740] mb-3">
+        Paste your site numbers below — one per line, or separated by commas. You can fill in section, hookups,
+        and notes for each afterward from the Sites list.
+      </p>
+      <Field label="Site Numbers">
+        <textarea
+          className={inputCls}
+          rows={8}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={"e.g.\n12\n13\n14\nor: 12, 13, 14"}
+          autoFocus
+        />
+      </Field>
+      <p className="text-xs text-[#75716A] mb-3">
+        {numbers.length} site{numbers.length === 1 ? "" : "s"} ready to add
+        {numbers.length > 0 ? ` (${numbers.slice(0, 8).join(", ")}${numbers.length > 8 ? "…" : ""})` : ""}
+      </p>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} className="px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md">Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={numbers.length === 0}
+          className="px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+        >
+          Add {numbers.length || ""} Site{numbers.length === 1 ? "" : "s"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2209,6 +2292,152 @@ function exportDatabase(db) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+function buildExcelSheets(db) {
+  const siteNumber = (id) => db.sites.find((s) => s.id === id)?.number || "";
+  const cottageName = (id) => db.cottages.find((c) => c.id === id)?.name || "";
+  const customerName = (id) => db.customers.find((c) => c.id === id)?.name || "";
+  const partName = (id) => db.parts.find((p) => p.id === id)?.name || "";
+  const taxRate = db.settings?.taxRate ?? 13;
+
+  const sites = db.sites.map((s) => ({
+    "Site #": s.number,
+    Section: s.section || "",
+    Hookups: s.hookups || "",
+    Notes: s.notes || "",
+  }));
+
+  const cottages = db.cottages.map((c) => ({
+    Name: c.name,
+    Colour: c.color || "",
+    Site: siteNumber(c.siteId),
+    Year: c.year || "",
+    "Model Number": c.modelNumber || "",
+    "Serial Number": c.serialNumber || "",
+    Features: c.features || "",
+  }));
+
+  const customers = db.customers.map((c) => ({
+    Name: c.name,
+    Phone: c.phone || "",
+    Email: c.email || "",
+    Address: c.address || "",
+    Site: siteNumber(c.siteId),
+  }));
+
+  const workOrders = db.workOrders.map((w) => ({
+    Title: w.title,
+    Date: w.date,
+    Status: w.status,
+    Priority: w.priority || "",
+    Site: siteNumber(w.siteId),
+    Cottage: cottageName(w.cottageId),
+    "Assigned To": w.assignedTo || "",
+    Hours: w.laborHours || "",
+    "Rate Type": w.laborRateType || "",
+    "Labor Cost": w.laborHours ? Number(w.laborHours) * Number(w.laborRate || 0) : "",
+    Description: w.description || "",
+    "Completed Date": w.completedDate || "",
+  }));
+
+  const parts = db.parts.map((p) => ({
+    Name: p.name,
+    Price: p.price,
+    "Price (incl. tax)": Number(p.price) * (1 + taxRate / 100),
+    "Qty in Stock": p.quantity,
+    "Reorder Threshold": p.reorderThreshold ?? 2,
+  }));
+
+  const quotes = db.quotes.map((q) => {
+    const totals = computeQuoteTotals(q, taxRate);
+    return {
+      Title: q.title,
+      Date: q.date,
+      Status: q.status,
+      Site: siteNumber(q.siteId),
+      Cottage: cottageName(q.cottageId),
+      Customer: customerName(q.customerId),
+      "Labor Hours": q.laborHours || "",
+      "Rate Type": q.laborRateType || "",
+      "Shop Supplies %": q.shopSuppliesPercent || "",
+      "Service Call": q.serviceCall || "",
+      Subtotal: totals.subtotal,
+      Tax: totals.tax,
+      Total: totals.total,
+      "Converted to Work Order": q.workOrderId ? "Yes" : "No",
+    };
+  });
+
+  const quoteLineItems = [];
+  db.quotes.forEach((q) => {
+    (q.lineItems || []).forEach((li) => {
+      quoteLineItems.push({
+        Quote: q.title,
+        Description: li.description,
+        Quantity: li.quantity,
+        "Unit Price": li.unitPrice,
+        "Line Total": (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0),
+      });
+    });
+  });
+
+  const partsUsedRows = [];
+  db.workOrders.forEach((w) => {
+    (w.partsUsed || []).forEach((pu) => {
+      partsUsedRows.push({
+        "Work Order": w.title,
+        Part: partName(pu.partId),
+        "Quantity Used": pu.quantity,
+      });
+    });
+  });
+
+  const staff = db.staff.map((s) => ({
+    Name: s.name,
+    Phone: s.phone || "",
+    Email: s.email || "",
+    Status: s.status,
+  }));
+
+  const recurringTasks = (db.recurringTasks || []).map((t) => ({
+    Title: t.title,
+    "Frequency (days)": t.frequencyDays,
+    "Next Due Date": t.nextDueDate,
+    Site: siteNumber(t.siteId),
+    Cottage: cottageName(t.cottageId),
+    Description: t.description || "",
+  }));
+
+  const activityLog = (db.activityLog || []).map((e) => ({
+    "Date/Time": new Date(e.ts).toLocaleString(),
+    Actor: e.actor,
+    Summary: e.summary,
+  }));
+
+  return {
+    Sites: sites,
+    Cottages: cottages,
+    Customers: customers,
+    "Work Orders": workOrders,
+    Parts: parts,
+    Quotes: quotes,
+    "Quote Line Items": quoteLineItems,
+    "Parts Used": partsUsedRows,
+    Staff: staff,
+    "Recurring Tasks": recurringTasks,
+    "Activity Log": activityLog,
+  };
+}
+
+function exportExcel(db) {
+  const sheets = buildExcelSheets(db);
+  const wb = XLSX.utils.book_new();
+  Object.entries(sheets).forEach(([name, rows]) => {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
+  });
+  XLSX.writeFile(wb, `campground-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
 function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
@@ -3096,6 +3325,9 @@ function AppContent() {
             </button>
             <button onClick={() => importInputRef.current?.click()} className="text-[#75716A] hover:text-[#1E1A13] font-medium underline">
               Import backup
+            </button>
+            <button onClick={() => exportExcel(db)} className="text-[#75716A] hover:text-[#1E1A13] font-medium underline">
+              Export as Excel
             </button>
             <button
               onClick={() => firebase.auth().signOut()}
