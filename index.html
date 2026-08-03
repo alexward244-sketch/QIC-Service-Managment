@@ -16,6 +16,9 @@
 <!-- SheetJS (Excel export) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
+<!-- EmailJS (send email from a shared connected account, no backend needed) -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+
 <!-- Firebase (compat SDK — plain globals, no build step needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -50,6 +53,34 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db_ = firebase.firestore();
 const DOC_REF = db_.collection("campground").doc("data");
+
+// =====================================================================
+// 2) PASTE YOUR EMAILJS CONFIG HERE (optional — leave as-is to skip email features)
+//    emailjs.com -> Account -> General -> Public Key
+//    emailjs.com -> Email Services -> your connected service -> Service ID
+//    emailjs.com -> Email Templates -> your template -> Template ID
+// =====================================================================
+const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
+const EMAILJS_SERVICE_ID = "service_ewxmnt1";
+const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
+// =====================================================================
+
+const EMAIL_ENABLED = !EMAILJS_PUBLIC_KEY.startsWith("PASTE_");
+if (EMAIL_ENABLED && window.emailjs) {
+  window.emailjs.init(EMAILJS_PUBLIC_KEY);
+}
+
+function sendEmail({ toEmail, toName, subject, message }) {
+  if (!EMAIL_ENABLED || !window.emailjs) {
+    return Promise.reject(new Error("Email isn't set up yet — add your EmailJS config near the top of this file."));
+  }
+  return window.emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+    to_email: toEmail,
+    to_name: toName || "",
+    subject,
+    message,
+  });
+}
 
 // ---------- Design tokens ----------
 // Bark:      #3E2B23   Forest: #377249   Paper: #F9F5EC
@@ -1754,6 +1785,7 @@ const QUOTE_STATUS_STYLES = {
 function QuotesView({ db, persist, onGoToWorkOrders }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  const [emailStatus, setEmailStatus] = useState({}); // { [quoteId]: "sending" | "sent" | "error" }
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const taxRate = db.settings?.taxRate ?? 13;
@@ -1764,6 +1796,25 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
     const activityLog = addLog(db, actor, exists ? `Updated quote "${quote.title}"` : `Created quote "${quote.title}"`);
     persist({ ...db, quotes, activityLog });
     setModal(null);
+  };
+
+  const emailToCustomer = (quote, customer) => {
+    setEmailStatus((s) => ({ ...s, [quote.id]: "sending" }));
+    sendEmail({
+      toEmail: customer.email,
+      toName: customer.name,
+      subject: `Quote: ${quote.title}`,
+      message: buildQuoteEmailText(quote, db, taxRate),
+    })
+      .then(() => {
+        setEmailStatus((s) => ({ ...s, [quote.id]: "sent" }));
+        const activityLog = addLog(db, actor, `Emailed quote "${quote.title}" to ${customer.name}`);
+        persist({ ...db, activityLog });
+        setTimeout(() => setEmailStatus((s) => ({ ...s, [quote.id]: undefined })), 3000);
+      })
+      .catch(() => {
+        setEmailStatus((s) => ({ ...s, [quote.id]: "error" }));
+      });
   };
 
   const remove = (id) => {
@@ -1905,6 +1956,15 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
                           >
                             Print
                           </button>
+                          {EMAIL_ENABLED && customer?.email && (
+                            <button
+                              className="text-[#377249] hover:underline disabled:opacity-50"
+                              disabled={emailStatus[q.id] === "sending"}
+                              onClick={() => emailToCustomer(q, customer)}
+                            >
+                              {emailStatus[q.id] === "sending" ? "Sending…" : emailStatus[q.id] === "sent" ? "Sent ✓" : emailStatus[q.id] === "error" ? "Failed — retry" : "Email"}
+                            </button>
+                          )}
                           {q.status === "Accepted" && !q.workOrderId && (
                             <button className="text-[#377249] hover:underline font-medium" onClick={() => convertToWorkOrder(q)}>
                               Convert
@@ -2345,6 +2405,61 @@ function buildQuoteHtml(quote, db, taxRate) {
     </div>`;
 }
 
+function buildQuoteEmailText(quote, db, taxRate) {
+  const site = db.sites.find((s) => s.id === quote.siteId);
+  const cottage = db.cottages.find((c) => c.id === quote.cottageId);
+  const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
+  const lines = [];
+  lines.push(`Quote: ${quote.title}`);
+  lines.push(`Date: ${quote.date}`);
+  lines.push(`Status: ${quote.status}`);
+  if (site) lines.push(`Site: ${site.number}`);
+  if (cottage) lines.push(`Cottage: ${cottage.name}`);
+  lines.push("");
+  if (quote.notes) {
+    lines.push("Notes:");
+    lines.push(quote.notes);
+    lines.push("");
+  }
+  if (quote.lineItems.length) {
+    lines.push("Line items:");
+    quote.lineItems.forEach((li) => {
+      lines.push(`  - ${li.description} (x${li.quantity}) — ${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}`);
+    });
+    lines.push("");
+  }
+  if (lineItemsSubtotal) lines.push(`Parts / line items: ${formatPrice(lineItemsSubtotal)}`);
+  if (Number(quote.laborHours) > 0) lines.push(`Labor (${quote.laborHours} hr × ${quote.laborRateType || "Rate"}): ${formatPrice(laborCost)}`);
+  if (quote.shopSuppliesPercent) lines.push(`Shop supplies (${quote.shopSuppliesPercent}%): ${formatPrice(shopSupplies)}`);
+  if (serviceCall) lines.push(`Service call: ${formatPrice(serviceCall)}`);
+  lines.push(`Subtotal: ${formatPrice(subtotal)}`);
+  lines.push(`Tax (${taxRate}%): ${formatPrice(tax)}`);
+  lines.push(`Total: ${formatPrice(total)}`);
+  return lines.join("\n");
+}
+
+function buildWorkOrderEmailText(wo, db) {
+  const site = db.sites.find((s) => s.id === wo.siteId);
+  const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const lines = [];
+  lines.push(`Work Order: ${wo.title}`);
+  lines.push(`Date: ${wo.date}`);
+  lines.push(`Status: ${wo.status}`);
+  if (wo.priority) lines.push(`Priority: ${wo.priority}`);
+  if (site) lines.push(`Site: ${site.number}`);
+  if (cottage) lines.push(`Cottage: ${cottage.name}`);
+  if (wo.assignedTo) lines.push(`Assigned to: ${wo.assignedTo}`);
+  if (Number(wo.laborHours) > 0) {
+    lines.push(`Labor: ${wo.laborHours} hrs × ${wo.laborRateType || "Rate"} (${formatPrice(wo.laborRate || 0)}/hr)`);
+  }
+  lines.push("");
+  if (wo.description) {
+    lines.push("Description:");
+    lines.push(wo.description);
+  }
+  return lines.join("\n");
+}
+
 function buildPrintDocument(bodyHtml) {
   return `<!DOCTYPE html>
 <html>
@@ -2553,7 +2668,7 @@ function exportExcel(db) {
   XLSX.writeFile(wb, `campground-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
+function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail, emailStatus }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = site ? db.customers.find((c) => c.siteId === site.id) : null;
@@ -2599,9 +2714,18 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint }) {
       )}
 
       <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]">
-        <div className="flex gap-3 text-xs">
+        <div className="flex gap-3 text-xs flex-wrap">
           <button className="text-[#377249] hover:underline" onClick={() => onEdit(wo)}>Edit</button>
           <button className="text-[#75716A] hover:underline" onClick={() => onPrint(wo)}>Print</button>
+          {EMAIL_ENABLED && customer?.email && (
+            <button
+              className="text-[#377249] hover:underline disabled:opacity-50"
+              disabled={emailStatus === "sending"}
+              onClick={() => onEmail(wo, customer)}
+            >
+              {emailStatus === "sending" ? "Sending…" : emailStatus === "sent" ? "Sent ✓" : emailStatus === "error" ? "Failed — retry" : "Email"}
+            </button>
+          )}
           <button className="text-[#a8532a] hover:underline" onClick={() => onDelete(wo)}>Delete</button>
         </div>
         {!isDone && (
@@ -2621,15 +2745,51 @@ function WorkOrdersView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
+  const [emailStatus, setEmailStatus] = useState({}); // { [woId]: "sending" | "sent" | "error" }
   const confirm = useConfirm();
   const actor = useCurrentActor();
 
   const save = (wo) => {
-    const exists = db.workOrders.some((x) => x.id === wo.id);
-    const workOrders = exists ? db.workOrders.map((x) => (x.id === wo.id ? wo : x)) : [...db.workOrders, wo];
-    const activityLog = addLog(db, actor, exists ? `Updated work order "${wo.title}"` : `Created work order "${wo.title}"`);
+    const existing = db.workOrders.find((x) => x.id === wo.id);
+    const workOrders = existing ? db.workOrders.map((x) => (x.id === wo.id ? wo : x)) : [...db.workOrders, wo];
+    let activityLog = addLog(db, actor, existing ? `Updated work order "${wo.title}"` : `Created work order "${wo.title}"`);
+
+    // Notify a staff member by email if this work order was just assigned (or reassigned) to them.
+    const assignmentChanged = wo.assignedTo && wo.assignedTo !== existing?.assignedTo;
+    if (EMAIL_ENABLED && assignmentChanged) {
+      const staffMember = (db.staff || []).find((s) => s.name.trim().toLowerCase() === wo.assignedTo.trim().toLowerCase());
+      if (staffMember && staffMember.email) {
+        sendEmail({
+          toEmail: staffMember.email,
+          toName: staffMember.name,
+          subject: `Work order assigned: ${wo.title}`,
+          message: buildWorkOrderEmailText(wo, db),
+        }).catch(() => {});
+        activityLog = addLog({ activityLog }, actor, `Notified ${staffMember.name} by email about "${wo.title}"`);
+      }
+    }
+
     persist({ ...db, workOrders, activityLog });
     setModal(null);
+  };
+
+  const emailToCustomer = (wo, customer) => {
+    setEmailStatus((s) => ({ ...s, [wo.id]: "sending" }));
+    sendEmail({
+      toEmail: customer.email,
+      toName: customer.name,
+      subject: `Work Order: ${wo.title}`,
+      message: buildWorkOrderEmailText(wo, db),
+    })
+      .then(() => {
+        setEmailStatus((s) => ({ ...s, [wo.id]: "sent" }));
+        const activityLog = addLog(db, actor, `Emailed work order "${wo.title}" to ${customer.name}`);
+        persist({ ...db, activityLog });
+        setTimeout(() => setEmailStatus((s) => ({ ...s, [wo.id]: undefined })), 3000);
+      })
+      .catch(() => {
+        setEmailStatus((s) => ({ ...s, [wo.id]: "error" }));
+      });
   };
 
   const remove = (id) => {
@@ -2740,6 +2900,8 @@ function WorkOrdersView({ db, persist }) {
                           onDelete={(w) => confirm.ask(w.id)}
                           onAdvance={advance}
                           onPrint={(w) => downloadPrintable([w], db, `work-order-${w.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`)}
+                          onEmail={emailToCustomer}
+                          emailStatus={emailStatus[wo.id]}
                         />
                       ))
                   )}
