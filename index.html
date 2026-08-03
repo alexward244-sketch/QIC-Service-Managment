@@ -17,7 +17,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <!-- EmailJS (send email from a shared connected account, no backend needed) -->
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
 <!-- Firebase (compat SDK — plain globals, no build step needed) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -67,7 +67,7 @@ const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
 
 const EMAIL_ENABLED = !EMAILJS_PUBLIC_KEY.startsWith("PASTE_");
 if (EMAIL_ENABLED && window.emailjs) {
-  window.emailjs.init(EMAILJS_PUBLIC_KEY);
+  window.emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 }
 
 function sendEmail({ toEmail, toName, subject, message }) {
