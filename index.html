@@ -66,6 +66,23 @@ function sendEmail({ toEmail, toName, subject, message }) {
     message
   });
 }
+
+// Texts staff by emailing their carrier's email-to-SMS gateway (Telus).
+// All staff are on the same carrier, so this is a fixed domain rather than a per-person setting.
+const SMS_GATEWAY_DOMAIN = "msg.telus.com";
+function phoneToSmsAddress(phone) {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return digits.slice(-10) + "@" + SMS_GATEWAY_DOMAIN;
+}
+function sendText({ phone, message }) {
+  const address = phoneToSmsAddress(phone);
+  if (!address) {
+    return Promise.reject(new Error("No valid phone number to text."));
+  }
+  return sendEmail({ toEmail: address, toName: "", subject: "", message: message });
+}
+
 const emptyDb = () => ({
   sites: [],
   cottages: [],
@@ -1435,6 +1452,16 @@ function buildWorkOrderEmailText(wo, db) {
   }
   return lines.join("\n");
 }
+function buildWorkOrderSmsText(wo, db) {
+  const site = db.sites.find((s) => s.id === wo.siteId);
+  const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const where = site ? `Site ${site.number}` : cottage ? cottage.name : "";
+  let msg = `Work Order: ${wo.title}`;
+  if (where) msg += ` @ ${where}`;
+  if (wo.priority) msg += ` (${wo.priority})`;
+  msg += ` - ${wo.date}`;
+  return msg.length > 150 ? msg.slice(0, 147) + "..." : msg;
+}
 function buildPrintDocument(bodyHtml) {
   return `<!DOCTYPE html>
 <html>
@@ -1642,10 +1669,11 @@ function exportExcel(db) {
   });
   XLSX.writeFile(wb, `campground-export-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`);
 }
-function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail, emailStatus }) {
+function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail, emailStatus, onText, smsStatus }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = site ? db.customers.find((c) => c.siteId === site.id) : null;
+  const assignedStaff = wo.assignedTo ? (db.staff || []).find((s) => s.name.trim().toLowerCase() === wo.assignedTo.trim().toLowerCase()) : null;
   const isDone = wo.status === "Completed";
   return /* @__PURE__ */ React.createElement(
     "div",
@@ -1666,6 +1694,14 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail
         onClick: () => onEmail(wo, customer)
       },
       emailStatus === "sending" ? "Sending\u2026" : emailStatus === "sent" ? "Sent \u2713" : emailStatus === "error" ? "Failed \u2014 retry" : "Email"
+    ), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        className: "text-[#377249] hover:underline disabled:opacity-50",
+        disabled: smsStatus === "sending",
+        onClick: () => onText(wo, assignedStaff)
+      },
+      smsStatus === "sending" ? "Texting\u2026" : smsStatus === "sent" ? "Texted \u2713" : smsStatus === "error" ? "Failed \u2014 retry" : "Text"
     ), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(wo) }, "Delete")), !isDone && /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -1683,6 +1719,8 @@ function WorkOrdersView({ db, persist }) {
   const [groupFilter, setGroupFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [emailStatus, setEmailStatus] = useState({});
+  const [smsStatus, setSmsStatus] = useState({});
+  const [pendingText, setPendingText] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (wo) => {
@@ -1690,6 +1728,7 @@ function WorkOrdersView({ db, persist }) {
     const workOrders = existing ? db.workOrders.map((x) => x.id === wo.id ? wo : x) : [...db.workOrders, wo];
     let activityLog = addLog(db, actor, existing ? `Updated work order "${wo.title}"` : `Created work order "${wo.title}"`);
     const assignmentChanged = wo.assignedTo && wo.assignedTo !== (existing == null ? void 0 : existing.assignedTo);
+    let nextPendingText = null;
     if (EMAIL_ENABLED && assignmentChanged) {
       const staffMember = (db.staff || []).find((s) => s.name.trim().toLowerCase() === wo.assignedTo.trim().toLowerCase());
       if (staffMember && staffMember.email) {
@@ -1702,9 +1741,26 @@ function WorkOrdersView({ db, persist }) {
         });
         activityLog = addLog({ activityLog }, actor, `Notified ${staffMember.name} by email about "${wo.title}"`);
       }
+      if (staffMember && staffMember.phone) {
+        nextPendingText = { wo, staffMember };
+      }
     }
     persist({ ...db, workOrders, activityLog });
     setModal(null);
+    if (nextPendingText) setPendingText(nextPendingText);
+  };
+  const confirmSendText = () => {
+    if (!pendingText) return;
+    const { wo, staffMember } = pendingText;
+    sendText({
+      phone: staffMember.phone,
+      message: buildWorkOrderSmsText(wo, db)
+    }).then(() => {
+      const activityLog = addLog(db, actor, `Texted ${staffMember.name} about "${wo.title}"`);
+      persist({ ...db, activityLog });
+    }).catch(() => {
+    });
+    setPendingText(null);
   };
   const emailToCustomer = (wo, customer) => {
     setEmailStatus((s) => ({ ...s, [wo.id]: "sending" }));
@@ -1720,6 +1776,20 @@ function WorkOrdersView({ db, persist }) {
       setTimeout(() => setEmailStatus((s) => ({ ...s, [wo.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [wo.id]: "error" }));
+    });
+  };
+  const textToStaff = (wo, staffMember) => {
+    setSmsStatus((s) => ({ ...s, [wo.id]: "sending" }));
+    sendText({
+      phone: staffMember.phone,
+      message: buildWorkOrderSmsText(wo, db)
+    }).then(() => {
+      setSmsStatus((s) => ({ ...s, [wo.id]: "sent" }));
+      const activityLog = addLog(db, actor, `Texted work order "${wo.title}" to ${staffMember.name}`);
+      persist({ ...db, activityLog });
+      setTimeout(() => setSmsStatus((s) => ({ ...s, [wo.id]: void 0 })), 3e3);
+    }).catch(() => {
+      setSmsStatus((s) => ({ ...s, [wo.id]: "error" }));
     });
   };
   const remove = (id) => {
@@ -1817,7 +1887,9 @@ function WorkOrdersView({ db, persist }) {
         onAdvance: advance,
         onPrint: (w) => downloadPrintable([w], db, `work-order-${w.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`),
         onEmail: emailToCustomer,
-        emailStatus: emailStatus[wo.id]
+        emailStatus: emailStatus[wo.id],
+        onText: textToStaff,
+        smsStatus: smsStatus[wo.id]
       }
     ))));
   })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Work Order" : "Edit Work Order", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(
@@ -1833,7 +1905,21 @@ function WorkOrdersView({ db, persist }) {
       onSave: save,
       onCancel: () => setModal(null)
     }
-  )), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), confirm.target && /* @__PURE__ */ React.createElement(
+  )), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), pendingText && /* @__PURE__ */ React.createElement(Modal, { title: "Text staff member?", onClose: () => setPendingText(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Send ", pendingText.staffMember.name, ' a text about "', pendingText.wo.title, '"?'), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setPendingText(null),
+      className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md"
+    },
+    "Skip"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: confirmSendText,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
+    },
+    "Send Text"
+  ))), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = db.workOrders.find((w) => w.id === confirm.target)) == null ? void 0 : _a.title) != null ? _b : "this work order",
