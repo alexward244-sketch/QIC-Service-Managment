@@ -1635,15 +1635,14 @@ function buildPrintDocument(bodyHtml) {
 function downloadPrintableItems(items, buildItemHtml, filenameBase) {
   const body = items.map(buildItemHtml).join("\n");
   const html = buildPrintDocument(body);
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${filenameBase}.html`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 4e3);
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    alert("Please allow pop-ups for this site to print.");
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
 }
 function downloadPrintable(list, db, filenameBase) {
   downloadPrintableItems(list, (wo) => buildWorkOrderHtml(wo, db), filenameBase);
