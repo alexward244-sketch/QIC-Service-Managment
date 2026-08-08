@@ -1718,6 +1718,7 @@ function WorkOrdersView({ db, persist }) {
   const [filter, setFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [emailStatus, setEmailStatus] = useState({});
   const [smsStatus, setSmsStatus] = useState({});
   const [pendingText, setPendingText] = useState(null);
@@ -1818,6 +1819,29 @@ function WorkOrdersView({ db, persist }) {
     const activityLog = addLog(db, actor, `Work order "${wo.title}" marked ${nextStatus}`);
     persist({ ...db, workOrders: db.workOrders.map((w) => w.id === wo.id ? updated : w), parts, activityLog });
   };
+  const bulkUpdate = (field, value, ids) => {
+    const idSet = new Set(ids);
+    let parts = db.parts;
+    const workOrders = db.workOrders.map((w) => {
+      if (!idSet.has(w.id)) return w;
+      const updated = { ...w, [field]: value };
+      if (field === "status" && value === "Completed" && w.status !== "Completed") {
+        updated.completedDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        if (w.partsUsed && w.partsUsed.length) {
+          parts = parts.map((p) => {
+            const used = w.partsUsed.find((pu) => pu.partId === p.id);
+            if (!used) return p;
+            return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
+          });
+        }
+      }
+      return updated;
+    });
+    const fieldLabel = field === "status" ? "status" : "assignment";
+    const activityLog = addLog(db, actor, `Bulk-updated ${fieldLabel} for ${ids.length} work order${ids.length === 1 ? "" : "s"}`);
+    persist({ ...db, workOrders, parts, activityLog });
+    setBulkEditOpen(false);
+  };
   const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
   const filtered = db.workOrders.filter((w) => {
     if (groupFilter === "__ungrouped__" && w.workGroup) return false;
@@ -1853,6 +1877,13 @@ function WorkOrdersView({ db, persist }) {
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Recurring Tasks"
+  ), db.workOrders.length > 0 && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setBulkEditOpen(true),
+      className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+    },
+    "Bulk Actions"
   ), filtered.length > 0 && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -1905,7 +1936,17 @@ function WorkOrdersView({ db, persist }) {
       onSave: save,
       onCancel: () => setModal(null)
     }
-  )), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), pendingText && /* @__PURE__ */ React.createElement(Modal, { title: "Text staff member?", onClose: () => setPendingText(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Send ", pendingText.staffMember.name, ' a text about "', pendingText.wo.title, '"?'), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
+  )), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Actions", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(
+    BulkEditWorkOrdersForm,
+    {
+      workOrders: db.workOrders,
+      staff: db.staff,
+      sites: db.sites,
+      cottages: db.cottages,
+      onSave: bulkUpdate,
+      onCancel: () => setBulkEditOpen(false)
+    }
+  )), pendingText && /* @__PURE__ */ React.createElement(Modal, { title: "Text staff member?", onClose: () => setPendingText(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Send ", pendingText.staffMember.name, ' a text about "', pendingText.wo.title, '"?'), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setPendingText(null),
@@ -1927,6 +1968,66 @@ function WorkOrdersView({ db, persist }) {
       onCancel: confirm.clear
     }
   ));
+}
+function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, onCancel }) {
+  const [field, setField] = useState("status");
+  const [value, setValue] = useState(STATUS[0]);
+  const [selected, setSelected] = useState(() => /* @__PURE__ */ new Set());
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const selectAll = () => setSelected(new Set(workOrders.map((w) => w.id)));
+  const clearAll = () => setSelected(/* @__PURE__ */ new Set());
+  const handleFieldChange = (f) => {
+    setField(f);
+    setValue(f === "status" ? STATUS[0] : "");
+  };
+  const submit = () => {
+    if (selected.size === 0) return;
+    if (field === "assignedTo" && !value.trim()) return;
+    onSave(field, field === "assignedTo" ? value.trim() : value, Array.from(selected));
+  };
+  const sortedWorkOrders = workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Pick a field and a value, then check off which work orders should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => handleFieldChange(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "status" }, "Status"), /* @__PURE__ */ React.createElement("option", { value: "assignedTo" }, "Assigned To"))), field === "status" ? /* @__PURE__ */ React.createElement(Field, { label: "New Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value, onChange: (e) => setValue(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))) : /* @__PURE__ */ React.createElement(Field, { label: "Assign To" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls,
+      value,
+      onChange: (e) => setValue(e.target.value),
+      placeholder: "e.g. Dave",
+      list: "bulk-staff-list"
+    }
+  ), /* @__PURE__ */ React.createElement("datalist", { id: "bulk-staff-list" }, (staff || []).map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.name }))))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Apply to (", selected.size, " selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: selectAll, className: "text-[#377249] hover:underline font-medium" }, "Select All"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: clearAll, className: "text-[#75716A] hover:underline font-medium" }, "Clear"))), /* @__PURE__ */ React.createElement("div", { className: "max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, sortedWorkOrders.map((w) => {
+    const site = sites.find((s) => s.id === w.siteId);
+    const cottage = cottages.find((c) => c.id === w.cottageId);
+    const where = site ? `Site ${site.number}` : cottage ? cottage.name : "";
+    return /* @__PURE__ */ React.createElement("label", { key: w.id, className: "flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 min-w-0" }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "checkbox",
+        checked: selected.has(w.id),
+        onChange: () => toggle(w.id),
+        className: "accent-[#377249]"
+      }
+    ), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium truncate" }, w.title), where && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, "\xB7 ", where)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, field === "status" ? w.status : w.assignedTo || "\u2014"));
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: submit,
+      disabled: selected.size === 0 || field === "assignedTo" && !value.trim(),
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+    },
+    "Update ",
+    selected.size || "",
+    " Work Order",
+    selected.size === 1 ? "" : "s"
+  )));
 }
 
 function RecurringTasksModal({ db, persist, onClose }) {
@@ -1995,6 +2096,7 @@ function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
   } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Winterize docks", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: frequencyDays, onChange: (e) => setFrequencyDays(e.target.value) }, FREQUENCY_OPTIONS.map((f) => /* @__PURE__ */ React.createElement("option", { key: f.days, value: f.days }, f.label)))), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: cottageId, onChange: (e) => setCottageId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), cottages.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement(Field, { label: "Next Due Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: nextDueDate, onChange: (e) => setNextDueDate(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What this task involves" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Recurring Task")));
 }
+
 function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, onSave, onCancel }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
