@@ -2129,6 +2129,72 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
 }
 
 
+function CalendarView({ db, onGoToTab }) {
+  const [cursor, setCursor] = useState(() => {
+    const d = /* @__PURE__ */ new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+  const [selectedDate, setSelectedDate] = useState(null);
+  const itemsByDate = {};
+  db.workOrders.forEach((w) => {
+    if (!w.date) return;
+    (itemsByDate[w.date] = itemsByDate[w.date] || []).push({ kind: "Work Order", title: w.title, status: w.status, id: w.id });
+  });
+  db.quotes.forEach((q) => {
+    if (!q.date) return;
+    (itemsByDate[q.date] = itemsByDate[q.date] || []).push({ kind: "Quote", title: q.title, status: q.status, id: q.id });
+  });
+  const first = new Date(cursor.year, cursor.month, 1);
+  const startWeekday = first.getDay();
+  const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  const monthLabel = first.toLocaleDateString(void 0, { month: "long", year: "numeric" });
+  const pad = (n) => String(n).padStart(2, "0");
+  const dateStr = (d) => `${cursor.year}-${pad(cursor.month + 1)}-${pad(d)}`;
+  const goMonth = (delta) => {
+    setSelectedDate(null);
+    setCursor((c) => {
+      const d = new Date(c.year, c.month + delta, 1);
+      return { year: d.getFullYear(), month: d.getMonth() };
+    });
+  };
+  const selectedItems = selectedDate ? itemsByDate[selectedDate] || [] : [];
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Calendar"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Work orders and quotes by date.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => goMonth(-1), className: "w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]" }, "\u2039"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13] w-36 text-center" }, monthLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => goMonth(1), className: "w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]" }, "\u203A"))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 bg-[#F1EEE9] text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, className: "px-2 py-2 text-center" }, d))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7" }, cells.map((d, i) => {
+    if (d === null) return /* @__PURE__ */ React.createElement("div", { key: `e${i}`, className: "border-t border-[#EEEBE5] min-h-[70px]" });
+    const ds = dateStr(d);
+    const items = itemsByDate[ds] || [];
+    const isToday = ds === todayISO();
+    const isSelected = ds === selectedDate;
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: ds,
+        onClick: () => setSelectedDate(ds),
+        className: `border-t border-l border-[#EEEBE5] min-h-[70px] p-1.5 text-left align-top hover:bg-[#F1EEE9] transition ${isSelected ? "bg-[#DDF1E1]" : ""}`
+      },
+      /* @__PURE__ */ React.createElement("div", { className: `text-[11px] font-medium mb-1 ${isToday ? "text-[#377249] font-bold" : "text-[#4B4740]"}` }, d),
+      /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-0.5" }, items.slice(0, 3).map((it, idx) => /* @__PURE__ */ React.createElement(
+        "span",
+        {
+          key: idx,
+          className: `w-1.5 h-1.5 rounded-full ${it.kind === "Work Order" ? "bg-[#377249]" : "bg-[#3E7A72]"}`
+        }
+      )), items.length > 3 && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-[#9A968D]" }, "+", items.length - 3))
+    );
+  }))), selectedDate && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, selectedDate), selectedItems.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing on this date.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, selectedItems.map((it, idx) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: idx,
+      onClick: () => onGoToTab(it.kind === "Work Order" ? "workorders" : "quotes"),
+      className: "w-full flex items-center justify-between gap-3 text-sm py-1.5 border-b border-[#EEEBE5] last:border-0 hover:bg-[#F1EEE9] text-left px-1 rounded"
+    },
+    /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#75716A] mr-2" }, it.kind), it.title),
+    /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, it.status)
+  )))));
+}
+
 const TABS = [
   { key: "dashboard", label: "Dashboard" },
   { key: "workorders", label: "Work Orders" },
