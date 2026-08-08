@@ -577,6 +577,7 @@ function CottagesView({ db, persist }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  const [detailId, setDetailId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (c) => {
@@ -621,8 +622,19 @@ function CottagesView({ db, persist }) {
     }
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No cottages match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" }, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
-    return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 relative overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 w-full h-1.5", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between mt-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, c.name), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, c.color || "No colour set")))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Site: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, site ? site.number : "Unassigned")), (c.year || c.modelNumber) && /* @__PURE__ */ React.createElement("div", null, c.year && /* @__PURE__ */ React.createElement("span", null, c.year), c.year && c.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), c.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", c.modelNumber)), c.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", c.serialNumber), c.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", c.features)), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), confirm.target && /* @__PURE__ */ React.createElement(
+    return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 relative overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 w-full h-1.5", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between mt-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, c.name), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, c.color || "No colour set")))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Site: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, site ? site.number : "Unassigned")), (c.year || c.modelNumber) && /* @__PURE__ */ React.createElement("div", null, c.year && /* @__PURE__ */ React.createElement("span", null, c.year), c.year && c.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), c.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", c.modelNumber)), c.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", c.serialNumber), c.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", c.features)), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
+  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
+    CottageDetailModal,
+    {
+      cottage: db.cottages.find((c) => c.id === detailId),
+      db,
+      onClose: () => setDetailId(null),
+      onEdit: (c) => {
+        setDetailId(null);
+        setModal({ mode: "edit", data: c });
+      }
+    }
+  ), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = db.cottages.find((c) => c.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this cottage",
@@ -630,6 +642,20 @@ function CottagesView({ db, persist }) {
       onCancel: confirm.clear
     }
   ));
+}
+function CottageDetailModal({ cottage, db, onClose, onEdit }) {
+  if (!cottage) return null;
+  const site = db.sites.find((s) => s.id === cottage.siteId);
+  const workOrders = db.workOrders.filter((w) => w.cottageId === cottage.id);
+  const quotes = db.quotes.filter((q) => q.cottageId === cottage.id);
+  return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement("div", { key: w.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, w.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}` }, w.status)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => onEdit(cottage),
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
+    },
+    "Edit Cottage"
+  )));
 }
 function CottageForm({ initial, sites, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
@@ -656,6 +682,7 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
   } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-3 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
+
 function CustomersView({ db, persist }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -1382,7 +1409,7 @@ function escapeHtml(str) {
 function buildWorkOrderHtml(wo, db) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
-  const customer = site ? db.customers.find((c) => c.siteId === site.id) : null;
+  const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => c.siteId === site.id) : null;
   return `
     <div class="wo">
       <div class="wo-head">
@@ -1754,7 +1781,7 @@ function exportExcel(db) {
 function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail, emailStatus, onText, smsStatus }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
-  const customer = site ? db.customers.find((c) => c.siteId === site.id) : null;
+  const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => c.siteId === site.id) : null;
   const assignedStaff = wo.assignedTo ? (db.staff || []).find((s) => s.name.trim().toLowerCase() === wo.assignedTo.trim().toLowerCase()) : null;
   const isDone = wo.status === "Completed";
   return /* @__PURE__ */ React.createElement(
@@ -2185,6 +2212,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
+  const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [assignedTo, setAssignedTo] = useState((initial == null ? void 0 : initial.assignedTo) || "");
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "Open");
   const [priority, setPriority] = useState((initial == null ? void 0 : initial.priority) || "Medium");
@@ -2196,10 +2224,23 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || RATE_OPTIONS[1].label);
   const laborRate = (_c = (_b = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : RATE_OPTIONS[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
-  const siteCustomer = siteId ? (customers || []).find((c) => c.siteId === siteId) : null;
+  const handleSiteChange = (val) => {
+    setSiteId(val);
+    const cust = (customers || []).find((c) => c.siteId === val);
+    if (cust) setCustomerId(cust.id);
+  };
   const handleCottageChange = (val) => {
     setCottageId(val);
     const chosen = (cottages || []).find((c) => c.id === val);
+    if (chosen && chosen.siteId) {
+      setSiteId(chosen.siteId);
+      const cust = (customers || []).find((c) => c.siteId === chosen.siteId);
+      if (cust) setCustomerId(cust.id);
+    }
+  };
+  const handleCustomerChange = (val) => {
+    setCustomerId(val);
+    const chosen = (customers || []).find((c) => c.id === val);
     if (chosen && chosen.siteId) {
       setSiteId(chosen.siteId);
     }
@@ -2226,6 +2267,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       description: description.trim(),
       siteId: siteId || null,
       cottageId: cottageId || null,
+      customerId: customerId || null,
       assignedTo: assignedTo.trim(),
       status,
       priority,
@@ -2240,7 +2282,31 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), (siteId || cottageId) && /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement("div", { className: inputCls + " bg-[#F1EEE9] text-[#4B4740]" }, siteCustomer ? siteCustomer.name : "No customer on this site")), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: cottageId, onChange: (e) => handleCottageChange(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), cottages.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
+      value: siteId,
+      onChange: handleSiteChange,
+      placeholder: "Search sites\u2026"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: customers.map((c) => ({ value: c.id, label: c.name })),
+      value: customerId,
+      onChange: handleCustomerChange,
+      placeholder: "Search customers\u2026"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: cottages.map((c) => ({ value: c.id, label: c.name })),
+      value: cottageId,
+      onChange: handleCottageChange,
+      placeholder: "Search cottages\u2026"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -2311,7 +2377,6 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
     "Add"
   )), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, "Stock is deducted automatically when this work order is marked Complete.")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Work Order")));
 }
-
 
 function CalendarView({ db, onGoToTab }) {
   const [cursor, setCursor] = useState(() => {
