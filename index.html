@@ -230,6 +230,62 @@ function Field({ label, children }) {
   return /* @__PURE__ */ React.createElement("label", { className: "block mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-1 font-semibold" }, label), children);
 }
 const inputCls = "w-full rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2 text-sm text-[#1E1A13] focus:outline-none focus:ring-2 focus:ring-[#C1652F]/50 focus:border-[#C1652F]";
+function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef(null);
+  const selected = options.find((o) => o.value === value);
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+  const filtered = query ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase())) : options;
+  const pick = (val) => {
+    onChange(val);
+    setOpen(false);
+    setQuery("");
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "relative", ref: wrapperRef }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls,
+      value: open ? query : selected ? selected.label : "",
+      onChange: (e) => {
+        setQuery(e.target.value);
+        setOpen(true);
+      },
+      onFocus: () => {
+        setOpen(true);
+        setQuery("");
+      },
+      placeholder: placeholder || "Search\u2026"
+    }
+  ), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => pick(""),
+      className: "w-full text-left px-3 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9]"
+    },
+    noneLabel || "None"
+  ), filtered.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "px-3 py-2 text-sm text-[#9A968D] italic" }, "No matches") : filtered.map((o) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      key: o.value,
+      onClick: () => pick(o.value),
+      className: "w-full text-left px-3 py-2 text-sm text-[#1E1A13] hover:bg-[#F1EEE9]"
+    },
+    o.label
+  ))));
+}
+
 function Modal({ title, onClose, children, wide }) {
   return /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#181611]/50 backdrop-blur-[2px] p-4 sm:p-8" }, /* @__PURE__ */ React.createElement(
     "div",
@@ -1203,7 +1259,31 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: customerId, onChange: (e) => setCustomerId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), customers.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: cottageId, onChange: (e) => setCottageId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), cottages.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Job details, scope of work, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: customers.map((c) => ({ value: c.id, label: c.name })),
+      value: customerId,
+      onChange: setCustomerId,
+      placeholder: "Search customers\u2026"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
+      value: siteId,
+      onChange: setSiteId,
+      placeholder: "Search sites\u2026"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: cottages.map((c) => ({ value: c.id, label: c.name })),
+      value: cottageId,
+      onChange: setCottageId,
+      placeholder: "Search cottages\u2026"
+    }
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Job details, scope of work, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls + " flex-1",
@@ -1295,6 +1375,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
     }
   )))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labor (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
 }
+
 function escapeHtml(str) {
   return String(str != null ? str : "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
@@ -1332,6 +1413,7 @@ function buildWorkOrderHtml(wo, db) {
       </div>
     </div>`;
 }
+
 function computeQuoteTotals(quote, taxRate) {
   const lineItemsSubtotal = quote.lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const laborCost = (Number(quote.laborHours) || 0) * (Number(quote.laborRate) || 0);
