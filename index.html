@@ -245,7 +245,7 @@ function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-  const filtered = query ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase())) : options;
+  const filtered = query ? options.filter((o) => (o.searchText || o.label).toLowerCase().includes(query.toLowerCase())) : options;
   const pick = (val) => {
     onChange(val);
     setOpen(false);
@@ -735,7 +735,7 @@ function CustomersView({ db, persist }) {
   };
   const filtered = db.customers.filter((c) => {
     if (!filter) return true;
-    const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.address || ""}`.toLowerCase();
+    const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.name2 || ""} ${c.phone2 || ""} ${c.email2 || ""} ${c.address || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Customers"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Names, contact info, and their assigned site.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
@@ -789,7 +789,7 @@ function CustomerDetailModal({ customer, db, onClose, onEdit }) {
   const cottages = site ? db.cottages.filter((c) => c.siteId === site.id) : [];
   const workOrders = db.workOrders.filter((w) => w.customerId === customer.id || site && w.siteId === site.id);
   const quotes = db.quotes.filter((q) => q.customerId === customer.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: customer.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, customer.phone && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone), customer.email && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email), customer.address && /* @__PURE__ */ React.createElement("div", null, "Address: ", customer.address), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned")), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages linked through their site." }, cottages.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0" }, c.name))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this customer." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this customer." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: customer.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, customer.phone && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone), customer.email && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email), (customer.name2 || customer.phone2 || customer.email2) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, customer.name2 && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.name2), customer.phone2 && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone2), customer.email2 && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email2)), customer.address && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Address: ", customer.address), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned")), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages linked through their site." }, cottages.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0" }, c.name))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this customer." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this customer." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onEdit(customer),
@@ -798,21 +798,34 @@ function CustomerDetailModal({ customer, db, onClose, onEdit }) {
     "Edit Customer"
   )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, onClose: () => setViewingWO(null) }));
 }
-
 function CustomerForm({ initial, sites, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [phone, setPhone] = useState((initial == null ? void 0 : initial.phone) || "");
   const [email, setEmail] = useState((initial == null ? void 0 : initial.email) || "");
+  const [name2, setName2] = useState((initial == null ? void 0 : initial.name2) || "");
+  const [phone2, setPhone2] = useState((initial == null ? void 0 : initial.phone2) || "");
+  const [email2, setEmail2] = useState((initial == null ? void 0 : initial.email2) || "");
   const [address, setAddress] = useState((initial == null ? void 0 : initial.address) || "");
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
   const submit = () => {
     if (!name.trim()) return;
-    onSave({ id: (initial == null ? void 0 : initial.id) || uid(), name: name.trim(), phone: phone.trim(), email: email.trim(), address: address.trim(), siteId: siteId || null });
+    onSave({
+      id: (initial == null ? void 0 : initial.id) || uid(),
+      name: name.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      name2: name2.trim(),
+      phone2: phone2.trim(),
+      email2: email2.trim(),
+      address: address.trim(),
+      siteId: siteId || null
+    });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: address, onChange: (e) => setAddress(e.target.value), placeholder: "Home mailing address" })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mt-2 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: address, onChange: (e) => setAddress(e.target.value), placeholder: "Home mailing address" })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
 }
+
 function formatPrice(value) {
   const n = Number(value);
   return Number.isFinite(n) ? `$${n.toFixed(2)}` : "\u2014";
@@ -1320,7 +1333,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
-      options: customers.map((c) => ({ value: c.id, label: c.name })),
+      options: customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
       value: customerId,
       onChange: setCustomerId,
       placeholder: "Search customers\u2026"
@@ -1698,6 +1711,9 @@ function buildExcelSheets(db) {
     Name: c.name,
     Phone: c.phone || "",
     Email: c.email || "",
+    "Contact 2 Name": c.name2 || "",
+    "Contact 2 Phone": c.phone2 || "",
+    "Contact 2 Email": c.email2 || "",
     Address: c.address || "",
     Site: siteNumber(c.siteId)
   }));
@@ -2324,7 +2340,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   )), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
-      options: customers.map((c) => ({ value: c.id, label: c.name })),
+      options: customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
       value: customerId,
       onChange: handleCustomerChange,
       placeholder: "Search customers\u2026"
