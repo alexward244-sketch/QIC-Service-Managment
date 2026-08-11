@@ -339,8 +339,17 @@ function SitesView({ db, persist }) {
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState(() => /* @__PURE__ */ new Set());
   const confirm = useConfirm();
   const actor = useCurrentActor();
+  const toggleSection = (name) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
   const save = (site) => {
     const exists = db.sites.some((s) => s.id === site.id);
     const sites = exists ? db.sites.map((s) => s.id === site.id ? site : s) : [...db.sites, site];
@@ -421,7 +430,26 @@ function SitesView({ db, persist }) {
       text: "No sites yet. Add your first site number to get started.",
       action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a site")
     }
-  ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No sites match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Section"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Hookups"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Notes"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-32" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true })).map((s) => /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(s.id) }, s.number)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, s.section || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, s.hookups || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-xs truncate" }, s.notes || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(s.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: s }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(s.id) }, "Delete")))))))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Site" : "Edit Site", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(SiteForm, { initial: modal.data, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Sites", onClose: () => setBulkOpen(false) }, /* @__PURE__ */ React.createElement(BulkAddSitesForm, { onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Edit Sites", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkEditSitesForm, { sites: db.sites, onSave: bulkEdit, onCancel: () => setBulkEditOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No sites match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, Object.entries(
+    filtered.reduce((groups, s) => {
+      var _a2;
+      const key = ((_a2 = s.section) == null ? void 0 : _a2.trim()) || "No Section";
+      (groups[key] = groups[key] || []).push(s);
+      return groups;
+    }, {})
+  ).sort(([a], [b]) => a === "No Section" ? 1 : b === "No Section" ? -1 : a.localeCompare(b)).map(([sectionName, sectionSites]) => {
+    const isCollapsed = collapsedSections.has(sectionName);
+    const sorted = sectionSites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+    return /* @__PURE__ */ React.createElement("div", { key: sectionName, className: "rounded-lg border border-[#E2DED5] overflow-hidden" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => toggleSection(sectionName),
+        className: "w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-[#F1EEE9] hover:bg-[#EEEBE5] transition text-left"
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 font-semibold text-sm text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("span", { className: `inline-block transition-transform ${isCollapsed ? "-rotate-90" : ""}` }, "\u25BE"), sectionName),
+      /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#75716A] bg-white rounded-full px-2 py-0.5" }, sorted.length)
+    ), !isCollapsed && /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#FFFDFA] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Hookups"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Notes"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2 w-32" }))), /* @__PURE__ */ React.createElement("tbody", null, sorted.map((s) => /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(s.id) }, s.number)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, s.hookups || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-xs truncate" }, s.notes || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(s.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: s }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(s.id) }, "Delete"))))))));
+  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Site" : "Edit Site", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(SiteForm, { initial: modal.data, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Sites", onClose: () => setBulkOpen(false) }, /* @__PURE__ */ React.createElement(BulkAddSitesForm, { onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Edit Sites", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkEditSitesForm, { sites: db.sites, onSave: bulkEdit, onCancel: () => setBulkEditOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     SiteDetailModal,
     {
       site: db.sites.find((s) => s.id === detailId),
@@ -523,6 +551,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
     selected.size === 1 ? "" : "s"
   )));
 }
+
 function SiteDetailModal({ site, db, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   if (!site) return null;
