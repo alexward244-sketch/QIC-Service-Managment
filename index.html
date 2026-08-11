@@ -756,6 +756,7 @@ function CustomersView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [detailId, setDetailId] = useState(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (c) => {
@@ -764,6 +765,22 @@ function CustomersView({ db, persist }) {
     const activityLog = addLog(db, actor, exists ? `Updated customer ${c.name}` : `Added customer ${c.name}`);
     persist({ ...db, customers, activityLog });
     setModal(null);
+  };
+  const bulkAdd = (rows) => {
+    const newCustomers = rows.map((r) => ({
+      id: uid(),
+      name: r.name,
+      phone: r.phone,
+      email: r.email,
+      name2: "",
+      phone2: "",
+      email2: "",
+      address: r.address,
+      siteId: r.siteId
+    }));
+    const activityLog = addLog(db, actor, `Bulk-added ${newCustomers.length} customer${newCustomers.length === 1 ? "" : "s"}`);
+    persist({ ...db, customers: [...db.customers, ...newCustomers], activityLog });
+    setBulkOpen(false);
   };
   const remove = (id) => {
     var _a2;
@@ -777,7 +794,7 @@ function CustomersView({ db, persist }) {
     const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.name2 || ""} ${c.phone2 || ""} ${c.email2 || ""} ${c.address || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Customers"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Names, contact info, and their assigned site.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Customers"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Names, contact info, and their assigned site.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls + " w-48",
@@ -785,6 +802,13 @@ function CustomersView({ db, persist }) {
       value: filter,
       onChange: (e) => setFilter(e.target.value)
     }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setBulkOpen(true),
+      className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+    },
+    "Bulk Add"
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -801,7 +825,7 @@ function CustomersView({ db, persist }) {
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No customers match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Phone"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Email"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Address"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-40" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement("tr", { key: c.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(c.id) }, c.name)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.phone || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.email || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-[14rem] truncate" }, c.address || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, site ? site.number : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
+  })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === detailId),
@@ -863,6 +887,55 @@ function CustomerForm({ initial, sites, onSave, onCancel }) {
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
   } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mt-2 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: address, onChange: (e) => setAddress(e.target.value), placeholder: "Home mailing address" })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
+}
+function BulkAddCustomersForm({ sites, onSave, onCancel }) {
+  const [text, setText] = useState("");
+  const parseLine = (line) => {
+    let parts = line.split("	");
+    if (parts.length < 2) parts = line.split(",");
+    return parts.map((p) => p.trim());
+  };
+  const parsed = text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    const [name, phone, email, address, siteNumber] = parseLine(line);
+    const matchedSite = siteNumber ? sites.find((s) => s.number.toLowerCase() === siteNumber.toLowerCase()) : null;
+    return {
+      name: name || "",
+      phone: phone || "",
+      email: email || "",
+      address: address || "",
+      siteNumber: siteNumber || "",
+      siteId: matchedSite ? matchedSite.id : null,
+      matched: Boolean(matchedSite)
+    };
+  }).filter((r) => r.name);
+  const unmatchedCount = parsed.filter((r) => r.siteNumber && !r.matched).length;
+  const submit = () => {
+    if (parsed.length === 0) return;
+    onSave(parsed);
+  };
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Paste rows copied straight from Excel or an RMS export \u2014 one customer per line, with Name, Phone, Email, Address, and Site Number as columns in that order. Pasting from a spreadsheet is detected automatically; typing by hand works too if you separate fields with commas."), /* @__PURE__ */ React.createElement(Field, { label: "Customer Rows" }, /* @__PURE__ */ React.createElement(
+    "textarea",
+    {
+      className: inputCls,
+      rows: 10,
+      value: text,
+      onChange: (e) => setText(e.target.value),
+      placeholder: "e.g.\nJohn Smith	555-123-4567	john@email.com	123 Main St	42",
+      autoFocus: true
+    }
+  )), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-1" }, parsed.length, " customer", parsed.length === 1 ? "" : "s", " ready to add"), unmatchedCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, unmatchedCount, " row", unmatchedCount === 1 ? "" : "s", " had a site number that didn't match an existing site \u2014 those will still be added, just without a site assigned."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: submit,
+      disabled: parsed.length === 0,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+    },
+    "Add ",
+    parsed.length || "",
+    " Customer",
+    parsed.length === 1 ? "" : "s"
+  )));
 }
 
 function formatPrice(value) {
