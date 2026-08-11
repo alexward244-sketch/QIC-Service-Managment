@@ -677,7 +677,7 @@ function CottageDetailModal({ cottage, db, onClose, onEdit }) {
   const site = db.sites.find((s) => s.id === cottage.siteId);
   const workOrders = db.workOrders.filter((w) => w.cottageId === cottage.id);
   const quotes = db.quotes.filter((q) => q.cottageId === cottage.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterized: ", cottage.winterizedDate ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Yes, ", cottage.winterizedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not yet")), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onEdit(cottage),
@@ -686,6 +686,7 @@ function CottageDetailModal({ cottage, db, onClose, onEdit }) {
     "Edit Cottage"
   )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, onClose: () => setViewingWO(null) }));
 }
+
 function CottageForm({ initial, sites, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [color, setColor] = useState((initial == null ? void 0 : initial.color) || "");
@@ -1687,6 +1688,7 @@ function buildExcelSheets(db) {
     Name: c.name,
     Colour: c.color || "",
     Site: siteNumber(c.siteId),
+    Winterized: c.winterizedDate || "No",
     Year: c.year || "",
     "Model Number": c.modelNumber || "",
     "Serial Number": c.serialNumber || "",
@@ -2473,12 +2475,83 @@ function CalendarView({ db, onGoToTab }) {
   )))));
 }
 
+function WinterizingView({ db, persist }) {
+  const [filter, setFilter] = useState("");
+  const [resetOpen, setResetOpen] = useState(false);
+  const actor = useCurrentActor();
+  const toggle = (cottage) => {
+    const willBeDone = !cottage.winterizedDate;
+    const cottages = db.cottages.map((c) => c.id === cottage.id ? { ...c, winterizedDate: willBeDone ? todayISO() : null } : c);
+    const activityLog = addLog(db, actor, willBeDone ? `Marked ${cottage.name} winterized` : `Unmarked ${cottage.name} as winterized`);
+    persist({ ...db, cottages, activityLog });
+  };
+  const doneCount = db.cottages.filter((c) => c.winterizedDate).length;
+  const totalCount = db.cottages.length;
+  const resetAll = () => {
+    const cottages = db.cottages.map((c) => c.winterizedDate ? { ...c, winterizedDate: null } : c);
+    const activityLog = addLog(db, actor, `Reset winterizing status for ${doneCount} cottage${doneCount === 1 ? "" : "s"}`);
+    persist({ ...db, cottages, activityLog });
+    setResetOpen(false);
+  };
+  const filtered = db.cottages.filter((c) => {
+    if (!filter) return true;
+    const site = db.sites.find((s) => s.id === c.siteId);
+    const hay = `${c.name} ${(site == null ? void 0 : site.number) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const sorted = filtered.slice().sort((a, b) => a.name.localeCompare(b.name));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Winterizing"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, doneCount, " of ", totalCount, " cottage", totalCount === 1 ? "" : "s", " winterized")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls + " w-56",
+      placeholder: "Search cottages\u2026",
+      value: filter,
+      onChange: (e) => setFilter(e.target.value)
+    }
+  ), doneCount > 0 && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setResetOpen(true),
+      className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
+    },
+    "Reset All"
+  ))), db.cottages.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No cottages yet. Add cottages first to track winterizing." }) : sorted.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No cottages match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] overflow-hidden" }, sorted.map((c) => {
+    const site = db.sites.find((s) => s.id === c.siteId);
+    const isDone = Boolean(c.winterizedDate);
+    return /* @__PURE__ */ React.createElement(
+      "label",
+      {
+        key: c.id,
+        className: `flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-[#F1EEE9] transition ${isDone ? "bg-[#DDF1E1]/40" : "bg-[#FFFDFA]"}`
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-3 min-w-0" }, /* @__PURE__ */ React.createElement(
+        "input",
+        {
+          type: "checkbox",
+          checked: isDone,
+          onChange: () => toggle(c),
+          className: "w-5 h-5 accent-[#377249] flex-shrink-0"
+        }
+      ), /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, c.name), site && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Site ", site.number))),
+      /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, isDone ? `Winterized ${c.winterizedDate}` : "Not yet")
+    );
+  })), resetOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Reset all winterizing checkmarks?", onClose: () => setResetOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This clears the winterized checkmark and date from all ", doneCount, " cottage", doneCount === 1 ? "" : "s", " currently marked done \u2014 handy at the start of a new season. This can't be undone."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setResetOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: resetAll,
+      className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium"
+    },
+    "Reset All"
+  ))));
+}
+
 const TABS = [
   { key: "dashboard", label: "Dashboard" },
   { key: "workorders", label: "Work Orders" },
   { key: "calendar", label: "Calendar" },
   { key: "sites", label: "Sites" },
   { key: "cottages", label: "Cottages" },
+  { key: "winterizing", label: "Winterizing" },
   { key: "customers", label: "Customers" },
   { key: "parts", label: "Parts" },
   { key: "quotes", label: "Quotes" },
@@ -2604,7 +2677,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, tab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab }), tab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), tab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), tab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist }), tab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist }), tab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), tab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), tab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), tab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, tab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab }), tab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), tab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), tab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist }), tab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist }), tab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist }), tab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), tab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), tab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), tab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
