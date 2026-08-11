@@ -121,6 +121,7 @@ const RATE_OPTIONS = [
   { label: "Warranty", rate: 0 },
   { label: "N/A", rate: 0 }
 ];
+const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const FREQUENCY_OPTIONS = [
   { label: "Weekly", days: 7 },
   { label: "Every 2 weeks", days: 14 },
@@ -339,11 +340,11 @@ function SitesView({ db, persist }) {
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
-  const [collapsedSections, setCollapsedSections] = useState(() => /* @__PURE__ */ new Set());
+  const [expandedSections, setExpandedSections] = useState(() => /* @__PURE__ */ new Set());
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const toggleSection = (name) => {
-    setCollapsedSections((prev) => {
+    setExpandedSections((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
@@ -437,8 +438,17 @@ function SitesView({ db, persist }) {
       (groups[key] = groups[key] || []).push(s);
       return groups;
     }, {})
-  ).sort(([a], [b]) => a === "No Section" ? 1 : b === "No Section" ? -1 : a.localeCompare(b)).map(([sectionName, sectionSites]) => {
-    const isCollapsed = collapsedSections.has(sectionName);
+  ).sort(([nameA, sitesA], [nameB, sitesB]) => {
+    if (nameA === "No Section") return 1;
+    if (nameB === "No Section") return -1;
+    const idxA = SECTION_ORDER.findIndex((s) => s.toLowerCase() === nameA.toLowerCase());
+    const idxB = SECTION_ORDER.findIndex((s) => s.toLowerCase() === nameB.toLowerCase());
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return sitesB.length - sitesA.length;
+  }).map(([sectionName, sectionSites]) => {
+    const isCollapsed = !expandedSections.has(sectionName);
     const sorted = sectionSites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
     return /* @__PURE__ */ React.createElement("div", { key: sectionName, className: "rounded-lg border border-[#E2DED5] overflow-hidden" }, /* @__PURE__ */ React.createElement(
       "button",
