@@ -1937,7 +1937,7 @@ function exportExcel(db) {
   });
   XLSX.writeFile(wb, `campground-export-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`);
 }
-function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail, emailStatus, onText, smsStatus }) {
+function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onText, smsStatus }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => c.siteId === site.id) : null;
@@ -1954,15 +1954,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onEmail
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), cottage && /* @__PURE__ */ React.createElement("span", null, cottage.name), wo.assignedTo && /* @__PURE__ */ React.createElement("span", null, "Assigned: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("span", null, wo.laborHours, " hrs \xB7 ", wo.laborRateType)),
     wo.description && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#4B4740] mt-2 leading-relaxed" }, wo.description),
     isDone && wo.completedDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-2 italic" }, "Completed ", wo.completedDate),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (customer == null ? void 0 : customer.email) && /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        className: "text-[#377249] hover:underline disabled:opacity-50",
-        disabled: emailStatus === "sending",
-        onClick: () => onEmail(wo, customer)
-      },
-      emailStatus === "sending" ? "Sending\u2026" : emailStatus === "sent" ? "Sent \u2713" : emailStatus === "error" ? "Failed \u2014 retry" : "Email"
-    ), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "text-[#377249] hover:underline disabled:opacity-50",
@@ -1987,7 +1979,6 @@ function WorkOrdersView({ db, persist }) {
   const [groupFilter, setGroupFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
-  const [emailStatus, setEmailStatus] = useState({});
   const [smsStatus, setSmsStatus] = useState({});
   const [pendingText, setPendingText] = useState(null);
   const confirm = useConfirm();
@@ -2030,22 +2021,6 @@ function WorkOrdersView({ db, persist }) {
     }).catch(() => {
     });
     setPendingText(null);
-  };
-  const emailToCustomer = (wo, customer) => {
-    setEmailStatus((s) => ({ ...s, [wo.id]: "sending" }));
-    sendEmail({
-      toEmail: customer.email,
-      toName: customer.name,
-      subject: `Work Order: ${wo.title}`,
-      message: buildWorkOrderEmailText(wo, db)
-    }).then(() => {
-      setEmailStatus((s) => ({ ...s, [wo.id]: "sent" }));
-      const activityLog = addLog(db, actor, `Emailed work order "${wo.title}" to ${customer.name}`);
-      persist({ ...db, activityLog });
-      setTimeout(() => setEmailStatus((s) => ({ ...s, [wo.id]: void 0 })), 3e3);
-    }).catch(() => {
-      setEmailStatus((s) => ({ ...s, [wo.id]: "error" }));
-    });
   };
   const textToStaff = (wo, staffMember) => {
     setSmsStatus((s) => ({ ...s, [wo.id]: "sending" }));
@@ -2185,8 +2160,6 @@ function WorkOrdersView({ db, persist }) {
         onDelete: (w) => confirm.ask(w.id),
         onAdvance: advance,
         onPrint: (w) => downloadPrintable([w], db, `work-order-${w.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`),
-        onEmail: emailToCustomer,
-        emailStatus: emailStatus[wo.id],
         onText: textToStaff,
         smsStatus: smsStatus[wo.id]
       }
@@ -2237,6 +2210,7 @@ function WorkOrdersView({ db, persist }) {
     }
   ));
 }
+
 function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, onCancel }) {
   const [field, setField] = useState("status");
   const [value, setValue] = useState(STATUS[0]);
