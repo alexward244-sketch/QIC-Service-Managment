@@ -163,6 +163,7 @@ const RATE_OPTIONS = [
   { label: "N/A", rate: 0 }
 ];
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
+const PAYMENT_STATUS = ["Paid", "Invoice"];
 const FREQUENCY_OPTIONS = [
   { label: "Weekly", days: 7 },
   { label: "Every 2 weeks", days: 14 },
@@ -673,7 +674,7 @@ function WorkOrderViewModal({ wo, db, persist, onClose }) {
     persist({ ...db, workOrders });
     setNoteText("");
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: wo.title, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Date: ", wo.date), /* @__PURE__ */ React.createElement("div", null, "Status: ", wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, "Priority: ", wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, "Work Group: ", wo.workGroup), site && /* @__PURE__ */ React.createElement("div", null, "Site: ", site.number), cottage && /* @__PURE__ */ React.createElement("div", null, "Cottage: ", cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, "Customer: ", customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, "Assigned To: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, "Labor: ", wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, "Completed: ", wo.completedDate)), wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
+  return /* @__PURE__ */ React.createElement(Modal, { title: wo.title, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Date: ", wo.date), /* @__PURE__ */ React.createElement("div", null, "Status: ", wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, "Priority: ", wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, "Work Group: ", wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, "Payment: ", wo.paymentStatus), site && /* @__PURE__ */ React.createElement("div", null, "Site: ", site.number), cottage && /* @__PURE__ */ React.createElement("div", null, "Cottage: ", cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, "Customer: ", customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, "Assigned To: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, "Labor: ", wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, "Completed: ", wo.completedDate)), wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
     const part = db.parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "x", pu.quantity));
   })), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, "Notes"), notes.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No notes yet \u2014 handy for jobs that span more than one day.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, notes.map((n) => /* @__PURE__ */ React.createElement("div", { key: n.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, n.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, n.author, " \xB7 ", new Date(n.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
@@ -705,6 +706,7 @@ function WorkOrderViewModal({ wo, db, persist, onClose }) {
     "Print"
   )));
 }
+
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
   const [section, setSection] = useState((initial == null ? void 0 : initial.section) || "");
@@ -922,7 +924,7 @@ function CustomersView({ db, persist }) {
     }
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No customers match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Phone"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Email"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Address"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-40" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
-    return /* @__PURE__ */ React.createElement("tr", { key: c.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(c.id) }, c.name)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.phone || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.email || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-[14rem] truncate" }, c.address || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, site ? site.number : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
+    return /* @__PURE__ */ React.createElement("tr", { key: c.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline block", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "hover:underline block font-normal text-xs text-[#75716A] mt-0.5", onClick: () => setDetailId(c.id) }, c.name2)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.phone || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.email || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-[14rem] truncate" }, c.address || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, site ? site.number : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
   })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
@@ -1498,7 +1500,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   const [partToAdd, setPartToAdd] = useState("");
   const [laborHours, setLaborHours] = useState((_b = initial == null ? void 0 : initial.laborHours) != null ? _b : "");
   const [laborRateType, setLaborRateType] = useState(
-    ((_c = RATE_OPTIONS.find((r) => r.rate === (initial == null ? void 0 : initial.laborRate))) == null ? void 0 : _c.label) || RATE_OPTIONS[1].label
+    (initial == null ? void 0 : initial.laborRateType) || ((_c = RATE_OPTIONS.find((r) => r.rate === (initial == null ? void 0 : initial.laborRate))) == null ? void 0 : _c.label) || "N/A"
   );
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_e = (_d = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _d : defaultShopSuppliesPercent) != null ? _e : 5);
   const [serviceCall, setServiceCall] = useState((_f = initial == null ? void 0 : initial.serviceCall) != null ? _f : "");
@@ -1697,6 +1699,7 @@ function buildWorkOrderHtml(wo, db) {
         <tr><td class="k">Cottage</td><td>${cottage ? escapeHtml(cottage.name) + (cottage.color ? ` \u2014 ${escapeHtml(cottage.color)}` : "") : "\u2014"}</td></tr>
         <tr><td class="k">Assigned to</td><td>${escapeHtml(wo.assignedTo || "\u2014")}</td></tr>
         ${Number(wo.laborHours) > 0 ? `<tr><td class="k">Labor</td><td>${escapeHtml(String(wo.laborHours))} hrs \xD7 ${escapeHtml(wo.laborRateType || "Rate")} (${formatPrice(wo.laborRate || 0)}/hr) = ${formatPrice((Number(wo.laborHours) || 0) * (Number(wo.laborRate) || 0))}</td></tr>` : ""}
+        ${wo.paymentStatus ? `<tr><td class="k">Payment</td><td>${escapeHtml(wo.paymentStatus)}</td></tr>` : ""}
         ${wo.completedDate ? `<tr><td class="k">Completed</td><td>${escapeHtml(wo.completedDate)}</td></tr>` : ""}
       </table>
       <div class="label">Description</div>
@@ -1953,6 +1956,11 @@ function buildExcelSheets(db) {
     Hours: w.laborHours || "",
     "Rate Type": w.laborRateType || "",
     "Labor Cost": w.laborHours ? Number(w.laborHours) * Number(w.laborRate || 0) : "",
+    "Parts Cost": (w.partsUsed || []).reduce((sum, pu) => {
+      const part = db.parts.find((p) => p.id === pu.partId);
+      return sum + (Number(part == null ? void 0 : part.price) || 0) * (Number(pu.quantity) || 0);
+    }, 0) || "",
+    "Payment Status": w.paymentStatus || "",
     Description: w.description || "",
     "Completed Date": w.completedDate || ""
   }));
@@ -2063,7 +2071,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
     },
     /* @__PURE__ */ React.createElement("span", { className: "absolute -left-1.5 top-4 w-3 h-3 rounded-full bg-[#F9F5EC] border border-[#E2DED5]" }),
     /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2" }, /* @__PURE__ */ React.createElement("h4", { className: `font-serif font-semibold text-[15px] ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/60" : "text-[#1E1A13]"}` }, wo.title), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#75716A] whitespace-nowrap pt-0.5" }, wo.date)),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-1.5" }, wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), isOverdue(wo) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, wo.workGroup)),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-1.5" }, wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), isOverdue(wo) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, wo.workGroup), wo.paymentStatus === "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Paid"), wo.paymentStatus === "Invoice" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Invoice")),
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), cottage && /* @__PURE__ */ React.createElement("span", null, cottage.name), wo.assignedTo && /* @__PURE__ */ React.createElement("span", null, "Assigned: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("span", null, wo.laborHours, " hrs \xB7 ", wo.laborRateType)),
     wo.description && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#4B4740] mt-2 leading-relaxed" }, wo.description),
     isDone && wo.completedDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-2 italic" }, "Completed ", wo.completedDate),
@@ -2211,6 +2219,13 @@ function WorkOrdersView({ db, persist }) {
     return hay.includes(filter.toLowerCase());
   });
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Work Orders"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "The board \u2014 drag status forward as jobs move along.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setModal({ mode: "new" }),
+      className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+    },
+    "+ New Work Order"
+  ), /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls + " w-48",
@@ -2231,17 +2246,17 @@ function WorkOrdersView({ db, persist }) {
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: () => setTemplatesOpen(true),
-      className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
-    },
-    "Templates"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
       onClick: () => setRecurringOpen(true),
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Recurring Tasks"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setTemplatesOpen(true),
+      className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+    },
+    "Templates"
   ), db.workOrders.length > 0 && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -2257,13 +2272,6 @@ function WorkOrdersView({ db, persist }) {
     },
     "Print ",
     filter ? "results" : "all"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setModal({ mode: "new" }),
-      className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
-    },
-    "+ New Work Order"
   ))), db.workOrders.length === 0 ? /* @__PURE__ */ React.createElement(
     EmptyState,
     {
@@ -2342,6 +2350,7 @@ function WorkOrdersView({ db, persist }) {
     }
   ));
 }
+
 function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, onCancel }) {
   const [field, setField] = useState("status");
   const [value, setValue] = useState(STATUS[0]);
@@ -2550,7 +2559,8 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
   const [partToAdd, setPartToAdd] = useState("");
   const [laborHours, setLaborHours] = useState((_a = initial == null ? void 0 : initial.laborHours) != null ? _a : "");
-  const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || RATE_OPTIONS[1].label);
+  const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || "N/A");
+  const [paymentStatus, setPaymentStatus] = useState((initial == null ? void 0 : initial.paymentStatus) || "");
   const [templateId, setTemplateId] = useState("");
   const laborRate = (_c = (_b = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : RATE_OPTIONS[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
@@ -2617,6 +2627,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       laborHours: Number(laborHours) || 0,
       laborRate,
       laborRateType,
+      paymentStatus,
       partsUsed: partsUsed.filter((pu) => (Number(pu.quantity) || 0) > 0).map((pu) => ({ partId: pu.partId, quantity: Number(pu.quantity) || 0 }))
     });
   };
@@ -2675,9 +2686,10 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: (e) => setLaborHours(e.target.value),
       placeholder: "0"
     }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)"))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labor cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labor cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
     const part = parts.find((p) => p.id === pu.partId);
-    return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement(
+    const lineTotal = (Number(part == null ? void 0 : part.price) || 0) * (Number(pu.quantity) || 0);
+    return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 text-[#1E1A13]" }, part ? part.name : "Unknown part", part && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, " (", formatPrice(part.price), " ea)")), /* @__PURE__ */ React.createElement(
       "input",
       {
         type: "number",
@@ -2687,7 +2699,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
         value: pu.quantity,
         onChange: (e) => updatePartQty(pu.partId, e.target.value)
       }
-    ), /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] w-16 text-right flex-shrink-0" }, formatPrice(lineTotal)), /* @__PURE__ */ React.createElement(
       "button",
       {
         type: "button",
@@ -2697,7 +2709,12 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       },
       "\u2715"
     ));
-  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
+  }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end text-xs font-medium text-[#1E1A13] pt-1 border-t border-[#EEEBE5]" }, "Parts total: ", formatPrice(
+    partsUsed.reduce((sum, pu) => {
+      const part = parts.find((p) => p.id === pu.partId);
+      return sum + (Number(part == null ? void 0 : part.price) || 0) * (Number(pu.quantity) || 0);
+    }, 0)
+  ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
     "select",
     {
       className: "rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-xs text-[#1E1A13]",
@@ -2705,7 +2722,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: (e) => setPartToAdd(e.target.value)
     },
     /* @__PURE__ */ React.createElement("option", { value: "" }, "Add a part used\u2026"),
-    parts.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name, " (", p.quantity, " in stock)"))
+    parts.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", formatPrice(p.price), " (", p.quantity, " in stock)"))
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
