@@ -93,9 +93,50 @@ const emptyDb = () => ({
   staff: [],
   activityLog: [],
   recurringTasks: [],
+  workOrderTemplates: [],
+  trash: [],
+  lastBackupAt: null,
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5 }
 });
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+const TRASH_COLLECTION = {
+  site: "sites",
+  cottage: "cottages",
+  customer: "customers",
+  workOrder: "workOrders",
+  quote: "quotes",
+  part: "parts",
+  staff: "staff",
+  recurringTask: "recurringTasks",
+  workOrderTemplate: "workOrderTemplates",
+};
+const TRASH_RETENTION_DAYS = 30;
+
+function trashItem(db, type, item, label) {
+  const key = TRASH_COLLECTION[type];
+  const collection = (db[key] || []).filter((x) => x.id !== item.id);
+  const entry = { id: uid(), type, data: item, label, deletedAt: new Date().toISOString() };
+  return { ...db, [key]: collection, trash: [entry, ...(db.trash || [])] };
+}
+
+function restoreTrashItem(db, trashId) {
+  const entry = (db.trash || []).find((t) => t.id === trashId);
+  if (!entry) return db;
+  const key = TRASH_COLLECTION[entry.type];
+  return { ...db, [key]: [...(db[key] || []), entry.data], trash: db.trash.filter((t) => t.id !== trashId) };
+}
+
+function purgeTrashItem(db, trashId) {
+  return { ...db, trash: (db.trash || []).filter((t) => t.id !== trashId) };
+}
+
+function purgeExpiredTrash(db) {
+  const cutoff = Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const trash = (db.trash || []).filter((t) => new Date(t.deletedAt).getTime() > cutoff);
+  return trash.length === (db.trash || []).length ? db : { ...db, trash };
+}
+
 const STATUS = ["Open", "In Progress", "Completed"];
 const PRIORITY = ["Low", "Medium", "High", "Urgent"];
 const PRIORITY_STYLES = {
@@ -196,7 +237,7 @@ function useDb() {
     const unsub = DOC_REF.onSnapshot(
       (snap) => {
         const data = snap.exists ? snap.data() : null;
-        setDb({ ...emptyDb(), ...data && typeof data === "object" ? data : {} });
+        setDb(purgeExpiredTrash({ ...emptyDb(), ...data && typeof data === "object" ? data : {} }));
         setLoading(false);
         setConnectionError(null);
       },
@@ -305,8 +346,8 @@ function Modal({ title, onClose, children, wide }) {
     /* @__PURE__ */ React.createElement("div", { className: "p-5" }, children)
   ));
 }
-function ConfirmDeleteModal({ label, onConfirm, onCancel }) {
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Confirm delete", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Delete ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, label), "? This can't be undone."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
+function ConfirmDeleteModal({ label, onConfirm, onCancel, message }) {
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Confirm delete", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, message || /* @__PURE__ */ React.createElement(React.Fragment, null, "Delete ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, label), "? It'll move to Trash and can be restored within", " ", TRASH_RETENTION_DAYS, " days.")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: onCancel,
@@ -322,6 +363,31 @@ function ConfirmDeleteModal({ label, onConfirm, onCancel }) {
     "Yes, delete"
   )));
 }
+function TrashModal({ db, persist, onClose }) {
+  const actor = useCurrentActor();
+  const labelFor = (type) => ({
+    site: "Site",
+    cottage: "Cottage",
+    customer: "Customer",
+    workOrder: "Work Order",
+    quote: "Quote",
+    part: "Part",
+    staff: "Staff",
+    recurringTask: "Recurring Task",
+    workOrderTemplate: "Work Order Template"
+  })[type] || type;
+  const restore = (entry) => {
+    const activityLog = addLog(db, actor, `Restored ${labelFor(entry.type).toLowerCase()} "${entry.label}" from trash`);
+    persist({ ...restoreTrashItem(db, entry.id), activityLog });
+  };
+  const purge = (entry) => {
+    const activityLog = addLog(db, actor, `Permanently deleted ${labelFor(entry.type).toLowerCase()} "${entry.label}"`);
+    persist({ ...purgeTrashItem(db, entry.id), activityLog });
+  };
+  const trash = (db.trash || []).slice().sort((a, b) => a.deletedAt < b.deletedAt ? 1 : -1);
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Trash", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Deleted items sit here for ", TRASH_RETENTION_DAYS, " days before they're gone for good \u2014 plenty of time to undo a mistake."), trash.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "Trash is empty." }) : /* @__PURE__ */ React.createElement("div", { className: "max-h-96 overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, trash.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 px-4 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.label), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, labelFor(entry.type), " \xB7 Deleted ", new Date(entry.deletedAt).toLocaleDateString())), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => restore(entry) }, "Restore"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => purge(entry) }, "Delete Forever"))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
+}
+
 function useConfirm() {
   const [target, setTarget] = useState(null);
   return {
@@ -385,10 +451,10 @@ function SitesView({ db, persist }) {
     setBulkEditOpen(false);
   };
   const remove = (id) => {
-    var _a2;
+    var _a2, _b2;
     const site = db.sites.find((s) => s.id === id);
-    const activityLog = addLog(db, actor, `Removed site ${(_a2 = site == null ? void 0 : site.number) != null ? _a2 : ""}`);
-    persist({ ...db, sites: db.sites.filter((s) => s.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed site ${(_a2 = site == null ? void 0 : site.number) != null ? _a2 : ""} (moved to trash)`);
+    persist({ ...trashItem(db, "site", site, `Site ${(_b2 = site == null ? void 0 : site.number) != null ? _b2 : ""}`), activityLog });
     confirm.clear();
   };
   const filtered = db.sites.filter((s) => {
@@ -459,11 +525,12 @@ function SitesView({ db, persist }) {
       /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 font-semibold text-sm text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("span", { className: `inline-block transition-transform ${isCollapsed ? "-rotate-90" : ""}` }, "\u25BE"), sectionName),
       /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#75716A] bg-white rounded-full px-2 py-0.5" }, sorted.length)
     ), !isCollapsed && /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#FFFDFA] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Hookups"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Notes"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2 w-32" }))), /* @__PURE__ */ React.createElement("tbody", null, sorted.map((s) => /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(s.id) }, s.number)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, s.hookups || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-xs truncate" }, s.notes || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(s.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: s }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(s.id) }, "Delete"))))))));
-  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Site" : "Edit Site", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(SiteForm, { initial: modal.data, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Sites", onClose: () => setBulkOpen(false) }, /* @__PURE__ */ React.createElement(BulkAddSitesForm, { onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Edit Sites", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkEditSitesForm, { sites: db.sites, onSave: bulkEdit, onCancel: () => setBulkEditOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Site" : "Edit Site", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(SiteForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Sites", onClose: () => setBulkOpen(false) }, /* @__PURE__ */ React.createElement(BulkAddSitesForm, { onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Edit Sites", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkEditSitesForm, { sites: db.sites, onSave: bulkEdit, onCancel: () => setBulkEditOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     SiteDetailModal,
     {
       site: db.sites.find((s) => s.id === detailId),
       db,
+      persist,
       onClose: () => setDetailId(null),
       onEdit: (s) => {
         setDetailId(null);
@@ -561,8 +628,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
     selected.size === 1 ? "" : "s"
   )));
 }
-
-function SiteDetailModal({ site, db, onClose, onEdit }) {
+function SiteDetailModal({ site, db, persist, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   if (!site) return null;
   const cottages = db.cottages.filter((c) => c.siteId === site.id);
@@ -576,7 +642,7 @@ function SiteDetailModal({ site, db, onClose, onEdit }) {
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Edit Site"
-  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, onClose: () => setViewingWO(null) }));
+  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }));
 }
 function DetailSection({ title, empty, children }) {
   const hasContent = React.Children.count(children) > 0;
@@ -593,14 +659,44 @@ function WorkOrderListRow({ wo, onClick }) {
     /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 flex-shrink-0" }, wo.completedDate && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#75716A]" }, wo.completedDate), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status))
   );
 }
-function WorkOrderViewModal({ wo, db, onClose }) {
+function WorkOrderViewModal({ wo, db, persist, onClose }) {
+  const [noteText, setNoteText] = useState("");
+  const actor = useCurrentActor();
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => c.siteId === site.id) : null;
+  const notes = wo.notes || [];
+  const addNote = () => {
+    if (!noteText.trim()) return;
+    const entry = { id: uid(), text: noteText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const workOrders = db.workOrders.map((w) => w.id === wo.id ? { ...w, notes: [entry, ...w.notes || []] } : w);
+    persist({ ...db, workOrders });
+    setNoteText("");
+  };
   return /* @__PURE__ */ React.createElement(Modal, { title: wo.title, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Date: ", wo.date), /* @__PURE__ */ React.createElement("div", null, "Status: ", wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, "Priority: ", wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, "Work Group: ", wo.workGroup), site && /* @__PURE__ */ React.createElement("div", null, "Site: ", site.number), cottage && /* @__PURE__ */ React.createElement("div", null, "Cottage: ", cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, "Customer: ", customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, "Assigned To: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, "Labor: ", wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, "Completed: ", wo.completedDate)), wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
     const part = db.parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "x", pu.quantity));
-  })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
+  })), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, "Notes"), notes.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No notes yet \u2014 handy for jobs that span more than one day.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, notes.map((n) => /* @__PURE__ */ React.createElement("div", { key: n.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, n.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, n.author, " \xB7 ", new Date(n.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls,
+      value: noteText,
+      onChange: (e) => setNoteText(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") addNote();
+      },
+      placeholder: "Add a note\u2026"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: addNote,
+      disabled: !noteText.trim(),
+      className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40 whitespace-nowrap"
+    },
+    "Add"
+  ))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => downloadPrintable([wo], db, `work-order-${wo.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`),
@@ -609,18 +705,19 @@ function WorkOrderViewModal({ wo, db, onClose }) {
     "Print"
   )));
 }
-function SiteForm({ initial, onSave, onCancel }) {
+function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
   const [section, setSection] = useState((initial == null ? void 0 : initial.section) || "");
   const [hookups, setHookups] = useState((initial == null ? void 0 : initial.hookups) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && s.number.trim().toLowerCase() === number.trim().toLowerCase());
   const submit = () => {
     if (!number.trim()) return;
     onSave({ id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim() });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Access notes, terrain, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Site")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Access notes, terrain, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Site")));
 }
 const COLOR_SWATCH = {
   Red: "#B5432E",
@@ -655,10 +752,10 @@ function CottagesView({ db, persist }) {
     setModal(null);
   };
   const remove = (id) => {
-    var _a2;
+    var _a2, _b2;
     const cottage = db.cottages.find((c) => c.id === id);
-    const activityLog = addLog(db, actor, `Removed cottage ${(_a2 = cottage == null ? void 0 : cottage.name) != null ? _a2 : ""}`);
-    persist({ ...db, cottages: db.cottages.filter((c) => c.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed cottage ${(_a2 = cottage == null ? void 0 : cottage.name) != null ? _a2 : ""} (moved to trash)`);
+    persist({ ...trashItem(db, "cottage", cottage, (_b2 = cottage == null ? void 0 : cottage.name) != null ? _b2 : "Cottage"), activityLog });
     confirm.clear();
   };
   const filtered = db.cottages.filter((c) => {
@@ -690,11 +787,12 @@ function CottagesView({ db, persist }) {
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No cottages match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" }, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 relative overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 w-full h-1.5", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between mt-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, c.name), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, c.color || "No colour set")))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Site: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, site ? site.number : "Unassigned")), (c.year || c.modelNumber) && /* @__PURE__ */ React.createElement("div", null, c.year && /* @__PURE__ */ React.createElement("span", null, c.year), c.year && c.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), c.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", c.modelNumber)), c.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", c.serialNumber), c.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", c.features)), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
+  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
       cottage: db.cottages.find((c) => c.id === detailId),
       db,
+      persist,
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -710,7 +808,7 @@ function CottagesView({ db, persist }) {
     }
   ));
 }
-function CottageDetailModal({ cottage, db, onClose, onEdit }) {
+function CottageDetailModal({ cottage, db, persist, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   if (!cottage) return null;
   const site = db.sites.find((s) => s.id === cottage.siteId);
@@ -723,10 +821,9 @@ function CottageDetailModal({ cottage, db, onClose, onEdit }) {
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Edit Cottage"
-  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, onClose: () => setViewingWO(null) }));
+  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }));
 }
-
-function CottageForm({ initial, sites, onSave, onCancel }) {
+function CottageForm({ initial, sites, cottages, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [color, setColor] = useState((initial == null ? void 0 : initial.color) || "");
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
@@ -734,6 +831,7 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
   const [serialNumber, setSerialNumber] = useState((initial == null ? void 0 : initial.serialNumber) || "");
   const [year, setYear] = useState((initial == null ? void 0 : initial.year) || "");
   const [modelNumber, setModelNumber] = useState((initial == null ? void 0 : initial.modelNumber) || "");
+  const isDuplicate = name.trim() && (cottages || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
   const submit = () => {
     if (!name.trim()) return;
     onSave({
@@ -749,7 +847,7 @@ function CottageForm({ initial, sites, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-3 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-3 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 function CustomersView({ db, persist }) {
   var _a, _b;
@@ -783,10 +881,10 @@ function CustomersView({ db, persist }) {
     setBulkOpen(false);
   };
   const remove = (id) => {
-    var _a2;
+    var _a2, _b2;
     const customer = db.customers.find((c) => c.id === id);
-    const activityLog = addLog(db, actor, `Removed customer ${(_a2 = customer == null ? void 0 : customer.name) != null ? _a2 : ""}`);
-    persist({ ...db, customers: db.customers.filter((c) => c.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed customer ${(_a2 = customer == null ? void 0 : customer.name) != null ? _a2 : ""} (moved to trash)`);
+    persist({ ...trashItem(db, "customer", customer, (_b2 = customer == null ? void 0 : customer.name) != null ? _b2 : "Customer"), activityLog });
     confirm.clear();
   };
   const filtered = db.customers.filter((c) => {
@@ -825,11 +923,12 @@ function CustomersView({ db, persist }) {
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No customers match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Phone"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Email"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Address"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-40" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement("tr", { key: c.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(c.id) }, c.name)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.phone || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.email || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-[14rem] truncate" }, c.address || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, site ? site.number : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === detailId),
       db,
+      persist,
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -845,7 +944,7 @@ function CustomersView({ db, persist }) {
     }
   ));
 }
-function CustomerDetailModal({ customer, db, onClose, onEdit }) {
+function CustomerDetailModal({ customer, db, persist, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   if (!customer) return null;
   const site = db.sites.find((s) => s.id === customer.siteId);
@@ -859,9 +958,9 @@ function CustomerDetailModal({ customer, db, onClose, onEdit }) {
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Edit Customer"
-  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, onClose: () => setViewingWO(null) }));
+  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }));
 }
-function CustomerForm({ initial, sites, onSave, onCancel }) {
+function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [phone, setPhone] = useState((initial == null ? void 0 : initial.phone) || "");
   const [email, setEmail] = useState((initial == null ? void 0 : initial.email) || "");
@@ -870,6 +969,7 @@ function CustomerForm({ initial, sites, onSave, onCancel }) {
   const [email2, setEmail2] = useState((initial == null ? void 0 : initial.email2) || "");
   const [address, setAddress] = useState((initial == null ? void 0 : initial.address) || "");
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
+  const isDuplicate = name.trim() && (customers || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
   const submit = () => {
     if (!name.trim()) return;
     onSave({
@@ -886,7 +986,7 @@ function CustomerForm({ initial, sites, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mt-2 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: address, onChange: (e) => setAddress(e.target.value), placeholder: "Home mailing address" })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mt-2 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: address, onChange: (e) => setAddress(e.target.value), placeholder: "Home mailing address" })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
 }
 function BulkAddCustomersForm({ sites, onSave, onCancel }) {
   const [text, setText] = useState("");
@@ -974,6 +1074,7 @@ function TaxRateControl({ db, persist }) {
     }
   ), /* @__PURE__ */ React.createElement("span", null, "%"));
 }
+
 function PartsView({ db, persist }) {
   var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
@@ -991,8 +1092,8 @@ function PartsView({ db, persist }) {
   const remove = (id) => {
     var _a2;
     const part = db.parts.find((p) => p.id === id);
-    const activityLog = addLog(db, actor, `Removed part ${(_a2 = part == null ? void 0 : part.name) != null ? _a2 : ""}`);
-    persist({ ...db, parts: db.parts.filter((p) => p.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed part ${(_a2 = part == null ? void 0 : part.name) != null ? _a2 : ""} (moved to trash)`);
+    persist({ ...trashItem(db, "part", part, (part == null ? void 0 : part.name) != null ? part.name : "Part"), activityLog });
     confirm.clear();
   };
   const filtered = db.parts.filter((p) => !filter || p.name.toLowerCase().includes(filter.toLowerCase()));
@@ -1108,7 +1209,7 @@ function StatCard({ label, value, onClick, tone }) {
     /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
   );
 }
-function DashboardView({ db, onGoToTab }) {
+function DashboardView({ db, onGoToTab, persist }) {
   var _a, _b;
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
@@ -1118,7 +1219,16 @@ function DashboardView({ db, onGoToTab }) {
   const pendingQuoteValue = db.quotes.filter((q) => q.status === "Draft" || q.status === "Sent").reduce((sum, q) => sum + computeQuoteTotals(q, taxRate).total, 0);
   const recentWorkOrders = db.workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
   const recentActivity = (db.activityLog || []).slice(0, 8);
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Open Work Orders", value: openWorkOrders.length, onClick: () => onGoToTab("workorders") }), /* @__PURE__ */ React.createElement(
+  const daysSinceBackup = db.lastBackupAt ? Math.floor((Date.now() - new Date(db.lastBackupAt).getTime()) / (24 * 60 * 60 * 1e3)) : null;
+  const backupStale = daysSinceBackup === null || daysSinceBackup >= 14;
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => exportDatabase(db, persist),
+      className: "text-xs px-2.5 py-1 rounded-md border border-[#a8532a]/40 text-[#a8532a] hover:bg-white/40 font-medium whitespace-nowrap"
+    },
+    "Export backup now"
+  )), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Open Work Orders", value: openWorkOrders.length, onClick: () => onGoToTab("workorders") }), /* @__PURE__ */ React.createElement(
     StatCard,
     {
       label: "Overdue",
@@ -1141,6 +1251,7 @@ function DashboardView({ db, onGoToTab }) {
     return /* @__PURE__ */ React.createElement("div", { key: w.id, className: "flex items-center justify-between gap-3 py-2 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, w.title), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, where, w.assignedTo ? ` \xB7 ${w.assignedTo}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 flex-shrink-0" }, w.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[w.priority] || ""}` }, w.priority), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}` }, w.status)));
   }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Staff Availability"), db.staff.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No staff added yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, db.staff.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${STAFF_STATUS_DOT[s.status] || "bg-[#E2DED5]"}` }), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] truncate" }, s.name)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, s.status)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))));
 }
+
 function StaffView({ db, persist }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -1157,8 +1268,8 @@ function StaffView({ db, persist }) {
   const remove = (id) => {
     var _a2;
     const person = db.staff.find((s) => s.id === id);
-    const activityLog = addLog(db, actor, `Removed staff member ${(_a2 = person == null ? void 0 : person.name) != null ? _a2 : ""}`);
-    persist({ ...db, staff: db.staff.filter((s) => s.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed staff member ${(_a2 = person == null ? void 0 : person.name) != null ? _a2 : ""} (moved to trash)`);
+    persist({ ...trashItem(db, "staff", person, (person == null ? void 0 : person.name) != null ? person.name : "Staff member"), activityLog });
     confirm.clear();
   };
   const updateStatus = (person, status) => {
@@ -1258,8 +1369,8 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
   const remove = (id) => {
     var _a2;
     const quote = db.quotes.find((q) => q.id === id);
-    const activityLog = addLog(db, actor, `Removed quote "${(_a2 = quote == null ? void 0 : quote.title) != null ? _a2 : ""}"`);
-    persist({ ...db, quotes: db.quotes.filter((q) => q.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed quote "${(_a2 = quote == null ? void 0 : quote.title) != null ? _a2 : ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "quote", quote, (quote == null ? void 0 : quote.title) != null ? quote.title : "Quote"), activityLog });
     confirm.clear();
   };
   const updateStatus = (quote, status) => {
@@ -1773,7 +1884,7 @@ function downloadPrintableItems(items, buildItemHtml, filenameBase) {
 function downloadPrintable(list, db, filenameBase) {
   downloadPrintableItems(list, (wo) => buildWorkOrderHtml(wo, db), filenameBase);
 }
-function exportDatabase(db) {
+function exportDatabase(db, persist) {
   const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1783,6 +1894,7 @@ function exportDatabase(db) {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 4e3);
+  if (persist) persist({ ...db, lastBackupAt: new Date().toISOString() });
 }
 function buildExcelSheets(db) {
   var _a, _b;
@@ -1928,7 +2040,7 @@ function buildExcelSheets(db) {
     "Activity Log": activityLog
   };
 }
-function exportExcel(db) {
+function exportExcel(db, persist) {
   const sheets = buildExcelSheets(db);
   const wb = XLSX.utils.book_new();
   Object.entries(sheets).forEach(([name, rows]) => {
@@ -1936,8 +2048,9 @@ function exportExcel(db) {
     XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
   });
   XLSX.writeFile(wb, `campground-export-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`);
+  if (persist) persist({ ...db, lastBackupAt: new Date().toISOString() });
 }
-function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onText, smsStatus }) {
+function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewNotes, onText, smsStatus }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => c.siteId === site.id) : null;
@@ -1954,7 +2067,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onText,
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), cottage && /* @__PURE__ */ React.createElement("span", null, cottage.name), wo.assignedTo && /* @__PURE__ */ React.createElement("span", null, "Assigned: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("span", null, wo.laborHours, " hrs \xB7 ", wo.laborRateType)),
     wo.description && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#4B4740] mt-2 leading-relaxed" }, wo.description),
     isDone && wo.completedDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-2 italic" }, "Completed ", wo.completedDate),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onViewNotes(wo) }, "Notes", wo.notes && wo.notes.length > 0 ? ` (${wo.notes.length})` : ""), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "text-[#377249] hover:underline disabled:opacity-50",
@@ -1978,9 +2091,11 @@ function WorkOrdersView({ db, persist }) {
   const [filter, setFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [smsStatus, setSmsStatus] = useState({});
   const [pendingText, setPendingText] = useState(null);
+  const [viewingWO, setViewingWO] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (wo) => {
@@ -2037,10 +2152,10 @@ function WorkOrdersView({ db, persist }) {
     });
   };
   const remove = (id) => {
-    var _a2;
+    var _a2, _b2;
     const wo = db.workOrders.find((w) => w.id === id);
-    const activityLog = addLog(db, actor, `Removed work order "${(_a2 = wo == null ? void 0 : wo.title) != null ? _a2 : ""}"`);
-    persist({ ...db, workOrders: db.workOrders.filter((w) => w.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed work order "${(_a2 = wo == null ? void 0 : wo.title) != null ? _a2 : ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "workOrder", wo, (_b2 = wo == null ? void 0 : wo.title) != null ? _b2 : "Work Order"), activityLog });
     confirm.clear();
   };
   const advance = (wo) => {
@@ -2116,6 +2231,13 @@ function WorkOrdersView({ db, persist }) {
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
+      onClick: () => setTemplatesOpen(true),
+      className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+    },
+    "Templates"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
       onClick: () => setRecurringOpen(true),
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
@@ -2160,6 +2282,7 @@ function WorkOrdersView({ db, persist }) {
         onDelete: (w) => confirm.ask(w.id),
         onAdvance: advance,
         onPrint: (w) => downloadPrintable([w], db, `work-order-${w.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`),
+        onViewNotes: (w) => setViewingWO(w),
         onText: textToStaff,
         smsStatus: smsStatus[wo.id]
       }
@@ -2174,10 +2297,11 @@ function WorkOrdersView({ db, persist }) {
       parts: db.parts,
       customers: db.customers,
       workGroups,
+      templates: db.workOrderTemplates,
       onSave: save,
       onCancel: () => setModal(null)
     }
-  )), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Actions", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(
+  )), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), templatesOpen && /* @__PURE__ */ React.createElement(WorkOrderTemplatesModal, { db, persist, onClose: () => setTemplatesOpen(false) }), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Actions", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(
     BulkEditWorkOrdersForm,
     {
       workOrders: db.workOrders,
@@ -2208,9 +2332,16 @@ function WorkOrdersView({ db, persist }) {
       onConfirm: () => remove(confirm.target),
       onCancel: confirm.clear
     }
+  ), viewingWO && /* @__PURE__ */ React.createElement(
+    WorkOrderViewModal,
+    {
+      wo: db.workOrders.find((w) => w.id === viewingWO.id) || viewingWO,
+      db,
+      persist,
+      onClose: () => setViewingWO(null)
+    }
   ));
 }
-
 function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, onCancel }) {
   const [field, setField] = useState("status");
   const [value, setValue] = useState(STATUS[0]);
@@ -2271,7 +2402,6 @@ function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, on
     selected.size === 1 ? "" : "s"
   )));
 }
-
 function RecurringTasksModal({ db, persist, onClose }) {
   var _a, _b;
   const [formOpen, setFormOpen] = useState(null);
@@ -2286,10 +2416,10 @@ function RecurringTasksModal({ db, persist, onClose }) {
     setFormOpen(null);
   };
   const remove = (id) => {
-    var _a2;
+    var _a2, _b2;
     const task = tasks.find((t) => t.id === id);
-    const activityLog = addLog(db, actor, `Removed recurring task "${(_a2 = task == null ? void 0 : task.title) != null ? _a2 : ""}"`);
-    persist({ ...db, recurringTasks: tasks.filter((t) => t.id !== id), activityLog });
+    const activityLog = addLog(db, actor, `Removed recurring task "${(_a2 = task == null ? void 0 : task.title) != null ? _a2 : ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "recurringTask", task, (_b2 = task == null ? void 0 : task.title) != null ? _b2 : "Recurring Task"), activityLog });
     confirm.clear();
   };
   return /* @__PURE__ */ React.createElement(Modal, { title: "Recurring Maintenance Tasks", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "These automatically create a new work order on schedule, so nothing seasonal gets forgotten."), tasks.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No recurring tasks set up yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, tasks.map((t) => {
@@ -2338,8 +2468,74 @@ function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
   } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Winterize docks", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: frequencyDays, onChange: (e) => setFrequencyDays(e.target.value) }, FREQUENCY_OPTIONS.map((f) => /* @__PURE__ */ React.createElement("option", { key: f.days, value: f.days }, f.label)))), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: cottageId, onChange: (e) => setCottageId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), cottages.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement(Field, { label: "Next Due Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: nextDueDate, onChange: (e) => setNextDueDate(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What this task involves" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Recurring Task")));
 }
-
-function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, onSave, onCancel }) {
+function WorkOrderTemplatesModal({ db, persist, onClose }) {
+  var _a, _b;
+  const [formOpen, setFormOpen] = useState(null);
+  const confirm = useConfirm();
+  const actor = useCurrentActor();
+  const templates = db.workOrderTemplates || [];
+  const save = (tpl) => {
+    const exists = templates.some((t) => t.id === tpl.id);
+    const workOrderTemplates = exists ? templates.map((t) => t.id === tpl.id ? tpl : t) : [...templates, tpl];
+    const activityLog = addLog(db, actor, exists ? `Updated work order template "${tpl.name}"` : `Added work order template "${tpl.name}"`);
+    persist({ ...db, workOrderTemplates, activityLog });
+    setFormOpen(null);
+  };
+  const remove = (id) => {
+    var _a2, _b2;
+    const tpl = templates.find((t) => t.id === id);
+    const activityLog = addLog(db, actor, `Removed work order template "${(_a2 = tpl == null ? void 0 : tpl.name) != null ? _a2 : ""}" (moved to trash)`);
+    persist({ ...trashItem({ ...db, workOrderTemplates: templates }, "workOrderTemplate", tpl, (_b2 = tpl == null ? void 0 : tpl.name) != null ? _b2 : "Template"), activityLog });
+    confirm.clear();
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Work Order Templates", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Save a common job setup once, then start new work orders from it instead of typing the same thing every time."), templates.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No templates saved yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, templates.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, t.name), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, t.title, t.priority ? ` \xB7 ${t.priority}` : "", t.workGroup ? ` \xB7 ${t.workGroup}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setFormOpen({ mode: "edit", data: t }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(t.id) }, "Delete"))))), formOpen ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement(WorkOrderTemplateForm, { initial: formOpen.data, parts: db.parts, onSave: save, onCancel: () => setFormOpen(null) })) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFormOpen({ mode: "new" }), className: "text-sm text-[#377249] hover:underline font-medium" }, "+ Add template"), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")), confirm.target && /* @__PURE__ */ React.createElement(
+    ConfirmDeleteModal,
+    {
+      label: (_b = (_a = templates.find((t) => t.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this template",
+      onConfirm: () => remove(confirm.target),
+      onCancel: confirm.clear
+    }
+  ));
+}
+function WorkOrderTemplateForm({ initial, parts, onSave, onCancel }) {
+  const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
+  const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
+  const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
+  const [priority, setPriority] = useState((initial == null ? void 0 : initial.priority) || "Medium");
+  const [workGroup, setWorkGroup] = useState((initial == null ? void 0 : initial.workGroup) || "");
+  const [defaultParts, setDefaultParts] = useState((initial == null ? void 0 : initial.defaultParts) || []);
+  const [partToAdd, setPartToAdd] = useState("");
+  const addPart = () => {
+    const part = (parts || []).find((p) => p.id === partToAdd);
+    if (!part) return;
+    setDefaultParts(
+      (items) => items.some((pu) => pu.partId === part.id) ? items : [...items, { partId: part.id, quantity: 1 }]
+    );
+    setPartToAdd("");
+  };
+  const removePart = (partId) => {
+    setDefaultParts((items) => items.filter((pu) => pu.partId !== partId));
+  };
+  const submit = () => {
+    if (!name.trim() || !title.trim()) return;
+    onSave({
+      id: (initial == null ? void 0 : initial.id) || uid(),
+      name: name.trim(),
+      title: title.trim(),
+      description: description.trim(),
+      priority,
+      workGroup: workGroup.trim(),
+      defaultParts
+    });
+  };
+  return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Dock Repair", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created work order is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: workGroup, onChange: (e) => setWorkGroup(e.target.value), placeholder: "e.g. Tree Work Orders" }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "Default description for jobs from this template" })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Parts"), defaultParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, defaultParts.map((pu) => {
+    const part = parts.find((p) => p.id === pu.partId);
+    return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removePart(pu.partId), className: "text-[#a8532a] hover:underline text-xs" }, "Remove"));
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("select", { className: "rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-xs text-[#1E1A13]", value: partToAdd, onChange: (e) => setPartToAdd(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Add a default part\u2026"), parts.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addPart, disabled: !partToAdd, className: "text-xs px-2 py-1 rounded-md border border-[#377249]/30 text-[#377249] hover:bg-[#377249]/10 disabled:opacity-40" }, "Add"))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Template")));
+}
+function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, onSave, onCancel }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
@@ -2355,8 +2551,19 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [partToAdd, setPartToAdd] = useState("");
   const [laborHours, setLaborHours] = useState((_a = initial == null ? void 0 : initial.laborHours) != null ? _a : "");
   const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || RATE_OPTIONS[1].label);
+  const [templateId, setTemplateId] = useState("");
   const laborRate = (_c = (_b = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : RATE_OPTIONS[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
+  const applyTemplate = (id) => {
+    setTemplateId(id);
+    const tpl = (templates || []).find((t) => t.id === id);
+    if (!tpl) return;
+    setTitle(tpl.title || "");
+    setDescription(tpl.description || "");
+    setPriority(tpl.priority || "Medium");
+    setWorkGroup(tpl.workGroup || "");
+    setPartsUsed((tpl.defaultParts || []).map((pu) => ({ partId: pu.partId, quantity: pu.quantity })));
+  };
   const handleSiteChange = (val) => {
     setSiteId(val);
     const cust = (customers || []).find((c) => c.siteId === val);
@@ -2415,7 +2622,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
@@ -2664,6 +2871,7 @@ function AppContent() {
   const [tab, setTab] = useState("dashboard");
   const [importPending, setImportPending] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
   const importInputRef = useRef(null);
   const actor = useCurrentActor();
   const generatedRef = useRef(false);
@@ -2768,10 +2976,10 @@ function AppContent() {
       /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${tab === t.key ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
       t.label
     ))),
-    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), /* @__PURE__ */ React.createElement("button", { onClick: () => {
       var _a;
       return (_a = importInputRef.current) == null ? void 0 : _a.click();
-    }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), /* @__PURE__ */ React.createElement(
+    }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => firebase.auth().signOut(),
@@ -2779,7 +2987,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, tab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab }), tab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), tab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), tab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist }), tab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist }), tab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist }), tab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), tab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), tab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), tab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, tab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist }), tab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), tab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), tab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist }), tab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist }), tab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist }), tab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), tab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), tab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), tab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -2790,10 +2998,11 @@ function AppContent() {
     ConfirmDeleteModal,
     {
       label: "all current data \u2014 replacing it with this backup file",
+      message: "Import this backup? It will completely replace all current data \u2014 not just move it to trash. This can't be undone.",
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, onClose: () => setTrashOpen(false) }));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
