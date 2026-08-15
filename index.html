@@ -1956,9 +1956,10 @@ function buildExcelSheets(db) {
     Hours: w.laborHours || "",
     "Rate Type": w.laborRateType || "",
     "Labor Cost": w.laborHours ? Number(w.laborHours) * Number(w.laborRate || 0) : "",
-    "Parts Cost": (w.partsUsed || []).reduce((sum, pu) => {
+    "Parts Cost (incl. tax)": (w.partsUsed || []).reduce((sum, pu) => {
       const part = db.parts.find((p) => p.id === pu.partId);
-      return sum + (Number(part == null ? void 0 : part.price) || 0) * (Number(pu.quantity) || 0);
+      const priceWithTax = (Number(part == null ? void 0 : part.price) || 0) * (1 + taxRate / 100);
+      return sum + priceWithTax * (Number(pu.quantity) || 0);
     }, 0) || "",
     "Payment Status": w.paymentStatus || "",
     Description: w.description || "",
@@ -2094,7 +2095,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
   );
 }
 function WorkOrdersView({ db, persist }) {
-  var _a, _b;
+  var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
@@ -2306,6 +2307,7 @@ function WorkOrdersView({ db, persist }) {
       customers: db.customers,
       workGroups,
       templates: db.workOrderTemplates,
+      taxRate: (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13,
       onSave: save,
       onCancel: () => setModal(null)
     }
@@ -2336,7 +2338,7 @@ function WorkOrdersView({ db, persist }) {
   ))), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
-      label: (_b = (_a = db.workOrders.find((w) => w.id === confirm.target)) == null ? void 0 : _a.title) != null ? _b : "this work order",
+      label: (_d = (_c = db.workOrders.find((w) => w.id === confirm.target)) == null ? void 0 : _c.title) != null ? _d : "this work order",
       onConfirm: () => remove(confirm.target),
       onCancel: confirm.clear
     }
@@ -2350,7 +2352,6 @@ function WorkOrdersView({ db, persist }) {
     }
   ));
 }
-
 function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, onCancel }) {
   const [field, setField] = useState("status");
   const [value, setValue] = useState(STATUS[0]);
@@ -2544,7 +2545,7 @@ function WorkOrderTemplateForm({ initial, parts, onSave, onCancel }) {
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removePart(pu.partId), className: "text-[#a8532a] hover:underline text-xs" }, "Remove"));
   })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("select", { className: "rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-xs text-[#1E1A13]", value: partToAdd, onChange: (e) => setPartToAdd(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Add a default part\u2026"), parts.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addPart, disabled: !partToAdd, className: "text-xs px-2 py-1 rounded-md border border-[#377249]/30 text-[#377249] hover:bg-[#377249]/10 disabled:opacity-40" }, "Add"))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Template")));
 }
-function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, onSave, onCancel }) {
+function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, onSave, onCancel }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
@@ -2688,8 +2689,9 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
     }
   )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labor cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
     const part = parts.find((p) => p.id === pu.partId);
-    const lineTotal = (Number(part == null ? void 0 : part.price) || 0) * (Number(pu.quantity) || 0);
-    return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 text-[#1E1A13]" }, part ? part.name : "Unknown part", part && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, " (", formatPrice(part.price), " ea)")), /* @__PURE__ */ React.createElement(
+    const partPrice = (Number(part == null ? void 0 : part.price) || 0) * (1 + (Number(taxRate) || 0) / 100);
+    const lineTotal = partPrice * (Number(pu.quantity) || 0);
+    return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "flex-1 text-[#1E1A13]" }, part ? part.name : "Unknown part", part && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, " (", formatPrice(partPrice), " ea, incl. tax)")), /* @__PURE__ */ React.createElement(
       "input",
       {
         type: "number",
@@ -2709,10 +2711,11 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       },
       "\u2715"
     ));
-  }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end text-xs font-medium text-[#1E1A13] pt-1 border-t border-[#EEEBE5]" }, "Parts total: ", formatPrice(
+  }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end text-xs font-medium text-[#1E1A13] pt-1 border-t border-[#EEEBE5]" }, "Parts total (incl. tax): ", formatPrice(
     partsUsed.reduce((sum, pu) => {
       const part = parts.find((p) => p.id === pu.partId);
-      return sum + (Number(part == null ? void 0 : part.price) || 0) * (Number(pu.quantity) || 0);
+      const priceWithTax = (Number(part == null ? void 0 : part.price) || 0) * (1 + (Number(taxRate) || 0) / 100);
+      return sum + priceWithTax * (Number(pu.quantity) || 0);
     }, 0)
   ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
     "select",
@@ -2722,7 +2725,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: (e) => setPartToAdd(e.target.value)
     },
     /* @__PURE__ */ React.createElement("option", { value: "" }, "Add a part used\u2026"),
-    parts.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", formatPrice(p.price), " (", p.quantity, " in stock)"))
+    parts.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.name, " \u2014 ", formatPrice(Number(p.price) * (1 + (Number(taxRate) || 0) / 100)), " incl. tax (", p.quantity, " in stock)"))
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
