@@ -2285,22 +2285,22 @@ function WorkOrdersView({ db, persist }) {
     const hay = `${w.title} ${w.description} ${(site == null ? void 0 : site.number) || ""} ${(cottage == null ? void 0 : cottage.name) || ""} ${w.assignedTo || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Work Orders"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "The board \u2014 drag status forward as jobs move along.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Work Orders"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "The board \u2014 drag status forward as jobs move along.")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
       className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
     },
     "+ New Work Order"
-  ), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement(
     "input",
     {
-      className: inputCls + " w-48",
+      className: inputCls + " w-full sm:w-72",
       placeholder: "Search work orders\u2026",
       value: filter,
       onChange: (e) => setFilter(e.target.value)
     }
-  ), workGroups.length > 0 && /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, workGroups.length > 0 && /* @__PURE__ */ React.createElement(
     "select",
     {
       className: inputCls + " w-44",
@@ -2418,6 +2418,7 @@ function WorkOrdersView({ db, persist }) {
     }
   ));
 }
+
 function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, onCancel }) {
   const [field, setField] = useState("status");
   const [value, setValue] = useState(STATUS[0]);
