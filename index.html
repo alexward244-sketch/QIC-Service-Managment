@@ -779,6 +779,40 @@ function WorkOrderViewModal({ wo, db, persist, onClose }) {
   )));
 }
 
+function QuoteCommentsModal({ quote, db, persist, onClose }) {
+  const [commentText, setCommentText] = useState("");
+  const actor = useCurrentActor();
+  const comments = quote.commentLog || [];
+  const addComment = () => {
+    if (!commentText.trim()) return;
+    const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const quotes = db.quotes.map((q) => q.id === quote.id ? { ...q, commentLog: [entry, ...q.commentLog || []] } : q);
+    persist({ ...db, quotes });
+    setCommentText("");
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Comments \u2014 ${quote.title}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Internal notes for your team only \u2014 these never show up on the printed or emailed quote."), comments.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No comments yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-64 overflow-y-auto" }, comments.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-4" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls,
+      value: commentText,
+      onChange: (e) => setCommentText(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") addComment();
+      },
+      placeholder: "Add a comment\u2026"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: addComment,
+      disabled: !commentText.trim(),
+      className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40 whitespace-nowrap"
+    },
+    "Add"
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
+}
+
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
   const [section, setSection] = useState((initial == null ? void 0 : initial.section) || "");
@@ -1404,6 +1438,7 @@ function StaffForm({ initial, onSave, onCancel }) {
   } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { type: "email", className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STAFF_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Staff")));
 }
 const QUOTE_STATUS = ["Draft", "Sent", "Accepted", "Declined"];
+const CUSTOMER_STATUS_LABEL = { Draft: "Draft", Sent: "Proposed Quote", Accepted: "Accepted", Declined: "Declined" };
 const QUOTE_STATUS_STYLES = {
   Draft: "bg-[#F1EEE9] text-[#75716A]",
   Sent: "bg-[#DCEBE8] text-[#3E7A72]",
@@ -1415,15 +1450,33 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [emailStatus, setEmailStatus] = useState({});
+  const [commentsFor, setCommentsFor] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const formDirtyRef = useRef(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
+  const requestCloseModal = () => {
+    if (formDirtyRef.current) {
+      setDiscardConfirmOpen(true);
+    } else {
+      setModal(null);
+    }
+  };
+  const confirmDiscard = () => {
+    formDirtyRef.current = false;
+    setDiscardConfirmOpen(false);
+    setModal(null);
+  };
   const save = (quote) => {
     const exists = db.quotes.some((q) => q.id === quote.id);
     const quotes = exists ? db.quotes.map((q) => q.id === quote.id ? quote : q) : [...db.quotes, quote];
     const activityLog = addLog(db, actor, exists ? `Updated quote "${quote.title}"` : `Created quote "${quote.title}"`);
     persist({ ...db, quotes, activityLog });
+    formDirtyRef.current = false;
     setModal(null);
+    setToast(exists ? "Quote updated" : "Quote created");
   };
   const emailToCustomer = (quote, customer) => {
     setEmailStatus((s) => ({ ...s, [quote.id]: "sending" }));
@@ -1442,10 +1495,10 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
     });
   };
   const remove = (id) => {
-    var _a2;
+    var _a2, _b2;
     const quote = db.quotes.find((q) => q.id === id);
     const activityLog = addLog(db, actor, `Removed quote "${(_a2 = quote == null ? void 0 : quote.title) != null ? _a2 : ""}" (moved to trash)`);
-    persist({ ...trashItem(db, "quote", quote, (quote == null ? void 0 : quote.title) != null ? quote.title : "Quote"), activityLog });
+    persist({ ...trashItem(db, "quote", quote, (_b2 = quote == null ? void 0 : quote.title) != null ? _b2 : "Quote"), activityLog });
     confirm.clear();
   };
   const updateStatus = (quote, status) => {
@@ -1516,7 +1569,7 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
         className: `text-xs rounded-full px-2 py-1 border-0 font-medium focus:outline-none focus:ring-2 focus:ring-[#C1652F]/40 ${QUOTE_STATUS_STYLES[q.status] || ""}`
       },
       QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))
-    )), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: q }) }, "Edit"), /* @__PURE__ */ React.createElement(
+    )), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: q }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => setCommentsFor(q) }, "Comments", q.commentLog && q.commentLog.length > 0 ? ` (${q.commentLog.length})` : ""), /* @__PURE__ */ React.createElement(
       "button",
       {
         className: "text-[#75716A] hover:underline",
@@ -1536,7 +1589,7 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
       },
       emailStatus[q.id] === "sending" ? "Sending\u2026" : emailStatus[q.id] === "sent" ? "Sent \u2713" : emailStatus[q.id] === "error" ? "Failed \u2014 retry" : "Email"
     ), q.status === "Accepted" && !q.workOrderId && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => convertToWorkOrder(q) }, "Convert"), q.workOrderId && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A] italic" }, "Converted"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(q.id) }, "Delete"))));
-  })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Quote" : "Edit Quote", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(
+  })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Quote" : "Edit Quote", onClose: requestCloseModal, wide: true }, /* @__PURE__ */ React.createElement(
     QuoteForm,
     {
       initial: modal.data,
@@ -1544,12 +1597,24 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
       cottages: db.cottages,
       customers: db.customers,
       parts: db.parts,
+      quotes: db.quotes,
       taxRate,
       defaultShopSuppliesPercent: (_d = (_c = db.settings) == null ? void 0 : _c.shopSuppliesPercent) != null ? _d : 5,
       onSave: save,
-      onCancel: () => setModal(null)
+      onCancel: requestCloseModal,
+      onDirtyChange: (d) => {
+        formDirtyRef.current = d;
+      }
     }
-  )), confirm.target && /* @__PURE__ */ React.createElement(
+  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this quote that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), commentsFor && /* @__PURE__ */ React.createElement(
+    QuoteCommentsModal,
+    {
+      quote: db.quotes.find((q) => q.id === commentsFor.id) || commentsFor,
+      db,
+      persist,
+      onClose: () => setCommentsFor(null)
+    }
+  ), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_f = (_e = db.quotes.find((q) => q.id === confirm.target)) == null ? void 0 : _e.title) != null ? _f : "this quote",
@@ -1558,7 +1623,7 @@ function QuotesView({ db, persist, onGoToWorkOrders }) {
     }
   ));
 }
-function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaultShopSuppliesPercent, onSave, onCancel }) {
+function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate, defaultShopSuppliesPercent, onSave, onCancel, onDirtyChange }) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
@@ -1577,7 +1642,37 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   );
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_e = (_d = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _d : defaultShopSuppliesPercent) != null ? _e : 5);
   const [serviceCall, setServiceCall] = useState((_f = initial == null ? void 0 : initial.serviceCall) != null ? _f : "");
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (onDirtyChange) onDirtyChange(true);
+  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, laborHours, laborRateType, shopSuppliesPercent, serviceCall]);
+  const isDuplicate = title.trim() && (quotes || []).some((q) => q.id !== (initial == null ? void 0 : initial.id) && q.title.trim().toLowerCase() === title.trim().toLowerCase());
   const laborRate = (_h = (_g = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : RATE_OPTIONS[1].rate;
+  const handleSiteChange = (val) => {
+    setSiteId(val);
+    const cust = (customers || []).find((c) => c.siteId === val);
+    if (cust) setCustomerId(cust.id);
+  };
+  const handleCottageChange = (val) => {
+    setCottageId(val);
+    const chosen = (cottages || []).find((c) => c.id === val);
+    if (chosen && chosen.siteId) {
+      setSiteId(chosen.siteId);
+      const cust = (customers || []).find((c) => c.siteId === chosen.siteId);
+      if (cust) setCustomerId(cust.id);
+    }
+  };
+  const handleCustomerChange = (val) => {
+    setCustomerId(val);
+    const chosen = (customers || []).find((c) => c.id === val);
+    if (chosen && chosen.siteId) {
+      setSiteId(chosen.siteId);
+    }
+  };
   const updateLine = (id, field, value) => {
     setLineItems((items) => items.map((li) => li.id === id ? { ...li, [field]: value } : li));
   };
@@ -1628,12 +1723,12 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3 sm:col-span-2" }, 'A quote titled "', title.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
       value: customerId,
-      onChange: setCustomerId,
+      onChange: handleCustomerChange,
       placeholder: "Search customers\u2026"
     }
   )), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
@@ -1641,7 +1736,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
     {
       options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
       value: siteId,
-      onChange: setSiteId,
+      onChange: handleSiteChange,
       placeholder: "Search sites\u2026"
     }
   )), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(
@@ -1649,7 +1744,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, taxRate, defaul
     {
       options: cottages.map((c) => ({ value: c.id, label: c.name })),
       value: cottageId,
-      onChange: setCottageId,
+      onChange: handleCottageChange,
       placeholder: "Search cottages\u2026"
     }
   ))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Job details, scope of work, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
@@ -1817,7 +1912,7 @@ function buildQuoteHtml(quote, db, taxRate) {
         </div>
         <div class="meta">
           <div>Date: ${escapeHtml(quote.date)}</div>
-          <div>Status: ${escapeHtml(quote.status)}</div>
+          <div>Status: ${escapeHtml(CUSTOMER_STATUS_LABEL[quote.status] || quote.status)}</div>
         </div>
       </div>
       <table class="wo-table">
@@ -1855,6 +1950,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
   const site = db.sites.find((s) => s.id === quote.siteId);
   const cottage = db.cottages.find((c) => c.id === quote.cottageId);
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
+  const customerStatusLabel = CUSTOMER_STATUS_LABEL[quote.status] || quote.status;
 
   const rows = (quote.lineItems || [])
     .map(
@@ -1886,7 +1982,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
     <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
       <h1 style="margin:0;font-size:20px;font-weight:600;">${escapeHtml(quote.title)}</h1>
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
-        ${escapeHtml(quote.date)} \u00B7 ${escapeHtml(quote.status)}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}
+        ${escapeHtml(quote.date)} \u00B7 ${escapeHtml(customerStatusLabel)}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}
       </p>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
