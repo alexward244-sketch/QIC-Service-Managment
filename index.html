@@ -1855,33 +1855,65 @@ function buildQuoteEmailText(quote, db, taxRate) {
   const site = db.sites.find((s) => s.id === quote.siteId);
   const cottage = db.cottages.find((c) => c.id === quote.cottageId);
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
-  const lines = [];
-  lines.push(`Quote: ${quote.title}`);
-  lines.push(`Date: ${quote.date}`);
-  lines.push(`Status: ${quote.status}`);
-  if (site) lines.push(`Site: ${site.number}`);
-  if (cottage) lines.push(`Cottage: ${cottage.name}`);
-  lines.push("");
-  if (quote.notes) {
-    lines.push("Notes:");
-    lines.push(quote.notes);
-    lines.push("");
-  }
-  if (quote.lineItems.length) {
-    lines.push("Line items:");
-    quote.lineItems.forEach((li) => {
-      lines.push(`  - ${li.description} (x${li.quantity}) \u2014 ${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}`);
-    });
-    lines.push("");
-  }
-  if (lineItemsSubtotal) lines.push(`Parts / line items: ${formatPrice(lineItemsSubtotal)}`);
-  if (Number(quote.laborHours) > 0) lines.push(`Labor (${quote.laborHours} hr \xD7 ${quote.laborRateType || "Rate"}): ${formatPrice(laborCost)}`);
-  if (quote.shopSuppliesPercent) lines.push(`Shop supplies (${quote.shopSuppliesPercent}%): ${formatPrice(shopSupplies)}`);
-  if (serviceCall) lines.push(`Service call: ${formatPrice(serviceCall)}`);
-  lines.push(`Subtotal: ${formatPrice(subtotal)}`);
-  lines.push(`Tax (${taxRate}%): ${formatPrice(tax)}`);
-  lines.push(`Total: ${formatPrice(total)}`);
-  return lines.join("\n");
+
+  const rows = (quote.lineItems || [])
+    .map(
+      (li) => `
+      <tr>
+        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;">${escapeHtml(li.description)}</td>
+        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#75716A;font-size:14px;text-align:center;">${escapeHtml(String(li.quantity))}</td>
+        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
+      </tr>`
+    )
+    .join("");
+
+  const summaryRow = (label, value) => `
+    <tr>
+      <td style="padding:4px 0;color:#75716A;font-size:13px;">${label}</td>
+      <td style="padding:4px 0;color:#1E1A13;font-size:13px;text-align:right;">${value}</td>
+    </tr>`;
+
+  let summaryRows = "";
+  if (lineItemsSubtotal) summaryRows += summaryRow("Parts / line items", formatPrice(lineItemsSubtotal));
+  if (Number(quote.laborHours) > 0) summaryRows += summaryRow(`Labor (${escapeHtml(String(quote.laborHours))} hr \xD7 ${escapeHtml(quote.laborRateType || "Rate")})`, formatPrice(laborCost));
+  if (quote.shopSuppliesPercent) summaryRows += summaryRow(`Shop supplies (${escapeHtml(String(quote.shopSuppliesPercent))}%)`, formatPrice(shopSupplies));
+  if (serviceCall) summaryRows += summaryRow("Service call", formatPrice(serviceCall));
+  summaryRows += summaryRow("Subtotal", formatPrice(subtotal));
+  summaryRows += summaryRow(`Tax (${taxRate}%)`, formatPrice(tax));
+
+  return `
+  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
+    <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
+      <h1 style="margin:0;font-size:20px;font-weight:600;">${escapeHtml(quote.title)}</h1>
+      <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
+        ${escapeHtml(quote.date)} \u00B7 ${escapeHtml(quote.status)}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}
+      </p>
+    </div>
+    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+      ${quote.notes ? `<p style="font-size:14px;color:#4B4740;margin:0 0 20px;line-height:1.5;">${escapeHtml(quote.notes).replace(/\n/g, "<br>")}</p>` : ""}
+      ${
+        quote.lineItems && quote.lineItems.length
+          ? `<table style="width:100%;border-collapse:collapse;margin-bottom:18px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:#75716A;padding-bottom:8px;border-bottom:2px solid #E2DED5;">Description</th>
+                  <th style="text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:#75716A;padding-bottom:8px;border-bottom:2px solid #E2DED5;">Qty</th>
+                  <th style="text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:#75716A;padding-bottom:8px;border-bottom:2px solid #E2DED5;">Price</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>`
+          : ""
+      }
+      <table style="width:100%;border-collapse:collapse;">
+        ${summaryRows}
+        <tr>
+          <td style="padding:10px 0 0;color:#1E1A13;font-size:16px;font-weight:700;border-top:2px solid #377249;">Total</td>
+          <td style="padding:10px 0 0;color:#377249;font-size:16px;font-weight:700;text-align:right;border-top:2px solid #377249;">${formatPrice(total)}</td>
+        </tr>
+      </table>
+    </div>
+  </div>`;
 }
 function buildWorkOrderEmailText(wo, db) {
   const site = db.sites.find((s) => s.id === wo.siteId);
