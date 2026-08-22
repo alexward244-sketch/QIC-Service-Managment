@@ -902,11 +902,41 @@ function CottagesView({ db, persist, readOnly }) {
   const [detailId, setDetailId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
-  const save = (c) => {
+  const save = (c, ownerAction) => {
+    var _a2;
     const exists = db.cottages.some((x) => x.id === c.id);
     const cottages = exists ? db.cottages.map((x) => x.id === c.id ? c : x) : [...db.cottages, c];
-    const activityLog = addLog(db, actor, exists ? `Updated cottage ${c.name}` : `Added cottage ${c.name}`);
-    persist({ ...db, cottages, activityLog });
+    let customers = db.customers;
+    let activityLog = addLog(db, actor, exists ? `Updated cottage ${c.name}` : `Added cottage ${c.name}`);
+    if (!exists && ownerAction && c.siteId) {
+      if (ownerAction.type === "existing" && ownerAction.customerId) {
+        customers = customers.map((cust) => {
+          if (cust.id !== ownerAction.customerId) return cust;
+          const ids = customerSiteIds(cust);
+          if (ids.includes(c.siteId)) return cust;
+          const siteIds = [...ids, c.siteId];
+          return { ...cust, siteIds, siteId: siteIds[0] };
+        });
+        const linked = customers.find((cust) => cust.id === ownerAction.customerId);
+        activityLog = addLog({ activityLog }, actor, `Linked ${(_a2 = linked == null ? void 0 : linked.name) != null ? _a2 : "customer"} to ${c.name}`);
+      } else if (ownerAction.type === "new" && ownerAction.name) {
+        const newCustomer = {
+          id: uid(),
+          name: ownerAction.name,
+          phone: ownerAction.phone || "",
+          email: ownerAction.email || "",
+          name2: "",
+          phone2: "",
+          email2: "",
+          address: "",
+          siteIds: [c.siteId],
+          siteId: c.siteId
+        };
+        customers = [...customers, newCustomer];
+        activityLog = addLog({ activityLog }, actor, `Added ${newCustomer.name} as owner of ${c.name}`);
+      }
+    }
+    persist({ ...db, cottages, customers, activityLog });
     setModal(null);
   };
   const remove = (id) => {
@@ -945,7 +975,7 @@ function CottagesView({ db, persist, readOnly }) {
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No cottages match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" }, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 relative overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 w-full h-1.5", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between mt-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, c.name), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, c.color || "No colour set")))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Site: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, site ? site.number : "Unassigned")), (c.year || c.modelNumber) && /* @__PURE__ */ React.createElement("div", null, c.year && /* @__PURE__ */ React.createElement("span", null, c.year), c.year && c.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), c.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", c.modelNumber)), c.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", c.serialNumber), c.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", c.features)), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })), !readOnly && modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
+  })), !readOnly && modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
       cottage: db.cottages.find((c) => c.id === detailId),
@@ -958,7 +988,7 @@ function CottagesView({ db, persist, readOnly }) {
         setModal({ mode: "edit", data: c });
       }
     }
-  ), !readOnly && confirm.target && /* @__PURE__ */ React.createElement(
+  ), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = db.cottages.find((c) => c.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this cottage",
@@ -1078,8 +1108,7 @@ function CottageDetailModal({ cottage, db, persist, readOnly, nested, onClose, o
     }
   ));
 }
-
-function CottageForm({ initial, sites, cottages, onSave, onCancel }) {
+function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [color, setColor] = useState((initial == null ? void 0 : initial.color) || "");
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
@@ -1087,24 +1116,60 @@ function CottageForm({ initial, sites, cottages, onSave, onCancel }) {
   const [serialNumber, setSerialNumber] = useState((initial == null ? void 0 : initial.serialNumber) || "");
   const [year, setYear] = useState((initial == null ? void 0 : initial.year) || "");
   const [modelNumber, setModelNumber] = useState((initial == null ? void 0 : initial.modelNumber) || "");
+  const [ownerMode, setOwnerMode] = useState("none");
+  const [existingCustomerId, setExistingCustomerId] = useState("");
+  const [newOwnerName, setNewOwnerName] = useState("");
+  const [newOwnerPhone, setNewOwnerPhone] = useState("");
+  const [newOwnerEmail, setNewOwnerEmail] = useState("");
   const isDuplicate = name.trim() && (cottages || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
   const submit = () => {
     if (!name.trim()) return;
-    onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
-      name: name.trim(),
-      color: color.trim(),
-      siteId: siteId || null,
-      features: features.trim(),
-      serialNumber: serialNumber.trim(),
-      year: year.trim(),
-      modelNumber: modelNumber.trim()
-    });
+    let ownerAction = null;
+    if (ownerMode === "existing" && existingCustomerId) {
+      ownerAction = { type: "existing", customerId: existingCustomerId };
+    } else if (ownerMode === "new" && newOwnerName.trim()) {
+      ownerAction = { type: "new", name: newOwnerName.trim(), phone: newOwnerPhone.trim(), email: newOwnerEmail.trim() };
+    }
+    onSave(
+      {
+        id: (initial == null ? void 0 : initial.id) || uid(),
+        name: name.trim(),
+        color: color.trim(),
+        siteId: siteId || null,
+        features: features.trim(),
+        serialNumber: serialNumber.trim(),
+        year: year.trim(),
+        modelNumber: modelNumber.trim()
+      },
+      ownerAction
+    );
   };
+  const ownerModeBtn = (mode, label) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setOwnerMode(mode),
+      className: `text-xs px-3 py-1.5 rounded-full font-medium border ${ownerMode === mode ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
+    },
+    label
+  );
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-3 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Unassigned"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-3 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), !initial && siteId && /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Owner (optional)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" }, ownerModeBtn("none", "No owner yet"), ownerModeBtn("existing", "Existing customer"), ownerModeBtn("new", "New customer")), ownerMode === "existing" && /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+    SearchableSelect,
+    {
+      options: (customers || []).map((c) => ({
+        value: c.id,
+        label: c.name,
+        searchText: [c.name, c.name2].filter(Boolean).join(" ")
+      })),
+      value: existingCustomerId,
+      onChange: setExistingCustomerId,
+      placeholder: "Search customers\u2026"
+    }
+  )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
+
 function CustomersView({ db, persist }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
