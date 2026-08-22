@@ -1927,14 +1927,23 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   );
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_e = (_d = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _d : defaultShopSuppliesPercent) != null ? _e : 5);
   const [serviceCall, setServiceCall] = useState((_f = initial == null ? void 0 : initial.serviceCall) != null ? _f : "");
+  const [commentLog, setCommentLog] = useState((initial == null ? void 0 : initial.commentLog) || []);
+  const [commentText, setCommentText] = useState("");
   const isFirstRender = useRef(true);
+  const actor = useCurrentActor();
   useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false;
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, laborHours, laborRateType, shopSuppliesPercent, serviceCall]);
+  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, laborHours, laborRateType, shopSuppliesPercent, serviceCall, commentLog]);
+  const addComment = () => {
+    if (!commentText.trim()) return;
+    const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    setCommentLog((log) => [entry, ...log]);
+    setCommentText("");
+  };
   const isDuplicate = title.trim() && (quotes || []).some((q) => q.id !== (initial == null ? void 0 : initial.id) && q.title.trim().toLowerCase() === title.trim().toLowerCase());
   const laborRate = (_h = (_g = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : RATE_OPTIONS[1].rate;
   const handleSiteChange = (val) => {
@@ -2002,7 +2011,8 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       laborRate,
       laborRateType,
       shopSuppliesPercent: Number(shopSuppliesPercent) || 0,
-      serviceCall: Number(serviceCall) || 0
+      serviceCall: Number(serviceCall) || 0,
+      commentLog
     });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
@@ -2031,7 +2041,31 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       onChange: handleCottageChange,
       placeholder: "Search cottages\u2026"
     }
-  ))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Job details, scope of work, etc." }), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1" }, "The customer sees this \u2014 it's included on the printed and emailed quote.")), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic -mt-2 mb-3" }, "Need to leave a staff-only note instead? Save this quote, then use the \"Comments\" button on the Quotes list \u2014 those stay internal and are never shown to the customer."), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Job details, scope of work, etc." }), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1" }, "The customer sees this \u2014 it's included on the printed and emailed quote.")), /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5] mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Comments (staff only)"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "Internal notes for your team \u2014 these never show up on the printed or emailed quote."), commentLog.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, commentLog.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls,
+      value: commentText,
+      onChange: (e) => setCommentText(e.target.value),
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          addComment();
+        }
+      },
+      placeholder: "Add a comment\u2026"
+    }
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: addComment,
+      disabled: !commentText.trim(),
+      className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40 whitespace-nowrap"
+    },
+    "Add"
+  ))), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls + " flex-1",
