@@ -708,7 +708,7 @@ function SiteDetailModal({ site, db, persist, readOnly, onClose, onEdit }) {
   const customers = db.customers.filter((c) => c.siteId === site.id);
   const workOrders = db.workOrders.filter((w) => w.siteId === site.id);
   const quotes = db.quotes.filter((q) => q.siteId === site.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Site ${site.number}`, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, site.section && /* @__PURE__ */ React.createElement("div", null, "Section: ", site.section), site.hookups && /* @__PURE__ */ React.createElement("div", null, "Hookups: ", site.hookups), site.notes && /* @__PURE__ */ React.createElement("div", null, "Notes: ", site.notes)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages on this site." }, cottages.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0" }, c.name))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Customers", empty: "No customers linked to this site." }, customers.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0" }, c.name, c.phone ? ` \xB7 ${c.phone}` : ""))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this site." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this site." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Site ${site.number}`, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, site.section && /* @__PURE__ */ React.createElement("div", null, "Section: ", site.section), site.hookups && /* @__PURE__ */ React.createElement("div", null, "Hookups: ", site.hookups), site.notes && /* @__PURE__ */ React.createElement("div", null, "Notes: ", site.notes)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages on this site." }, cottages.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0" }, c.name))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Customers", empty: "No customers linked to this site." }, customers.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-1 border-b border-[#EEEBE5] last:border-0" }, c.name, c.phone ? ` \xB7 ${c.phone}` : ""))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this site." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this site." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, (site.transferHistory || []).map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, t.cottageName, " transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onEdit(site),
@@ -917,21 +917,89 @@ function CottagesView({ db, persist, readOnly }) {
     }
   ));
 }
+function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const actor = useCurrentActor();
+  const submit = () => {
+    if (!name.trim()) return;
+    const newCustomer = {
+      id: uid(),
+      name: name.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      name2: "",
+      phone2: "",
+      email2: "",
+      address: "",
+      siteId: site.id
+    };
+    const oldIds = new Set(oldCustomers.map((c) => c.id));
+    const customers = [
+      ...db.customers.map((c) => oldIds.has(c.id) ? { ...c, siteId: null } : c),
+      newCustomer
+    ];
+    const transferEntry = {
+      id: uid(),
+      date: todayISO(),
+      fromCustomerName: oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "Unknown",
+      toCustomerName: newCustomer.name,
+      cottageName: cottage.name
+    };
+    const sites = db.sites.map(
+      (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
+    );
+    const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}`);
+    persist({ ...db, customers, sites, activityLog });
+    onClose();
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), /* @__PURE__ */ React.createElement(Field, { label: "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: submit,
+      disabled: !name.trim(),
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+    },
+    "Complete Transfer"
+  )));
+}
 function CottageDetailModal({ cottage, db, persist, readOnly, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
+  const [transferOpen, setTransferOpen] = useState(false);
   if (!cottage) return null;
   const site = db.sites.find((s) => s.id === cottage.siteId);
   const workOrders = db.workOrders.filter((w) => w.cottageId === cottage.id);
   const quotes = db.quotes.filter((q) => q.cottageId === cottage.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterized: ", cottage.winterizedDate ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Yes, ", cottage.winterizedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not yet")), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && /* @__PURE__ */ React.createElement(
+  const currentOwners = site ? db.customers.filter((c) => c.siteId === site.id) : [];
+  const cottageTransfers = ((site == null ? void 0 : site.transferHistory) || []).filter((t) => t.cottageName === cottage.name);
+  return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterized: ", cottage.winterizedDate ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Yes, ", cottage.winterizedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not yet")), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && site && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setTransferOpen(true),
+      className: "px-4 py-2 text-sm text-[#377249] border border-[#377249]/30 rounded-md hover:bg-[#377249]/10 font-medium"
+    },
+    "Transfer Ownership"
+  ), !readOnly && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onEdit(cottage),
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Edit Cottage"
-  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }));
+  )), transferOpen && site && /* @__PURE__ */ React.createElement(
+    TransferOwnershipModal,
+    {
+      cottage,
+      site,
+      oldCustomers: currentOwners,
+      db,
+      persist,
+      onClose: () => setTransferOpen(false)
+    }
+  ), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }));
 }
+
 function CottageForm({ initial, sites, cottages, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [color, setColor] = useState((initial == null ? void 0 : initial.color) || "");
