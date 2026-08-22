@@ -107,6 +107,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
 const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "sites", "cottages", "winterizing", "customers"]);
+const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "staff"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
   const hasAnyAdmin = Object.values(roles).some((r) => r === "admin");
@@ -479,6 +480,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
       onChange: (e) => setRole(email, e.target.value)
     },
     /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"),
+    /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"),
     /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")
   ), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline", onClick: () => removeRole(email) }, "Remove"))))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 border-t border-[#E2DED5] pt-3" }, /* @__PURE__ */ React.createElement(
     "input",
@@ -488,7 +490,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
       onChange: (e) => setNewEmail(e.target.value),
       placeholder: "email@example.com"
     }
-  ), /* @__PURE__ */ React.createElement("select", { className: inputCls + " w-32", value: newRole, onChange: (e) => setNewRole(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"), /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("select", { className: inputCls + " w-32", value: newRole, onChange: (e) => setNewRole(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"), /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"), /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: addNew,
@@ -4454,7 +4456,10 @@ function AppContent() {
   }
   const role = getUserRole(db, actor);
   const isAdmin = role === "admin";
-  const effectiveTab = isAdmin || OFFICE_TAB_KEYS.has(tab) ? tab : "dashboard";
+  const isManager = role === "manager";
+  const isAdminOrManager = isAdmin || isManager;
+  const allowedTabKeys = isAdmin ? null : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
+  const effectiveTab = !allowedTabKeys || allowedTabKeys.has(tab) ? tab : "dashboard";
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -4497,7 +4502,7 @@ function AppContent() {
       className: `w-[230px] flex-shrink-0 bg-[#FFFDFA] border-r border-[#E2DED5] flex flex-col p-3.5 fixed sm:static inset-y-0 left-0 z-40 transform transition-transform duration-200 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"} sm:translate-x-0`
     },
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 px-2 pb-6" }, /* @__PURE__ */ React.createElement("div", { className: "w-8 h-8 rounded-[9px] bg-[#377249] flex items-center justify-center text-white flex-shrink-0" }, /* @__PURE__ */ React.createElement(IconTag, { className: "w-4 h-4" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-[15px] leading-tight text-[#1E1A13]" }, "Campground Maintenance")),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, (isAdmin ? TABS : TABS.filter((t) => OFFICE_TAB_KEYS.has(t.key))).map((t) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, (allowedTabKeys ? TABS.filter((t) => allowedTabKeys.has(t.key)) : TABS).map((t) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: t.key,
@@ -4507,10 +4512,10 @@ function AppContent() {
       /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${effectiveTab === t.key ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
       t.label
     ))),
-    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       var _a;
       return (_a = importInputRef.current) == null ? void 0 : _a.click();
-    }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setManageRolesOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Manage Access"), /* @__PURE__ */ React.createElement(
+    }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setManageRolesOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Manage Access"), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => firebase.auth().signOut(),
@@ -4518,7 +4523,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdmin }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdmin }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdmin }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdmin && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdmin && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
