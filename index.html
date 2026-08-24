@@ -1118,7 +1118,8 @@ function CottageDetailModal({ cottage, db, persist, readOnly, nested, onClose, o
   const quotes = db.quotes.filter((q) => q.cottageId === cottage.id);
   const currentOwners = site ? db.customers.filter((c) => customerSiteIds(c).includes(site.id)) : [];
   const cottageTransfers = ((site == null ? void 0 : site.transferHistory) || []).filter((t) => t.cottageName === cottage.name);
-  const winterizingRequest = (db.winterizingRequests || []).filter((r) => r.cottageId === cottage.id).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0];
+  const winterizingHistory = (db.winterizingRequests || []).filter((r) => r.cottageId === cottage.id).sort((a, b) => (b.requestedDate || "").localeCompare(a.requestedDate || ""));
+  const winterizingRequest = winterizingHistory.find((r) => !r.archived);
   return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#DDF1E1] border border-[#377249]/20 px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#28633C] font-semibold mb-1" }, "Current Owner"), currentOwners.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] italic" }, "No owner on file") : currentOwners.map(
     (c) => nested ? /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] font-medium" }, c.name, (c.phone || c.email) && /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-normal" }, " \xB7 ", [c.phone, c.email].filter(Boolean).join(" \xB7 "))) : /* @__PURE__ */ React.createElement(
       "button",
@@ -1130,7 +1131,7 @@ function CottageDetailModal({ cottage, db, persist, readOnly, nested, onClose, o
       c.name,
       (c.phone || c.email) && /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-normal" }, " \xB7 ", [c.phone, c.email].filter(Boolean).join(" \xB7 "))
     )
-  )), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterizing: ", !winterizingRequest ? /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not signed up") : winterizingRequest.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Completed ", winterizingRequest.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#9A6B1F] font-medium" }, "Signed up \u2014 requested ", winterizingRequest.requestedDate)), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), (cottage.bedrooms || cottage.bathrooms) && /* @__PURE__ */ React.createElement("div", null, cottage.bedrooms ? `${cottage.bedrooms} bed` : "", cottage.bedrooms && cottage.bathrooms ? " \xB7 " : "", cottage.bathrooms ? `${cottage.bathrooms} bath` : ""), cottage.deckPorch && /* @__PURE__ */ React.createElement("div", null, "Deck / Porch: ", cottage.deckPorch), cottage.sunroom && /* @__PURE__ */ React.createElement("div", null, "Sunspace Roof / Sunroom: ", cottage.sunroom), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && site && /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterizing: ", !winterizingRequest ? /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not signed up") : winterizingRequest.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Completed ", winterizingRequest.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#9A6B1F] font-medium" }, "Signed up \u2014 requested ", winterizingRequest.requestedDate)), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), (cottage.bedrooms || cottage.bathrooms) && /* @__PURE__ */ React.createElement("div", null, cottage.bedrooms ? `${cottage.bedrooms} bed` : "", cottage.bedrooms && cottage.bathrooms ? " \xB7 " : "", cottage.bathrooms ? `${cottage.bathrooms} bath` : ""), cottage.deckPorch && /* @__PURE__ */ React.createElement("div", null, "Deck / Porch: ", cottage.deckPorch), cottage.sunroom && /* @__PURE__ */ React.createElement("div", null, "Sunspace Roof / Sunroom: ", cottage.sunroom), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Winterizing History", empty: "No winterizing sign-ups recorded." }, winterizingHistory.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, className: "text-sm py-1.5 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Requested ", r.requestedDate), r.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Completed ", r.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Pending")), r.notes && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, r.notes)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && site && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setTransferOpen(true),
@@ -4577,17 +4578,20 @@ function WinterizingView({ db, persist, readOnly }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
+  const [confirmComplete, setConfirmComplete] = useState(null);
+  const [resetOpen, setResetOpen] = useState(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
-  const requests = db.winterizingRequests || [];
+  const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
   const cottageName = (id) => {
     const c = db.cottages.find((x) => x.id === id);
     return c ? c.name : "Unknown cottage";
   };
   const customerFor = (id) => id ? db.customers.find((c) => c.id === id) : null;
   const save = (request) => {
-    const exists = requests.some((r) => r.id === request.id);
-    const next = exists ? requests.map((r) => r.id === request.id ? request : r) : [...requests, request];
+    const all = db.winterizingRequests || [];
+    const exists = all.some((r) => r.id === request.id);
+    const next = exists ? all.map((r) => r.id === request.id ? request : r) : [...all, request];
     const activityLog = addLog(db, actor, exists ? `Updated winterizing sign-up for ${cottageName(request.cottageId)}` : `Added winterizing sign-up for ${cottageName(request.cottageId)}`);
     persist({ ...db, winterizingRequests: next, activityLog });
     setModal(null);
@@ -4601,7 +4605,7 @@ function WinterizingView({ db, persist, readOnly }) {
   const toggleComplete = (request) => {
     const willBeDone = !request.completed;
     const updated = { ...request, completed: willBeDone, completedDate: willBeDone ? todayISO() : null };
-    const next = requests.map((r) => r.id === request.id ? updated : r);
+    const next = (db.winterizingRequests || []).map((r) => r.id === request.id ? updated : r);
     const activityLog = addLog(db, actor, willBeDone ? `Marked winterizing complete for ${cottageName(request.cottageId)}` : `Reopened winterizing sign-up for ${cottageName(request.cottageId)}`);
     persist({ ...db, winterizingRequests: next, activityLog });
     if (willBeDone) {
@@ -4624,6 +4628,14 @@ function WinterizingView({ db, persist, readOnly }) {
       }
     }
   };
+  const resetSeason = () => {
+    const seasonEndDate = todayISO();
+    const doneCount = requests.filter((r) => r.completed).length;
+    const next = (db.winterizingRequests || []).map((r) => !r.archived && r.completed ? { ...r, archived: true, archivedAt: seasonEndDate } : r);
+    const activityLog = addLog(db, actor, `Reset winterizing for the new season \u2014 archived ${doneCount} completed sign-up${doneCount === 1 ? "" : "s"}`);
+    persist({ ...db, winterizingRequests: next, activityLog });
+    setResetOpen(false);
+  };
   const filtered = requests.filter((r) => {
     if (!filter) return true;
     const cottage = db.cottages.find((c) => c.id === r.cottageId);
@@ -4634,6 +4646,13 @@ function WinterizingView({ db, persist, readOnly }) {
   });
   const pending = filtered.filter((r) => !r.completed).sort((a, b) => (a.requestedDate || "").localeCompare(b.requestedDate || ""));
   const completed = filtered.filter((r) => r.completed).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || ""));
+  const requestToggle = (request) => {
+    if (request.completed) {
+      toggleComplete(request);
+    } else {
+      setConfirmComplete(request);
+    }
+  };
   const renderRow = (r) => /* @__PURE__ */ React.createElement(WinterizingRequestRow, {
     key: r.id,
     request: r,
@@ -4642,14 +4661,17 @@ function WinterizingView({ db, persist, readOnly }) {
     emailStatus: emailStatus[r.id],
     onEdit: (req) => setModal({ mode: "edit", data: req }),
     onDelete: (req) => confirm.ask(req.id),
-    onToggle: toggleComplete
+    onToggle: requestToggle
   });
   const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Winterizing"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, pending.length, " pending \xB7 ", completed.length, " completed")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " w-56",
     placeholder: "Search sign-ups\u2026",
     value: filter,
     onChange: (e) => setFilter(e.target.value)
-  }), !readOnly && /* @__PURE__ */ React.createElement("button", {
+  }), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setResetOpen(true),
+    className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
+  }, "Reset for New Season"), !readOnly && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setModal({ mode: "new" }),
     className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
   }, "+ New Sign-Up")));
@@ -4672,7 +4694,26 @@ function WinterizingView({ db, persist, readOnly }) {
     onConfirm: () => remove(confirm.target),
     onCancel: confirm.clear
   }) : null;
-  return /* @__PURE__ */ React.createElement("div", null, header, body, modalEl, confirmEl);
+  const confirmCompleteCustomer = confirmComplete ? customerFor(confirmComplete.customerId) : null;
+  const confirmCompleteEl = !readOnly && confirmComplete ? /* @__PURE__ */ React.createElement(Modal, { title: "Mark Winterizing Complete?", onClose: () => setConfirmComplete(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Mark winterizing complete for ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, cottageName(confirmComplete.cottageId)), "? ", confirmCompleteCustomer && confirmCompleteCustomer.email ? "This will email the customer to let them know it's done." : "No customer email is on file, so no completion email will be sent."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setConfirmComplete(null),
+    className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md"
+  }, "Cancel"), /* @__PURE__ */ React.createElement("button", {
+    onClick: () => {
+      toggleComplete(confirmComplete);
+      setConfirmComplete(null);
+    },
+    className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
+  }, "Yes, Mark Complete"))) : null;
+  const doneCount = requests.filter((r) => r.completed).length;
+  const resetEl = !readOnly && resetOpen ? /* @__PURE__ */ React.createElement(Modal, { title: "Reset winterizing for the new season?", onClose: () => setResetOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This clears ", doneCount, " completed sign-up", doneCount === 1 ? "" : "s", " off this list so it's ready for new sign-ups. They aren't deleted \u2014 each stays on its cottage's Winterizing History for reference."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setResetOpen(false),
+    className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md"
+  }, "Cancel"), /* @__PURE__ */ React.createElement("button", {
+    onClick: resetSeason,
+    className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium"
+  }, "Reset for New Season"))) : null;
+  return /* @__PURE__ */ React.createElement("div", null, header, body, modalEl, confirmEl, confirmCompleteEl, resetEl);
 }
 
 const TABS = [
