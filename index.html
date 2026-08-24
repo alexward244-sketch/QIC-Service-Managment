@@ -204,6 +204,14 @@ const RATE_OPTIONS = [
 ];
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const PAYMENT_STATUS = ["Paid", "Invoice"];
+const WINTERIZING_OPTIONS = [
+  { key: "dishwasher", label: "Dishwasher" },
+  { key: "washingMachine", label: "Washing machine" },
+  { key: "fridgeWater", label: "Water line to fridge" },
+  { key: "outsideTap", label: "Outside tap or shower" },
+  { key: "anodeRod", label: "Replace the anode rod" },
+  { key: "keyAtReception", label: "Key left with reception" }
+];
 const COTTAGE_ORDER_STATUS = ["Ordered/Being Built", "Delivered/Onsite"];
 const COTTAGE_ORDER_STATUS_STYLES = {
   "Ordered/Being Built": "bg-[#F1EEE9] text-[#75716A]",
@@ -2426,6 +2434,14 @@ function buildQuoteEmailText(quote, db, taxRate) {
 function buildWinterizingEmailText(request, db) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  const servicedItems = WINTERIZING_OPTIONS.filter((opt) => opt.key !== "keyAtReception" && request.options && request.options[opt.key]);
+  const servicedList = servicedItems.length ? `
+      <div style="margin:0 0 16px;">
+        <p style="font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:#75716A;margin:0 0 6px;">Also Included</p>
+        <ul style="margin:0;padding-left:18px;color:#4B4740;font-size:14px;line-height:1.6;">
+          ${servicedItems.map((opt) => `<li>${escapeHtml(opt.label)}</li>`).join("")}
+        </ul>
+      </div>` : "";
   return `
   <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
     <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
@@ -2438,6 +2454,7 @@ function buildWinterizingEmailText(request, db) {
       <p style="font-size:14px;color:#4B4740;margin:0 0 16px;line-height:1.6;">
         Good news \u2014 winterizing for your cottage${cottage ? ` <strong>${escapeHtml(cottage.name)}</strong>` : ""} has been completed. Your water lines, plumbing, and systems have been prepared for the off-season.
       </p>
+      ${servicedList}
       ${request.notes ? `<p style="font-size:14px;color:#4B4740;margin:0 0 16px;line-height:1.6;"><strong>Notes:</strong> ${escapeHtml(request.notes).replace(/\n/g, "<br>")}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:0;">If you have any questions, please don't hesitate to reach out.</p>
     </div>
@@ -2673,6 +2690,7 @@ function buildExcelSheets(db) {
     Customer: customerName(r.customerId),
     "Requested Date": r.requestedDate || "",
     Completed: r.completed ? r.completedDate || "Yes" : "No",
+    ...Object.fromEntries(WINTERIZING_OPTIONS.map((opt) => [opt.label, r.options && r.options[opt.key] ? "Yes" : ""])),
     Notes: r.notes || ""
   }));
   return {
@@ -4470,6 +4488,8 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [requestedDate, setRequestedDate] = useState((initial == null ? void 0 : initial.requestedDate) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const [options, setOptions] = useState((initial == null ? void 0 : initial.options) || {});
+  const toggleOption = (key) => setOptions((o) => ({ ...o, [key]: !o[key] }));
   const pickCottage = (val) => {
     setCottageId(val);
     if (!customerId && val) {
@@ -4487,6 +4507,7 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
       customerId: customerId || null,
       requestedDate,
       notes: notes.trim(),
+      options,
       completed: (initial == null ? void 0 : initial.completed) || false,
       completedDate: (initial == null ? void 0 : initial.completedDate) || null,
       createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
@@ -4509,7 +4530,12 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
     onChange: setCustomerId,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
-  })), !customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, "Without a linked customer with an email on file, the completion email can't be sent."), /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions from the customer" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  })), !customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, "Without a linked customer with an email on file, the completion email can't be sent."), /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "What's Included"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, WINTERIZING_OPTIONS.map((opt) => /* @__PURE__ */ React.createElement("label", { key: opt.key, className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", {
+    type: "checkbox",
+    checked: Boolean(options[opt.key]),
+    onChange: () => toggleOption(opt.key),
+    className: "accent-[#377249]"
+  }), opt.label)))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions from the customer" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -4525,6 +4551,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, onEdit, onD
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
   const isDone = Boolean(request.completed);
+  const checkedOptions = WINTERIZING_OPTIONS.filter((opt) => request.options && request.options[opt.key]);
   return /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -4539,7 +4566,10 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, onEdit, onD
         onChange: () => !readOnly && onToggle(request),
         className: "w-5 h-5 accent-[#377249] flex-shrink-0"
       }
-    ), /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, cottage ? cottage.name : "Unknown cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), customer && !customer.email && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "No email on file")))),
+    ), /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, cottage ? cottage.name : "Unknown cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), customer && !customer.email && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "No email on file")), checkedOptions.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "flex flex-wrap gap-1 mt-1" }, checkedOptions.map((opt) => /* @__PURE__ */ React.createElement("span", {
+      key: opt.key,
+      className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}`
+    }, opt.label))))),
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), !readOnly && /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(request) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(request) }, "Delete")))
   );
 }
