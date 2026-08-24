@@ -55,6 +55,11 @@ const EMAIL_ENABLED = !EMAILJS_PUBLIC_KEY.startsWith("PASTE_");
 if (EMAIL_ENABLED && window.emailjs) {
   window.emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 }
+let emailUsageRecorder = null;
+function currentMonthKey() {
+  const d = /* @__PURE__ */ new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 function sendEmail({ toEmail, toName, subject, message }) {
   if (!EMAIL_ENABLED || !window.emailjs) {
     return Promise.reject(new Error("Email isn't set up yet \u2014 add your EmailJS config near the top of this file."));
@@ -64,6 +69,9 @@ function sendEmail({ toEmail, toName, subject, message }) {
     to_name: toName || "",
     subject,
     message
+  }).then((result) => {
+    if (emailUsageRecorder) emailUsageRecorder();
+    return result;
   });
 }
 
@@ -100,6 +108,8 @@ const emptyDb = () => ({
   consignmentListings: [],
   prospects: [],
   winterizingRequests: [],
+  pendingWinterizingSignups: [],
+  emailUsage: { month: "", count: 0 },
   userRoles: {},
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5, commissionPercent: 8 }
 });
@@ -266,6 +276,21 @@ function useCurrentActor() {
 function addLog(db, actor, summary) {
   const entry = { id: uid(), ts: (/* @__PURE__ */ new Date()).toISOString(), actor, summary };
   return [entry, ...db.activityLog || []].slice(0, 200);
+}
+function categorizeActivity(summary) {
+  const s = (summary || "").toLowerCase();
+  if (s.includes("cottage order") || s.includes("cottageorder")) return "cottageorders";
+  if (s.includes("listing")) return "consignments";
+  if (s.includes("prospect")) return "prospects";
+  if (s.includes("winterizing")) return "winterizing";
+  if (s.includes("quote")) return "quotes";
+  if (s.includes("recurring task") || s.includes("work order")) return "workorders";
+  if (s.includes("cottage")) return "cottages";
+  if (s.includes("customer")) return "customers";
+  if (s.includes("site")) return "sites";
+  if (s.includes("part")) return "parts";
+  if (s.includes("staff")) return "staff";
+  return null;
 }
 function timeAgo(iso) {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -1629,8 +1654,9 @@ function PartsView({ db, persist }) {
     }
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No parts match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Price"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Price (incl. tax)"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Qty in Stock"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-32" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.slice().sort((a, b) => a.name.localeCompare(b.name)).map((p) => {
     const lowStock = Number(p.quantity) <= (Number(p.reorderThreshold) || 2);
-    const priceWithTax = Number(p.price) * (1 + taxRate / 100);
-    return /* @__PURE__ */ React.createElement("tr", { key: p.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, p.name), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(priceWithTax)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, /* @__PURE__ */ React.createElement("span", { className: lowStock ? "text-[#a8532a] font-semibold" : "" }, p.quantity), lowStock && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#F5E3D9] text-[#a8532a] px-1.5 py-0.5 rounded-full" }, "Low")), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: p }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(p.id) }, "Delete"))));
+    const isTaxable = p.taxable !== false;
+    const priceWithTax = isTaxable ? Number(p.price) * (1 + taxRate / 100) : Number(p.price);
+    return /* @__PURE__ */ React.createElement("tr", { key: p.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, p.name, !isTaxable && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#F1EEE9] text-[#75716A] px-1.5 py-0.5 rounded-full align-middle" }, "Non-Taxable")), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(priceWithTax)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, /* @__PURE__ */ React.createElement("span", { className: lowStock ? "text-[#a8532a] font-semibold" : "" }, p.quantity), lowStock && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#F5E3D9] text-[#a8532a] px-1.5 py-0.5 rounded-full" }, "Low")), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: p }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(p.id) }, "Delete"))));
   })))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Part" : "Edit Part", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(PartForm, { initial: modal.data, onSave: save, onCancel: () => setModal(null) })), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
@@ -1641,11 +1667,17 @@ function PartsView({ db, persist }) {
   ));
 }
 function PartForm({ initial, onSave, onCancel }) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [price, setPrice] = useState((_a = initial == null ? void 0 : initial.price) != null ? _a : "");
   const [quantity, setQuantity] = useState((_b = initial == null ? void 0 : initial.quantity) != null ? _b : "");
   const [reorderThreshold, setReorderThreshold] = useState((_c = initial == null ? void 0 : initial.reorderThreshold) != null ? _c : 2);
+  const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
+  const [salesAccount, setSalesAccount] = useState((initial == null ? void 0 : initial.salesAccount) || "");
+  const [taxable, setTaxable] = useState((initial == null ? void 0 : initial.taxable) != null ? initial.taxable : true);
+  const [costPrice, setCostPrice] = useState((_d = initial == null ? void 0 : initial.costPrice) != null ? _d : "");
+  const [purchaseAccount, setPurchaseAccount] = useState((initial == null ? void 0 : initial.purchaseAccount) || "");
+  const [purchaseDescription, setPurchaseDescription] = useState((initial == null ? void 0 : initial.purchaseDescription) || "");
   const submit = () => {
     if (!name.trim()) return;
     onSave({
@@ -1653,23 +1685,18 @@ function PartForm({ initial, onSave, onCancel }) {
       name: name.trim(),
       price: price === "" ? 0 : Number(price),
       quantity: quantity === "" ? 0 : Number(quantity),
-      reorderThreshold: reorderThreshold === "" ? 2 : Number(reorderThreshold)
+      reorderThreshold: reorderThreshold === "" ? 2 : Number(reorderThreshold),
+      description: description.trim(),
+      salesAccount: salesAccount.trim(),
+      taxable,
+      costPrice: costPrice === "" ? 0 : Number(costPrice),
+      purchaseAccount: purchaseAccount.trim(),
+      purchaseDescription: purchaseDescription.trim()
     });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
-    if (e.key === "Enter") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Part Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Water heater element", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Price" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      step: "0.01",
-      min: "0",
-      className: inputCls,
-      value: price,
-      onChange: (e) => setPrice(e.target.value),
-      placeholder: "0.00"
-    }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Quantity in Stock" }, /* @__PURE__ */ React.createElement(
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Part Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Water heater element", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Quantity in Stock" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
@@ -1691,7 +1718,45 @@ function PartForm({ initial, onSave, onCancel }) {
       onChange: (e) => setReorderThreshold(e.target.value),
       placeholder: "2"
     }
-  )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Part")));
+  )), /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Sales Info"), /* @__PURE__ */ React.createElement(Field, { label: "Selling Price" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      step: "0.01",
+      min: "0",
+      className: inputCls,
+      value: price,
+      onChange: (e) => setPrice(e.target.value),
+      placeholder: "0.00"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "Shown on quotes/invoices" })), /* @__PURE__ */ React.createElement(Field, { label: "Account" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: salesAccount, onChange: (e) => setSalesAccount(e.target.value), placeholder: "For invoicing (added later)" })), /* @__PURE__ */ React.createElement("div", { className: "mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-[#75716A] mb-1.5" }, "Tax"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTaxable(true),
+      className: `px-3 py-1.5 rounded-md text-sm font-medium border ${taxable ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "Taxable"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTaxable(false),
+      className: `px-3 py-1.5 rounded-md text-sm font-medium border ${!taxable ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "Non-Taxable"
+  )))), /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Purchase Info"), /* @__PURE__ */ React.createElement(Field, { label: "Cost Price" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      step: "0.01",
+      min: "0",
+      className: inputCls,
+      value: costPrice,
+      onChange: (e) => setCostPrice(e.target.value),
+      placeholder: "0.00"
+    }
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Account" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: purchaseAccount, onChange: (e) => setPurchaseAccount(e.target.value), placeholder: "For invoicing (added later)" })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: purchaseDescription, onChange: (e) => setPurchaseDescription(e.target.value), placeholder: "e.g. manufacturer / supplier we buy this from" }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Part")));
 }
 function StatCard({ label, value, onClick, tone }) {
   return /* @__PURE__ */ React.createElement(
@@ -1706,7 +1771,7 @@ function StatCard({ label, value, onClick, tone }) {
     /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
   );
 }
-function DashboardView({ db, onGoToTab, persist }) {
+function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
   var _a, _b;
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
@@ -1715,7 +1780,17 @@ function DashboardView({ db, onGoToTab, persist }) {
   const sitesNeedingService = new Set(openWorkOrders.map((w) => w.siteId).filter(Boolean)).size;
   const pendingQuoteValue = db.quotes.filter((q) => q.status === "Draft" || q.status === "Sent").reduce((sum, q) => sum + computeQuoteTotals(q, taxRate).total, 0);
   const recentWorkOrders = db.workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
-  const recentActivity = (db.activityLog || []).slice(0, 8);
+  const recentActivity = (db.activityLog || []).filter((e) => {
+    const category = categorizeActivity(e.summary);
+    return !category || !allowedTabKeys || allowedTabKeys.has(category);
+  }).slice(0, 8);
+  const emailMonthKey = currentMonthKey();
+  const emailUsage = db.emailUsage || {};
+  const emailsUsedThisMonth = emailUsage.month === emailMonthKey ? emailUsage.count || 0 : 0;
+  const emailFreeLimit = 200;
+  const emailUsagePct = Math.min(100, Math.round(emailsUsedThisMonth / emailFreeLimit * 100));
+  const emailUsageTone = emailUsagePct >= 90 ? "text-[#a8532a]" : emailUsagePct >= 60 ? "text-[#9A6B1F]" : "text-[#28633C]";
+  const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
   const daysSinceBackup = db.lastBackupAt ? Math.floor((Date.now() - new Date(db.lastBackupAt).getTime()) / (24 * 60 * 60 * 1e3)) : null;
   const backupStale = daysSinceBackup === null || daysSinceBackup >= 14;
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
@@ -1746,7 +1821,7 @@ function DashboardView({ db, onGoToTab, persist }) {
     const cottage = db.cottages.find((c) => c.id === w.cottageId);
     const where = site ? `Site ${site.number}` : cottage ? cottage.name : "\u2014";
     return /* @__PURE__ */ React.createElement("div", { key: w.id, className: "flex items-center justify-between gap-3 py-2 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, w.title), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, where, w.assignedTo ? ` \xB7 ${w.assignedTo}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 flex-shrink-0" }, w.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[w.priority] || ""}` }, w.priority), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}` }, w.status)));
-  }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Staff Availability"), db.staff.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No staff added yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, db.staff.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${STAFF_STATUS_DOT[s.status] || "bg-[#E2DED5]"}` }), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] truncate" }, s.name)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, s.status)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))));
+  }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Staff Availability"), db.staff.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No staff added yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, db.staff.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${STAFF_STATUS_DOT[s.status] || "bg-[#E2DED5]"}` }), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] truncate" }, s.name)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, s.status)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-2" }, "Email Usage This Month"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${emailUsageTone}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", emailFreeLimit, " on the EmailJS free plan")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${emailUsageBarTone}`, style: { width: `${emailUsagePct}%` } })), emailUsagePct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 sends will silently fail once you hit ", emailFreeLimit, ". Consider upgrading your EmailJS plan.")));
 }
 
 function StaffView({ db, persist }) {
@@ -2460,6 +2535,38 @@ function buildWinterizingEmailText(request, db) {
       <p style="font-size:13px;color:#75716A;margin:0;">If you have any questions, please don't hesitate to reach out.</p>
     </div>
   </div>`;
+}
+function buildWinterizingHtml(request, db) {
+  const cottage = db.cottages.find((c) => c.id === request.cottageId);
+  const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
+  const checkedOptions = WINTERIZING_OPTIONS.filter((opt) => opt.key !== "keyAtReception" && request.options && request.options[opt.key]);
+  const keyAtReception = Boolean(request.options && request.options.keyAtReception);
+  return `
+    <div class="wo">
+      <div class="wo-head">
+        <div>
+          <div class="label">Winterizing Sign-Up</div>
+          <h1>${escapeHtml(cottage ? cottage.name : "Unknown cottage")}</h1>
+        </div>
+        <div class="meta">
+          <div>Requested: ${escapeHtml(request.requestedDate || "\u2014")}</div>
+          <div>Status: ${request.completed ? "Completed " + escapeHtml(request.completedDate || "") : "Pending"}</div>
+        </div>
+      </div>
+      <table class="wo-table">
+        <tr><td class="k">Site</td><td>${site ? escapeHtml(site.number) : "\u2014"}</td></tr>
+        ${customer ? `<tr><td class="k">Customer</td><td>${escapeHtml(customer.name)}${customer.phone ? " \xB7 " + escapeHtml(customer.phone) : ""}</td></tr>` : ""}
+      </table>
+      ${keyAtReception ? `<div style="border:1px solid #9A6B1F;background:#FBEEDA;color:#9A6B1F;padding:8px 12px;font-size:13px;font-weight:bold;margin-bottom:14px;">Key left with reception</div>` : ""}
+      <div class="label">What's Included</div>
+      ${checkedOptions.length ? `<table class="wo-table">${checkedOptions.map((opt) => `<tr><td style="width:24px;">\u2610</td><td>${escapeHtml(opt.label)}</td></tr>`).join("")}</table>` : `<p class="desc" style="min-height:0;border:none;padding-bottom:0;">None specified.</p>`}
+      ${request.notes ? `<div class="label">Notes</div><p class="desc">${escapeHtml(request.notes)}</p>` : ""}
+      <div class="sign">
+        <div class="sign-line">Completed by (signature)</div>
+        <div class="sign-line">Date</div>
+      </div>
+    </div>`;
 }
 function buildWorkOrderEmailText(wo, db) {
   const site = db.sites.find((s) => s.id === wo.siteId);
@@ -4484,6 +4591,65 @@ function CalendarView({ db, onGoToTab }) {
   )))));
 }
 
+function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
+  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
+  const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
+  const guessCustomer = guessSite ? (db.customers || []).find((c) => customerSiteIds(c).includes(guessSite.id)) : null;
+  const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
+  const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
+  const [requestedDate, setRequestedDate] = useState(entry.requestedDate || "");
+  const [notes, setNotes] = useState(entry.notes || "");
+  const [options, setOptions] = useState(entry.options || {});
+  const toggleOption = (key) => setOptions((o) => ({ ...o, [key]: !o[key] }));
+  const confirm = () => {
+    if (!cottageId || !requestedDate) return;
+    onConfirm({
+      id: uid(),
+      cottageId,
+      customerId: customerId || null,
+      requestedDate,
+      notes: notes.trim(),
+      options,
+      completed: false,
+      completedDate: null,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  };
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually.")), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.cottages.map((c) => {
+      const site = db.sites.find((s) => s.id === c.siteId);
+      return { value: c.id, label: c.name + (site ? ` (Site ${site.number})` : ""), searchText: [c.name, site == null ? void 0 : site.number].filter(Boolean).join(" ") };
+    }),
+    value: cottageId,
+    onChange: setCottageId,
+    placeholder: "Search cottages\u2026",
+    noneLabel: "\u2014 Select a cottage \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
+    value: customerId,
+    onChange: setCustomerId,
+    placeholder: "Search customers\u2026",
+    noneLabel: "No customer linked"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "What's Included"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, WINTERIZING_OPTIONS.map((opt) => /* @__PURE__ */ React.createElement("label", { key: opt.key, className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", {
+    type: "checkbox",
+    checked: Boolean(options[opt.key]),
+    onChange: () => toggleOption(opt.key),
+    className: "accent-[#377249]"
+  }), opt.label)))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onDiscard, className: "px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Discard Submission"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: confirm,
+      disabled: !cottageId || !requestedDate,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50"
+    },
+    "Confirm Sign-Up"
+  ))));
+}
+function PendingSignupRow({ entry, db, onReview }) {
+  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 bg-[#FBEEDA]/40 hover:bg-[#FBEEDA]/60 transition" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.submittedName || "(no name given)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, /* @__PURE__ */ React.createElement("span", null, "Site ", entry.submittedSiteNumber || "\u2014"), entry.requestedDate && /* @__PURE__ */ React.createElement("span", null, "Requested ", entry.requestedDate), !guessSite && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No auto-match"))), /* @__PURE__ */ React.createElement("button", { onClick: () => onReview(entry), className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] whitespace-nowrap" }, "Review"));
+}
 function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
@@ -4547,7 +4713,7 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
     "Save Sign-Up"
   )));
 }
-function WinterizingRequestRow({ request, db, readOnly, emailStatus, onEdit, onDelete, onToggle }) {
+function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode, selected, onEdit, onDelete, onToggle, onToggleSelect, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
@@ -4558,6 +4724,12 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, onEdit, onD
     {
       className: `flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] transition ${isDone ? "bg-[#DDF1E1]/40" : "bg-[#FFFDFA]"}`
     },
+    selectMode && /* @__PURE__ */ React.createElement("input", {
+      type: "checkbox",
+      checked: Boolean(selected),
+      onChange: () => onToggleSelect(request.id),
+      className: "w-4 h-4 accent-[#C1652F] flex-shrink-0"
+    }),
     /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-3 min-w-0 flex-1 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
       "input",
       {
@@ -4571,7 +4743,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, onEdit, onD
       key: opt.key,
       className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}`
     }, opt.label))))),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), !readOnly && /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(request) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(request) }, "Delete")))
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(request) }, "Delete")))
   );
 }
 function WinterizingView({ db, persist, readOnly }) {
@@ -4580,9 +4752,14 @@ function WinterizingView({ db, persist, readOnly }) {
   const [emailStatus, setEmailStatus] = useState({});
   const [confirmComplete, setConfirmComplete] = useState(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => /* @__PURE__ */ new Set());
+  const [printDate, setPrintDate] = useState("");
+  const [reviewingEntry, setReviewingEntry] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
+  const pendingSignups = db.pendingWinterizingSignups || [];
   const cottageName = (id) => {
     const c = db.cottages.find((x) => x.id === id);
     return c ? c.name : "Unknown cottage";
@@ -4636,6 +4813,46 @@ function WinterizingView({ db, persist, readOnly }) {
     persist({ ...db, winterizingRequests: next, activityLog });
     setResetOpen(false);
   };
+  const confirmSignup = (request) => {
+    if (!reviewingEntry) return;
+    const nextRequests = [...(db.winterizingRequests || []), request];
+    const nextPending = pendingSignups.filter((p) => p.id !== reviewingEntry.id);
+    const activityLog = addLog(db, actor, `Confirmed winterizing sign-up for ${cottageName(request.cottageId)} from online submission`);
+    persist({ ...db, winterizingRequests: nextRequests, pendingWinterizingSignups: nextPending, activityLog });
+    setReviewingEntry(null);
+  };
+  const discardSignup = (entry) => {
+    if (!window.confirm("Discard this submission? This can't be undone.")) return;
+    const nextPending = pendingSignups.filter((p) => p.id !== entry.id);
+    const activityLog = addLog(db, actor, `Discarded winterizing submission from ${entry.submittedName || "unknown"}`);
+    persist({ ...db, pendingWinterizingSignups: nextPending, activityLog });
+    setReviewingEntry(null);
+  };
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const printOne = (request) => {
+    downloadPrintableItems([request], (r) => buildWinterizingHtml(r, db), `winterizing-${cottageName(request.cottageId).replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
+  };
+  const printSelected = () => {
+    const items = requests.filter((r) => selectedIds.has(r.id));
+    if (!items.length) return;
+    downloadPrintableItems(items, (r) => buildWinterizingHtml(r, db), `winterizing-sign-ups-${todayISO()}`);
+  };
+  const printByDate = () => {
+    if (!printDate) return;
+    const items = requests.filter((r) => r.requestedDate === printDate);
+    if (!items.length) {
+      alert("No sign-ups requested for that date.");
+      return;
+    }
+    downloadPrintableItems(items, (r) => buildWinterizingHtml(r, db), `winterizing-${printDate}`);
+  };
   const filtered = requests.filter((r) => {
     if (!filter) return true;
     const cottage = db.cottages.find((c) => c.id === r.cottageId);
@@ -4659,22 +4876,52 @@ function WinterizingView({ db, persist, readOnly }) {
     db,
     readOnly,
     emailStatus: emailStatus[r.id],
+    selectMode,
+    selected: selectedIds.has(r.id),
     onEdit: (req) => setModal({ mode: "edit", data: req }),
     onDelete: (req) => confirm.ask(req.id),
-    onToggle: requestToggle
+    onToggle: requestToggle,
+    onToggleSelect: toggleSelect,
+    onPrint: printOne
   });
-  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Winterizing"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, pending.length, " pending \xB7 ", completed.length, " completed")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("input", {
+  const header = /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Winterizing"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, pending.length, " pending \xB7 ", completed.length, " completed")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " w-56",
     placeholder: "Search sign-ups\u2026",
     value: filter,
     onChange: (e) => setFilter(e.target.value)
-  }), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
+  }), /* @__PURE__ */ React.createElement("button", {
+    onClick: () => {
+      setSelectMode((s) => !s);
+      setSelectedIds(/* @__PURE__ */ new Set());
+    },
+    className: `px-3 py-2 rounded-md border text-sm font-medium transition whitespace-nowrap ${selectMode ? "bg-[#C1652F] text-white border-[#C1652F]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
+  }, selectMode ? "Done Selecting" : "Select to Print"), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setResetOpen(true),
     className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
   }, "Reset for New Season"), !readOnly && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setModal({ mode: "new" }),
     className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
-  }, "+ New Sign-Up")));
+  }, "+ New Sign-Up"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mt-3" }, selectMode && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, selectedIds.size, " selected"), /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setSelectedIds(new Set(filtered.map((r) => r.id))),
+    className: "text-xs text-[#377249] hover:underline font-medium"
+  }, "Select All"), /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setSelectedIds(/* @__PURE__ */ new Set()),
+    className: "text-xs text-[#75716A] hover:underline font-medium"
+  }, "Clear"), /* @__PURE__ */ React.createElement("button", {
+    onClick: printSelected,
+    disabled: selectedIds.size === 0,
+    className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] disabled:opacity-40 whitespace-nowrap"
+  }, "Print Selected (", selectedIds.size, ")")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Print by requested date:"), /* @__PURE__ */ React.createElement("input", {
+    type: "date",
+    value: printDate,
+    onChange: (e) => setPrintDate(e.target.value),
+    className: "text-sm border border-[#E2DED5] rounded-md px-2 py-1 bg-[#FFFDFA]"
+  }), /* @__PURE__ */ React.createElement("button", {
+    onClick: printByDate,
+    disabled: !printDate,
+    className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] disabled:opacity-40 whitespace-nowrap"
+  }, "Print"))));
+  const incomingEl = !readOnly && pendingSignups.length > 0 ? /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#9A6B1F]/30 mb-5 overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "px-4 py-2 bg-[#FBEEDA] text-[#9A6B1F] text-xs font-semibold uppercase tracking-wider" }, "Incoming Sign-Ups \u2014 ", pendingSignups.length, " need", pendingSignups.length === 1 ? "s" : "", " review"), /* @__PURE__ */ React.createElement("div", { className: "divide-y divide-[#EEEBE5]" }, pendingSignups.map((entry) => /* @__PURE__ */ React.createElement(PendingSignupRow, { key: entry.id, entry, db, onReview: setReviewingEntry })))) : null;
   let body;
   if (requests.length === 0) {
     body = /* @__PURE__ */ React.createElement(EmptyState, {
@@ -4713,7 +4960,14 @@ function WinterizingView({ db, persist, readOnly }) {
     onClick: resetSeason,
     className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium"
   }, "Reset for New Season"))) : null;
-  return /* @__PURE__ */ React.createElement("div", null, header, body, modalEl, confirmEl, confirmCompleteEl, resetEl);
+  const reviewEl = !readOnly && reviewingEntry ? /* @__PURE__ */ React.createElement(Modal, { title: "Review Winterizing Sign-Up", onClose: () => setReviewingEntry(null) }, /* @__PURE__ */ React.createElement(PendingSignupMatchForm, {
+    entry: reviewingEntry,
+    db,
+    onConfirm: confirmSignup,
+    onDiscard: () => discardSignup(reviewingEntry),
+    onCancel: () => setReviewingEntry(null)
+  })) : null;
+  return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl);
 }
 
 const TABS = [
@@ -4741,6 +4995,24 @@ function AppContent() {
   const importInputRef = useRef(null);
   const actor = useCurrentActor();
   const generatedRef = useRef(false);
+  const dbRef = useRef(db);
+  const persistRef = useRef(persist);
+  dbRef.current = db;
+  persistRef.current = persist;
+  useEffect(() => {
+    emailUsageRecorder = () => {
+      const currentDb = dbRef.current;
+      const currentPersist = persistRef.current;
+      if (!currentDb || !currentPersist) return;
+      const monthKey = currentMonthKey();
+      const usage = currentDb.emailUsage || {};
+      const count = usage.month === monthKey ? (usage.count || 0) + 1 : 1;
+      currentPersist({ ...currentDb, emailUsage: { month: monthKey, count } });
+    };
+    return () => {
+      emailUsageRecorder = null;
+    };
+  }, []);
   useEffect(() => {
     if (!db || generatedRef.current) return;
     const tasks = db.recurringTasks || [];
@@ -4859,7 +5131,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
