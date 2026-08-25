@@ -5280,12 +5280,50 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
   const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
   const guessCustomer = guessSite ? (db.customers || []).find((c) => customerSiteIds(c).includes(guessSite.id)) : null;
+  const [siteId, setSiteId] = useState((guessSite == null ? void 0 : guessSite.id) || "");
   const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
   const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
   const [requestedDate, setRequestedDate] = useState(entry.requestedDate || "");
   const [notes, setNotes] = useState(entry.notes || "");
   const [options, setOptions] = useState(entry.options || {});
   const toggleOption = (key) => setOptions((o) => ({ ...o, [key]: !o[key] }));
+  const pickSite = (val) => {
+    setSiteId(val);
+    if (val) {
+      const cottagesOnSite = db.cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = db.cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
+    }
+  };
+  const pickCottage = (val) => {
+    setCottageId(val);
+    if (val) {
+      const cottage = db.cottages.find((c) => c.id === val);
+      if (cottage && cottage.siteId) {
+        if (cottage.siteId !== siteId) setSiteId(cottage.siteId);
+        if (!customerId) {
+          const owner = db.customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
+          if (owner) setCustomerId(owner.id);
+        }
+      }
+    }
+  };
+  const pickCustomer = (val) => {
+    setCustomerId(val);
+    if (val && !siteId) {
+      const customer = db.customers.find((c) => c.id === val);
+      const custSiteIds = customer ? customerSiteIds(customer) : [];
+      if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
+    }
+  };
   const confirm = () => {
     if (!cottageId || !requestedDate) return;
     onConfirm({
@@ -5300,19 +5338,25 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually.")), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
-    options: db.cottages.map((c) => {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually.")), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
+    value: siteId,
+    onChange: pickSite,
+    placeholder: "Search sites\u2026",
+    noneLabel: "\u2014 Select a site \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: (siteId ? db.cottages.filter((c) => c.siteId === siteId) : db.cottages).map((c) => {
       const site = db.sites.find((s) => s.id === c.siteId);
       return { value: c.id, label: c.name + (site ? ` (Site ${site.number})` : ""), searchText: [c.name, site == null ? void 0 : site.number].filter(Boolean).join(" ") };
     }),
     value: cottageId,
-    onChange: setCottageId,
+    onChange: pickCottage,
     placeholder: "Search cottages\u2026",
     noneLabel: "\u2014 Select a cottage \u2014"
   })), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
     value: customerId,
-    onChange: setCustomerId,
+    onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
   })), /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "What's Included"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, WINTERIZING_OPTIONS.map((opt) => /* @__PURE__ */ React.createElement("label", { key: opt.key, className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", {
@@ -5336,19 +5380,49 @@ function PendingSignupRow({ entry, db, onReview }) {
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 bg-[#FBEEDA]/40 hover:bg-[#FBEEDA]/60 transition" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.submittedName || "(no name given)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, /* @__PURE__ */ React.createElement("span", null, "Site ", entry.submittedSiteNumber || "\u2014"), entry.requestedDate && /* @__PURE__ */ React.createElement("span", null, "Requested ", entry.requestedDate), !guessSite && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No auto-match"))), /* @__PURE__ */ React.createElement("button", { onClick: () => onReview(entry), className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] whitespace-nowrap" }, "Review"));
 }
 function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
+  const initialCottage = (initial == null ? void 0 : initial.cottageId) ? db.cottages.find((c) => c.id === initial.cottageId) : null;
+  const [siteId, setSiteId] = useState((initialCottage == null ? void 0 : initialCottage.siteId) || "");
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [requestedDate, setRequestedDate] = useState((initial == null ? void 0 : initial.requestedDate) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [options, setOptions] = useState((initial == null ? void 0 : initial.options) || {});
   const toggleOption = (key) => setOptions((o) => ({ ...o, [key]: !o[key] }));
+  const pickSite = (val) => {
+    setSiteId(val);
+    if (val) {
+      const cottagesOnSite = db.cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = db.cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
+    }
+  };
   const pickCottage = (val) => {
     setCottageId(val);
-    if (!customerId && val) {
+    if (val) {
       const cottage = db.cottages.find((c) => c.id === val);
-      const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
-      const owner = site ? db.customers.find((c) => customerSiteIds(c).includes(site.id)) : null;
-      if (owner) setCustomerId(owner.id);
+      if (cottage && cottage.siteId) {
+        if (cottage.siteId !== siteId) setSiteId(cottage.siteId);
+        if (!customerId) {
+          const owner = db.customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
+          if (owner) setCustomerId(owner.id);
+        }
+      }
+    }
+  };
+  const pickCustomer = (val) => {
+    setCustomerId(val);
+    if (val && !siteId) {
+      const customer = db.customers.find((c) => c.id === val);
+      const custSiteIds = customer ? customerSiteIds(customer) : [];
+      if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
     }
   };
   const submit = () => {
@@ -5367,8 +5441,14 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
-    options: db.cottages.map((c) => {
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
+    value: siteId,
+    onChange: pickSite,
+    placeholder: "Search sites\u2026",
+    noneLabel: "\u2014 Select a site \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: (siteId ? db.cottages.filter((c) => c.siteId === siteId) : db.cottages).map((c) => {
       const site = db.sites.find((s) => s.id === c.siteId);
       return { value: c.id, label: c.name + (site ? ` (Site ${site.number})` : ""), searchText: [c.name, site == null ? void 0 : site.number].filter(Boolean).join(" ") };
     }),
@@ -5379,7 +5459,7 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
   })), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
     value: customerId,
-    onChange: setCustomerId,
+    onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
   })), !customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, "Without a linked customer with an email on file, the completion email can't be sent."), /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "What's Included"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, WINTERIZING_OPTIONS.map((opt) => /* @__PURE__ */ React.createElement("label", { key: opt.key, className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", {
