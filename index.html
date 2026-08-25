@@ -111,6 +111,7 @@ const emptyDb = () => ({
   pendingWinterizingSignups: [],
   salesAppointments: [],
   sunspaceOrders: [],
+  serviceAppointments: [],
   emailUsage: { month: "", count: 0 },
   userRoles: {},
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5, commissionPercent: 8 }
@@ -146,6 +147,7 @@ const TRASH_COLLECTION = {
   winterizingRequest: "winterizingRequests",
   salesAppointment: "salesAppointments",
   sunspaceOrder: "sunspaceOrders",
+  serviceAppointment: "serviceAppointments",
 };
 const TRASH_RETENTION_DAYS = 30;
 
@@ -1915,6 +1917,7 @@ function StatCard({ label, value, onClick, tone }) {
 }
 function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
   var _a, _b;
+  const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
@@ -1922,6 +1925,13 @@ function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
   const sitesNeedingService = new Set(openWorkOrders.map((w) => w.siteId).filter(Boolean)).size;
   const pendingQuoteValue = db.quotes.filter((q) => q.status === "Draft" || q.status === "Sent").reduce((sum, q) => sum + computeQuoteTotals(q, taxRate).total, 0);
   const recentWorkOrders = db.workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
+  const upcomingAppointments = (db.serviceAppointments || []).filter((a) => !a.completedDate).sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+  const completeAppointment = (appt) => {
+    const next = (db.serviceAppointments || []).map((a) => a.id === appt.id ? { ...a, completedDate: todayISO() } : a);
+    const kindLabel = appt.kind === "delivery" ? "Delivered" : "Completed";
+    const activityLog = addLog(db, actor, `Marked ${kindLabel.toLowerCase()}: ${appt.title}`);
+    persist({ ...db, serviceAppointments: next, activityLog });
+  };
   const recentActivity = (db.activityLog || []).filter((e) => {
     const category = categorizeActivity(e.summary);
     return !category || !allowedTabKeys || allowedTabKeys.has(category);
@@ -1963,7 +1973,17 @@ function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
     const cottage = db.cottages.find((c) => c.id === w.cottageId);
     const where = site ? `Site ${site.number}` : cottage ? cottage.name : "\u2014";
     return /* @__PURE__ */ React.createElement("div", { key: w.id, className: "flex items-center justify-between gap-3 py-2 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, w.title), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, where, w.assignedTo ? ` \xB7 ${w.assignedTo}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5 flex-shrink-0" }, w.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[w.priority] || ""}` }, w.priority), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}` }, w.status)));
-  }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Staff Availability"), db.staff.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No staff added yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, db.staff.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.id, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${STAFF_STATUS_DOT[s.status] || "bg-[#E2DED5]"}` }), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] truncate" }, s.name)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, s.status)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-2" }, "Email Usage This Month"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${emailUsageTone}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", emailFreeLimit, " on the EmailJS free plan")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${emailUsageBarTone}`, style: { width: `${emailUsagePct}%` } })), emailUsagePct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 sends will silently fail once you hit ", emailFreeLimit, ". Consider upgrading your EmailJS plan.")));
+  }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Upcoming Appointments & Deliveries"), upcomingAppointments.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing scheduled. Add one from the Calendar tab.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, upcomingAppointments.map((a) => {
+    const isOverdueAppt = a.date < todayISO();
+    return /* @__PURE__ */ React.createElement("div", { key: a.id, className: "flex items-center justify-between gap-2 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-[#1E1A13] truncate" }, a.title), /* @__PURE__ */ React.createElement("div", { className: `text-xs flex flex-wrap gap-x-1.5 ${isOverdueAppt ? "text-[#a8532a] font-medium" : "text-[#75716A]"}` }, /* @__PURE__ */ React.createElement("span", null, a.kind === "delivery" ? "Delivery" : "Appointment"), /* @__PURE__ */ React.createElement("span", null, "\xB7 ", a.date, a.time ? ` ${a.time}` : ""))), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => completeAppointment(a),
+        className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap flex-shrink-0"
+      },
+      a.kind === "delivery" ? "Delivered" : "Completed"
+    ));
+  })))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-2" }, "Email Usage This Month"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${emailUsageTone}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", emailFreeLimit, " on the EmailJS free plan")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${emailUsageBarTone}`, style: { width: `${emailUsagePct}%` } })), emailUsagePct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 sends will silently fail once you hit ", emailFreeLimit, ". Consider upgrading your EmailJS plan.")));
 }
 
 function StaffView({ db, persist }) {
@@ -3167,78 +3187,102 @@ function SalesDashboardView({ db, persist }) {
   }) : null;
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Activity overview \u2014 for dollar figures, see Sales Report")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Units Listed", value: unitsListed }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: `Units Sold (${currentYear})`, value: unitsSoldThisYear, tone: "text-[#28633C]" }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Active Prospects", value: activeProspects }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Avg. Days to Sell", value: avgDaysToSell != null ? avgDaysToSell : "\u2014" })), appointmentsPanel, modalEl, confirmEl);
 }
-function SalesReportView({ db }) {
-  var _a, _b;
-  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
-  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
-  const lastYear = currentYear - 1;
+function computeSalesYearStats(db, year, commissionPercent) {
   const cottageOrders = db.cottageOrders || [];
   const listings = db.consignmentListings || [];
   const sunspaceOrders = db.sunspaceOrders || [];
-  const soldCottageOrders = cottageOrders.filter(isOrderSold);
+  const soldCottageOrders = cottageOrders.filter((o) => {
+    if (!isOrderSold(o)) return false;
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    return dateStr && dateStr.slice(0, 4) === String(year);
+  });
   const cottageSoldTotal = soldCottageOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
   const cottageCollectedTotal = soldCottageOrders.reduce((sum, o) => sum + (isOrderPaidInFull(o) ? Number(o.totalPrice) || 0 : Number(o.depositAmount) || 0), 0);
   const cottageOutstanding = cottageSoldTotal - cottageCollectedTotal;
   const cottageAvgSale = soldCottageOrders.length ? cottageSoldTotal / soldCottageOrders.length : 0;
-  const soldListings = listings.filter((l) => l.status === "Sold");
+  const soldListings = listings.filter((l) => l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(year));
   const consignmentSoldTotal = soldListings.reduce((sum, l) => sum + (Number(l.soldPrice) || 0), 0);
   const consignmentCommissionTotal = soldListings.reduce((sum, l) => sum + Number(l.soldPrice || 0) * (effectiveCommissionRate(l, commissionPercent) / 100), 0);
   const consignmentAvgSale = soldListings.length ? consignmentSoldTotal / soldListings.length : 0;
-  const paidSunspaceOrders = sunspaceOrders.filter((o) => o.paidInFullDate);
+  const paidSunspaceOrders = sunspaceOrders.filter((o) => o.paidInFullDate && o.paidInFullDate.slice(0, 4) === String(year));
   const sunspaceSoldTotal = paidSunspaceOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
   const sunspaceAvgSale = paidSunspaceOrders.length ? sunspaceSoldTotal / paidSunspaceOrders.length : 0;
   const combinedSoldTotal = cottageSoldTotal + consignmentSoldTotal + sunspaceSoldTotal;
   const combinedCollectedTotal = cottageCollectedTotal + consignmentSoldTotal + sunspaceSoldTotal;
   const combinedOutstanding = cottageOutstanding;
-  const yearTotal = (year) => {
-    const cottageYearTotal = cottageOrders.filter((o) => {
-      if (!isOrderSold(o)) return false;
-      const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
-      return dateStr && dateStr.slice(0, 4) === String(year);
-    }).reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
-    const listingYearTotal = listings.filter((l) => l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(year)).reduce((sum, l) => sum + (Number(l.soldPrice) || 0), 0);
-    const sunspaceYearTotal = sunspaceOrders.filter((o) => o.paidInFullDate && o.paidInFullDate.slice(0, 4) === String(year)).reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
-    return cottageYearTotal + listingYearTotal + sunspaceYearTotal;
-  };
-  const thisYearTotal = yearTotal(currentYear);
-  const lastYearTotal = yearTotal(lastYear);
-  const yoyChangePct = lastYearTotal > 0 ? Math.round((thisYearTotal - lastYearTotal) / lastYearTotal * 100) : null;
   const monthlyTotals = Array(12).fill(0);
-  cottageOrders.forEach((o) => {
+  soldCottageOrders.forEach((o) => {
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    const m = Number(dateStr.slice(5, 7)) - 1;
+    if (m >= 0 && m < 12) monthlyTotals[m] += Number(o.totalPrice) || 0;
+  });
+  soldListings.forEach((l) => {
+    const m = Number(l.soldDate.slice(5, 7)) - 1;
+    if (m >= 0 && m < 12) monthlyTotals[m] += Number(l.soldPrice) || 0;
+  });
+  paidSunspaceOrders.forEach((o) => {
+    const m = Number(o.paidInFullDate.slice(5, 7)) - 1;
+    if (m >= 0 && m < 12) monthlyTotals[m] += Number(o.totalPrice) || 0;
+  });
+  return {
+    soldCottageOrders,
+    cottageSoldTotal,
+    cottageCollectedTotal,
+    cottageOutstanding,
+    cottageAvgSale,
+    soldListings,
+    consignmentSoldTotal,
+    consignmentCommissionTotal,
+    consignmentAvgSale,
+    paidSunspaceOrders,
+    sunspaceSoldTotal,
+    sunspaceAvgSale,
+    combinedSoldTotal,
+    combinedCollectedTotal,
+    combinedOutstanding,
+    monthlyTotals
+  };
+}
+function SalesReportView({ db }) {
+  var _a, _b;
+  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
+  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const yearsWithData = /* @__PURE__ */ new Set([currentYear]);
+  (db.cottageOrders || []).forEach((o) => {
     if (!isOrderSold(o)) return;
     const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
-    if (dateStr && dateStr.slice(0, 4) === String(currentYear)) {
-      const m = Number(dateStr.slice(5, 7)) - 1;
-      if (m >= 0 && m < 12) monthlyTotals[m] += Number(o.totalPrice) || 0;
-    }
+    if (dateStr) yearsWithData.add(Number(dateStr.slice(0, 4)));
   });
-  listings.forEach((l) => {
-    if (l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(currentYear)) {
-      const m = Number(l.soldDate.slice(5, 7)) - 1;
-      if (m >= 0 && m < 12) monthlyTotals[m] += Number(l.soldPrice) || 0;
-    }
+  (db.consignmentListings || []).forEach((l) => {
+    if (l.status === "Sold" && l.soldDate) yearsWithData.add(Number(l.soldDate.slice(0, 4)));
   });
-  sunspaceOrders.forEach((o) => {
-    if (o.paidInFullDate && o.paidInFullDate.slice(0, 4) === String(currentYear)) {
-      const m = Number(o.paidInFullDate.slice(5, 7)) - 1;
-      if (m >= 0 && m < 12) monthlyTotals[m] += Number(o.totalPrice) || 0;
-    }
+  (db.sunspaceOrders || []).forEach((o) => {
+    if (o.paidInFullDate) yearsWithData.add(Number(o.paidInFullDate.slice(0, 4)));
   });
-  const maxMonthly = Math.max(1, ...monthlyTotals);
+  const availableYears = Array.from(yearsWithData).sort((a, b) => b - a);
+  const stats = computeSalesYearStats(db, selectedYear, commissionPercent);
+  const prevStats = computeSalesYearStats(db, selectedYear - 1, commissionPercent);
+  const yoyChangePct = prevStats.combinedSoldTotal > 0 ? Math.round((stats.combinedSoldTotal - prevStats.combinedSoldTotal) / prevStats.combinedSoldTotal * 100) : null;
+  const maxMonthly = Math.max(1, ...stats.monthlyTotals);
   const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const summaryCards = /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Total Sales Value", value: formatPrice(combinedSoldTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Collected", value: formatPrice(combinedCollectedTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, {
+  const summaryCards = /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Total Sales Value", value: formatPrice(stats.combinedSoldTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Collected", value: formatPrice(stats.combinedCollectedTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, {
     label: "Outstanding",
-    value: formatPrice(combinedOutstanding),
-    tone: combinedOutstanding > 0 ? "text-[#a8532a]" : "text-[#28633C]"
-  }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Consignment Commission", value: formatPrice(consignmentCommissionTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, {
-    label: `${currentYear} vs ${lastYear}`,
+    value: formatPrice(stats.combinedOutstanding),
+    tone: stats.combinedOutstanding > 0 ? "text-[#a8532a]" : "text-[#28633C]"
+  }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Consignment Commission", value: formatPrice(stats.consignmentCommissionTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, {
+    label: `${selectedYear} vs ${selectedYear - 1}`,
     value: yoyChangePct != null ? `${yoyChangePct > 0 ? "+" : ""}${yoyChangePct}%` : "\u2014",
-    sub: `${formatPrice(thisYearTotal)} vs ${formatPrice(lastYearTotal)}`,
+    sub: `${formatPrice(stats.combinedSoldTotal)} vs ${formatPrice(prevStats.combinedSoldTotal)}`,
     tone: yoyChangePct == null ? "" : yoyChangePct >= 0 ? "text-[#28633C]" : "text-[#a8532a]"
   }));
-  const categoryCards = /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "New Cottage Orders"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, soldCottageOrders.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(cottageSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(cottageAvgSale))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Consignment Listings"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, soldListings.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(consignmentSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(consignmentAvgSale))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Sunspace Accessories"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, paidSunspaceOrders.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(sunspaceSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(sunspaceAvgSale))))));
-  const monthlyChart = /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-4" }, currentYear, " Monthly Sales"), /* @__PURE__ */ React.createElement("div", { className: "flex items-end gap-1.5 h-40" }, monthlyTotals.map((v, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex-1 flex flex-col items-center justify-end gap-1 h-full" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 flex items-end w-full" }, /* @__PURE__ */ React.createElement("div", { className: "w-full rounded-t bg-[#C1652F]", style: { height: `${Math.max(2, v / maxMonthly * 100)}%` }, title: formatPrice(v) })), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, monthLabels[i])))));
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Report"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, currentYear, " year to date")), summaryCards, categoryCards, monthlyChart);
+  const categoryCards = /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "New Cottage Orders"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, stats.soldCottageOrders.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(stats.cottageSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(stats.cottageAvgSale))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Consignment Listings"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, stats.soldListings.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(stats.consignmentSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(stats.consignmentAvgSale))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Sunspace Accessories"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, stats.paidSunspaceOrders.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(stats.sunspaceSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(stats.sunspaceAvgSale))))));
+  const monthlyChart = /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-4" }, selectedYear, " Monthly Sales"), /* @__PURE__ */ React.createElement("div", { className: "flex items-end gap-1.5 h-40" }, stats.monthlyTotals.map((v, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex-1 flex flex-col items-center justify-end gap-1 h-full" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 flex items-end w-full" }, /* @__PURE__ */ React.createElement("div", { className: "w-full rounded-t bg-[#C1652F]", style: { height: `${Math.max(2, v / maxMonthly * 100)}%` }, title: formatPrice(v) })), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, monthLabels[i])))));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-6 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Report"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, selectedYear === currentYear ? "Year to date" : "Full year")), /* @__PURE__ */ React.createElement("select", {
+    value: selectedYear,
+    onChange: (e) => setSelectedYear(Number(e.target.value)),
+    className: inputCls + " w-auto"
+  }, availableYears.map((y) => /* @__PURE__ */ React.createElement("option", { key: y, value: y }, y)))), summaryCards, categoryCards, monthlyChart);
 }
 function CottageOrdersView({ db, persist }) {
   var _a, _b;
@@ -3955,12 +3999,39 @@ function SunspaceOrderForm({ initial, db, onSave, onCancel }) {
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const pickSite = (val) => {
     setSiteId(val);
+    if (val && cottageId) {
+      const currentCottage = db.cottages.find((c) => c.id === cottageId);
+      if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+    }
     if (!customerId && val) {
       const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
       if (owner) setCustomerId(owner.id);
     }
   };
-  const cottageOptions = (siteId ? db.cottages.filter((c) => c.siteId === siteId) : db.cottages).map((c) => ({ value: c.id, label: c.name, searchText: c.name }));
+  const pickCottage = (val) => {
+    setCottageId(val);
+    if (val) {
+      const cottage = db.cottages.find((c) => c.id === val);
+      if (cottage && cottage.siteId) {
+        if (cottage.siteId !== siteId) setSiteId(cottage.siteId);
+        if (!customerId) {
+          const owner = db.customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
+          if (owner) setCustomerId(owner.id);
+        }
+      }
+    }
+  };
+  const pickCustomer = (val) => {
+    setCustomerId(val);
+    if (val && !siteId) {
+      const customer = db.customers.find((c) => c.id === val);
+      const custSiteIds = customer ? customerSiteIds(customer) : [];
+      if (custSiteIds.length === 1) setSiteId(custSiteIds[0]);
+    }
+  };
+  const selectedCustomer = customerId ? db.customers.find((c) => c.id === customerId) : null;
+  const customerSiteIdList = selectedCustomer ? customerSiteIds(selectedCustomer) : [];
+  const cottageOptions = (siteId ? db.cottages.filter((c) => c.siteId === siteId) : customerSiteIdList.length > 0 ? db.cottages.filter((c) => customerSiteIdList.includes(c.siteId)) : db.cottages).map((c) => ({ value: c.id, label: c.name, searchText: c.name }));
   const hasAnyItem = sunroof.included || sunroom.included || railings.included;
   const submit = () => {
     if (!hasAnyItem) return;
@@ -3996,13 +4067,13 @@ function SunspaceOrderForm({ initial, db, onSave, onCancel }) {
   })), /* @__PURE__ */ React.createElement(Field, { label: "Cottage (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: cottageOptions,
     value: cottageId,
-    onChange: setCottageId,
+    onChange: pickCottage,
     placeholder: "Search cottages\u2026",
     noneLabel: "No cottage linked"
   })), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
     value: customerId,
-    onChange: setCustomerId,
+    onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
   })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Total Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: totalPrice, onChange: (e) => setTotalPrice(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: depositAmount, onChange: (e) => setDepositAmount(e.target.value), placeholder: "0.00" }))), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Drawing references, special instructions, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
@@ -5047,12 +5118,68 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   )), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, "Stock is deducted automatically when this work order is marked Complete.")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Work Order")));
 }
 
-function CalendarView({ db, onGoToTab }) {
+const SERVICE_APPT_KINDS = [
+  { key: "appointment", label: "Appointment" },
+  { key: "delivery", label: "Delivery" }
+];
+function calendarDotColor(kind) {
+  if (kind === "Work Order") return "bg-[#377249]";
+  if (kind === "Quote") return "bg-[#3E7A72]";
+  if (kind === "Appointment") return "bg-[#C1652F]";
+  if (kind === "Delivery") return "bg-[#3C5E7A]";
+  return "bg-[#9A968D]";
+}
+function ServiceAppointmentForm({ initial, defaultDate, onSave, onCancel }) {
+  const [kind, setKind] = useState((initial == null ? void 0 : initial.kind) || "appointment");
+  const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
+  const [date, setDate] = useState((initial == null ? void 0 : initial.date) || defaultDate || todayISO());
+  const [time, setTime] = useState((initial == null ? void 0 : initial.time) || "");
+  const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const submit = () => {
+    if (!title.trim() || !date) return;
+    onSave({
+      id: (initial == null ? void 0 : initial.id) || uid(),
+      kind,
+      title: title.trim(),
+      date,
+      time,
+      notes: notes.trim(),
+      completedDate: (initial == null ? void 0 : initial.completedDate) || null,
+      createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
+    });
+  };
+  return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
+  } }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, SERVICE_APPT_KINDS.map((k) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: k.key,
+      type: "button",
+      onClick: () => setKind(k.key),
+      className: `px-3 py-1.5 rounded-md text-sm font-medium border ${kind === k.key ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    k.label
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === "delivery" ? "e.g. Propane delivery" : "e.g. Meet with the Smiths", autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Time (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "time", className: inputCls, value: time, onChange: (e) => setTime(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: submit,
+      disabled: !title.trim() || !date,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50"
+    },
+    "Save"
+  )));
+}
+function CalendarView({ db, persist, onGoToTab }) {
   const [cursor, setCursor] = useState(() => {
     const d = /* @__PURE__ */ new Date();
     return { year: d.getFullYear(), month: d.getMonth() };
   });
   const [selectedDate, setSelectedDate] = useState(null);
+  const [modal, setModal] = useState(null);
+  const confirm = useConfirm();
+  const actor = useCurrentActor();
+  const appointments = db.serviceAppointments || [];
   const itemsByDate = {};
   db.workOrders.forEach((w) => {
     if (!w.date) return;
@@ -5061,6 +5188,12 @@ function CalendarView({ db, onGoToTab }) {
   db.quotes.forEach((q) => {
     if (!q.date) return;
     (itemsByDate[q.date] = itemsByDate[q.date] || []).push({ kind: "Quote", title: q.title, status: q.status, id: q.id });
+  });
+  appointments.forEach((a) => {
+    if (!a.date) return;
+    const kindLabel = a.kind === "delivery" ? "Delivery" : "Appointment";
+    const statusLabel = a.completedDate ? (a.kind === "delivery" ? "Delivered" : "Completed") : a.time || "";
+    (itemsByDate[a.date] = itemsByDate[a.date] || []).push({ kind: kindLabel, title: a.title, status: statusLabel, id: a.id, appt: a });
   });
   const first = new Date(cursor.year, cursor.month, 1);
   const startWeekday = first.getDay();
@@ -5078,8 +5211,25 @@ function CalendarView({ db, onGoToTab }) {
       return { year: d.getFullYear(), month: d.getMonth() };
     });
   };
+  const saveAppointment = (appt) => {
+    const exists = appointments.some((a) => a.id === appt.id);
+    const next = exists ? appointments.map((a) => a.id === appt.id ? appt : a) : [...appointments, appt];
+    const kindLabel = appt.kind === "delivery" ? "delivery" : "appointment";
+    const activityLog = addLog(db, actor, exists ? `Updated ${kindLabel} "${appt.title}"` : `Added ${kindLabel} "${appt.title}"`);
+    persist({ ...db, serviceAppointments: next, activityLog });
+    setModal(null);
+  };
+  const removeAppointment = (id) => {
+    const appt = appointments.find((a) => a.id === id);
+    const kindLabel = (appt == null ? void 0 : appt.kind) === "delivery" ? "Delivery" : "Appointment";
+    const activityLog = addLog(db, actor, `Removed ${kindLabel.toLowerCase()} "${(appt == null ? void 0 : appt.title) || ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "serviceAppointment", appt, `${kindLabel} \u2014 ${(appt == null ? void 0 : appt.title) || ""}`), activityLog });
+    confirm.clear();
+    setModal(null);
+  };
   const selectedItems = selectedDate ? itemsByDate[selectedDate] || [] : [];
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Calendar"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Work orders and quotes by date.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => goMonth(-1), className: "w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]" }, "\u2039"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13] w-36 text-center" }, monthLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => goMonth(1), className: "w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]" }, "\u203A"))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 bg-[#F1EEE9] text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, className: "px-2 py-2 text-center" }, d))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7" }, cells.map((d, i) => {
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Calendar"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Work orders, quotes, appointments, and deliveries by date.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => goMonth(-1), className: "w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]" }, "\u2039"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13] w-36 text-center" }, monthLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => goMonth(1), className: "w-8 h-8 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] text-[#4B4740]" }, "\u203A")));
+  const grid = /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7 bg-[#F1EEE9] text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => /* @__PURE__ */ React.createElement("div", { key: d, className: "px-2 py-2 text-center" }, d))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-7" }, cells.map((d, i) => {
     if (d === null) return /* @__PURE__ */ React.createElement("div", { key: `e${i}`, className: "border-t border-[#EEEBE5] min-h-[70px]" });
     const ds = dateStr(d);
     const items = itemsByDate[ds] || [];
@@ -5093,24 +5243,37 @@ function CalendarView({ db, onGoToTab }) {
         className: `border-t border-l border-[#EEEBE5] min-h-[70px] p-1.5 text-left align-top hover:bg-[#F1EEE9] transition ${isSelected ? "bg-[#DDF1E1]" : ""}`
       },
       /* @__PURE__ */ React.createElement("div", { className: `text-[11px] font-medium mb-1 ${isToday ? "text-[#377249] font-bold" : "text-[#4B4740]"}` }, d),
-      /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-0.5" }, items.slice(0, 3).map((it, idx) => /* @__PURE__ */ React.createElement(
-        "span",
-        {
-          key: idx,
-          className: `w-1.5 h-1.5 rounded-full ${it.kind === "Work Order" ? "bg-[#377249]" : "bg-[#3E7A72]"}`
-        }
-      )), items.length > 3 && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-[#9A968D]" }, "+", items.length - 3))
+      /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-0.5" }, items.slice(0, 3).map((it, idx) => /* @__PURE__ */ React.createElement("span", { key: idx, className: `w-1.5 h-1.5 rounded-full ${calendarDotColor(it.kind)}` })), items.length > 3 && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] text-[#9A968D]" }, "+", items.length - 3))
     );
-  }))), selectedDate && /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, selectedDate), selectedItems.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing on this date.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, selectedItems.map((it, idx) => /* @__PURE__ */ React.createElement(
+  })));
+  const selectedPanel = selectedDate ? /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, selectedDate), /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setModal({ mode: "new", date: selectedDate }),
+    className: "text-xs px-2.5 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] font-medium hover:bg-[#135C30] whitespace-nowrap"
+  }, "+ Add Appointment/Delivery")), selectedItems.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing on this date.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, selectedItems.map((it, idx) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: idx,
-      onClick: () => onGoToTab(it.kind === "Work Order" ? "workorders" : "quotes"),
+      onClick: () => it.appt ? setModal({ mode: "edit", data: it.appt }) : onGoToTab(it.kind === "Work Order" ? "workorders" : "quotes"),
       className: "w-full flex items-center justify-between gap-3 text-sm py-1.5 border-b border-[#EEEBE5] last:border-0 hover:bg-[#F1EEE9] text-left px-1 rounded"
     },
     /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#75716A] mr-2" }, it.kind), it.title),
     /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex-shrink-0" }, it.status)
-  )))));
+  )))) : null;
+  const modalEl = modal ? /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Appointment/Delivery" : "Edit Appointment/Delivery", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(ServiceAppointmentForm, {
+    initial: modal.data,
+    defaultDate: modal.date,
+    onSave: saveAppointment,
+    onCancel: () => setModal(null)
+  }), modal.mode === "edit" && /* @__PURE__ */ React.createElement("button", {
+    onClick: () => confirm.ask(modal.data.id),
+    className: "text-xs text-[#a8532a] hover:underline mt-3"
+  }, "Delete")) : null;
+  const confirmEl = confirm.target ? /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
+    label: `${((appointments.find((a) => a.id === confirm.target) || {}).kind) === "delivery" ? "delivery" : "appointment"} "${((appointments.find((a) => a.id === confirm.target) || {}).title) || ""}"`,
+    onConfirm: () => removeAppointment(confirm.target),
+    onCancel: confirm.clear
+  }) : null;
+  return /* @__PURE__ */ React.createElement("div", null, header, grid, selectedPanel, modalEl, confirmEl);
 }
 
 function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
@@ -5494,14 +5657,14 @@ function WinterizingView({ db, persist, readOnly }) {
 
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
-  { key: "workorders", label: "Work Orders", group: "service" },
-  { key: "calendar", label: "Calendar", group: "service" },
-  { key: "sites", label: "Sites", group: "service" },
-  { key: "cottages", label: "Cottages", group: "service" },
-  { key: "winterizing", label: "Winterizing", group: "service" },
-  { key: "customers", label: "Customers", group: "service" },
-  { key: "parts", label: "Parts", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
+  { key: "workorders", label: "Work Orders", group: "service" },
+  { key: "parts", label: "Parts", group: "service" },
+  { key: "customers", label: "Customers", group: "service" },
+  { key: "cottages", label: "Cottages", group: "service" },
+  { key: "sites", label: "Sites", group: "service" },
+  { key: "winterizing", label: "Winterizing", group: "service" },
+  { key: "calendar", label: "Calendar", group: "service" },
   { key: "staff", label: "Staff", group: "service" },
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
   { key: "salesreport", label: "Sales Report", group: "sales" },
@@ -5684,7 +5847,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
