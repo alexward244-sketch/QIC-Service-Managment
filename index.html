@@ -214,6 +214,30 @@ const RATE_OPTIONS = [
 ];
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const PAYMENT_STATUS = ["Paid", "Invoice"];
+const SALUTATION_OPTIONS = ["", "Mr.", "Mrs.", "Ms.", "Dr.", "Mx."];
+const PHONE_TYPE_OPTIONS = ["Mobile", "Work", "Home"];
+const CUSTOMER_LANGUAGE_OPTIONS = ["English", "French"];
+const emptyCustomerAddress = () => ({
+  attention: "",
+  country: "Canada",
+  street1: "",
+  street2: "",
+  city: "",
+  state: "Ontario",
+  zip: "",
+  phone: "",
+  fax: "",
+  note: ""
+});
+function formatCustomerAddress(addr) {
+  if (!addr) return "";
+  const lines = [
+    [addr.street1, addr.street2].filter(Boolean).join(", "),
+    [addr.city, addr.state, addr.zip].filter(Boolean).join(", "),
+    addr.country
+  ].filter(Boolean);
+  return lines.join(", ");
+}
 const WINTERIZING_OPTIONS = [
   { key: "dishwasher", label: "Dishwasher" },
   { key: "washingMachine", label: "Washing machine" },
@@ -1374,7 +1398,7 @@ function CustomerDetailModal({ customer, db, persist, nested, onClose, onEdit })
   const cottages = db.cottages.filter((c) => siteIds.includes(c.siteId));
   const workOrders = db.workOrders.filter((w) => w.customerId === customer.id || siteIds.includes(w.siteId));
   const quotes = db.quotes.filter((q) => q.customerId === customer.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: customer.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, customer.phone && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone), customer.email && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email), (customer.name2 || customer.phone2 || customer.email2) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, customer.name2 && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.name2), customer.phone2 && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone2), customer.email2 && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email2)), customer.address && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Address: ", customer.address), /* @__PURE__ */ React.createElement("div", null, linkedSites.length > 1 ? "Sites" : "Site", ":", " ", linkedSites.length ? linkedSites.map((s) => s.number).join(", ") : "Unassigned")), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages linked through their site." }, cottages.map((c) => {
+  return /* @__PURE__ */ React.createElement(Modal, { title: customer.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, customer.companyName && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.companyName), customer.phone && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone, customer.phoneType ? ` (${customer.phoneType})` : ""), customer.email && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email), customer.customerLanguage && /* @__PURE__ */ React.createElement("div", null, "Language: ", customer.customerLanguage), (customer.name2 || customer.phone2 || customer.email2) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, customer.name2 && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.name2), customer.phone2 && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone2), customer.email2 && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email2)), customer.billingAddress && formatCustomerAddress(customer.billingAddress) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Billing Address: ", formatCustomerAddress(customer.billingAddress)), customer.shippingAddress && !customer.shippingSameAsBilling && formatCustomerAddress(customer.shippingAddress) && /* @__PURE__ */ React.createElement("div", null, "Shipping Address: ", formatCustomerAddress(customer.shippingAddress)), /* @__PURE__ */ React.createElement("div", null, linkedSites.length > 1 ? "Sites" : "Site", ":", " ", linkedSites.length ? linkedSites.map((s) => s.number).join(", ") : "Unassigned")), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages linked through their site." }, cottages.map((c) => {
     const cSite = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement(
       "button",
@@ -1407,14 +1431,30 @@ function CustomerDetailModal({ customer, db, persist, nested, onClose, onEdit })
     }
   ));
 }
+function AddressFields({ values, onChange }) {
+  const v = values || emptyCustomerAddress();
+  const set = (key) => (e) => onChange({ ...v, [key]: e.target.value });
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Attention" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.attention, onChange: set("attention") })), /* @__PURE__ */ React.createElement(Field, { label: "Country/Region" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.country, onChange: set("country") })), /* @__PURE__ */ React.createElement(Field, { label: "Street 1" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.street1, onChange: set("street1") })), /* @__PURE__ */ React.createElement(Field, { label: "Street 2" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.street2, onChange: set("street2") })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "City" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.city, onChange: set("city") })), /* @__PURE__ */ React.createElement(Field, { label: "State" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.state, onChange: set("state") }))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "ZIP Code" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.zip, onChange: set("zip") })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.phone, onChange: set("phone") }))), /* @__PURE__ */ React.createElement(Field, { label: "Fax Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: v.fax, onChange: set("fax") })), /* @__PURE__ */ React.createElement(Field, { label: "Note" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: v.note, onChange: set("note") })));
+}
 function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
+  const [customerType, setCustomerType] = useState((initial == null ? void 0 : initial.customerType) || "Individual");
+  const [salutation, setSalutation] = useState((initial == null ? void 0 : initial.salutation) || "");
+  const [firstName, setFirstName] = useState((initial == null ? void 0 : initial.firstName) || "");
+  const [lastName, setLastName] = useState((initial == null ? void 0 : initial.lastName) || "");
+  const [companyName, setCompanyName] = useState((initial == null ? void 0 : initial.companyName) || "");
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [phone, setPhone] = useState((initial == null ? void 0 : initial.phone) || "");
+  const [phoneType, setPhoneType] = useState((initial == null ? void 0 : initial.phoneType) || "Mobile");
   const [email, setEmail] = useState((initial == null ? void 0 : initial.email) || "");
+  const [customerLanguage, setCustomerLanguage] = useState((initial == null ? void 0 : initial.customerLanguage) || "English");
   const [name2, setName2] = useState((initial == null ? void 0 : initial.name2) || "");
   const [phone2, setPhone2] = useState((initial == null ? void 0 : initial.phone2) || "");
   const [email2, setEmail2] = useState((initial == null ? void 0 : initial.email2) || "");
-  const [address, setAddress] = useState((initial == null ? void 0 : initial.address) || "");
+  const [billingAddress, setBillingAddress] = useState((initial == null ? void 0 : initial.billingAddress) || emptyCustomerAddress());
+  const [shippingSameAsBilling, setShippingSameAsBilling] = useState(
+    (initial == null ? void 0 : initial.shippingSameAsBilling) != null ? initial.shippingSameAsBilling : true
+  );
+  const [shippingAddress, setShippingAddress] = useState((initial == null ? void 0 : initial.shippingAddress) || emptyCustomerAddress());
   const [siteIds, setSiteIds] = useState(customerSiteIds(initial));
   const [siteToAdd, setSiteToAdd] = useState("");
   const isDuplicate = name.trim() && (customers || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
@@ -1428,15 +1468,26 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
   };
   const submit = () => {
     if (!name.trim()) return;
+    const finalShipping = shippingSameAsBilling ? billingAddress : shippingAddress;
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
+      customerType,
+      salutation,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      companyName: companyName.trim(),
       name: name.trim(),
       phone: phone.trim(),
+      phoneType,
       email: email.trim(),
+      customerLanguage,
       name2: name2.trim(),
       phone2: phone2.trim(),
       email2: email2.trim(),
-      address: address.trim(),
+      billingAddress,
+      shippingSameAsBilling,
+      shippingAddress: finalShipping,
+      address: formatCustomerAddress(billingAddress),
       siteIds,
       siteId: siteIds[0] || null
     });
@@ -1444,7 +1495,23 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
   const availableSites = sites.filter((s) => !siteIds.includes(s.id));
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mt-2 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: address, onChange: (e) => setAddress(e.target.value), placeholder: "Home mailing address" })), /* @__PURE__ */ React.createElement(Field, { label: "Sites" }, siteIds.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, siteIds.map((sId) => {
+  } }, /* @__PURE__ */ React.createElement("div", { className: "mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-[#75716A] mb-1.5" }, "Customer Type"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setCustomerType("Business"),
+      className: `px-3 py-1.5 rounded-md text-sm font-medium border ${customerType === "Business" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "Business"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setCustomerType("Individual"),
+      className: `px-3 py-1.5 rounded-md text-sm font-medium border ${customerType === "Individual" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "Individual"
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Salutation" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: salutation, onChange: (e) => setSalutation(e.target.value) }, SALUTATION_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "First Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: firstName, onChange: (e) => setFirstName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Last Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: lastName, onChange: (e) => setLastName(e.target.value) }))), customerType === "Business" && /* @__PURE__ */ React.createElement(Field, { label: "Company Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: companyName, onChange: (e) => setCompanyName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Display Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: phoneType, onChange: (e) => setPhoneType(e.target.value) }, PHONE_TYPE_OPTIONS.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))))), /* @__PURE__ */ React.createElement(Field, { label: "Customer Language" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: customerLanguage, onChange: (e) => setCustomerLanguage(e.target.value) }, CUSTOMER_LANGUAGE_OPTIONS.map((l) => /* @__PURE__ */ React.createElement("option", { key: l, value: l }, l)))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Billing Address"), /* @__PURE__ */ React.createElement(AddressFields, { values: billingAddress, onChange: setBillingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 flex items-center justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Shipping Address"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: shippingSameAsBilling, onChange: (e) => setShippingSameAsBilling(e.target.checked), className: "accent-[#377249]" }), "Copy billing address")), !shippingSameAsBilling && /* @__PURE__ */ React.createElement(AddressFields, { values: shippingAddress, onChange: setShippingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Sites" }, siteIds.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, siteIds.map((sId) => {
     const s = sites.find((x) => x.id === sId);
     return /* @__PURE__ */ React.createElement("span", { key: sId, className: "inline-flex items-center gap-1 text-xs bg-[#DDF1E1] text-[#28633C] rounded-full pl-2.5 pr-1 py-1" }, "Site ", s ? s.number : "?", /* @__PURE__ */ React.createElement(
       "button",
@@ -2693,12 +2760,19 @@ function buildExcelSheets(db) {
   }));
   const customers = db.customers.map((c) => ({
     Name: c.name,
+    "Customer Type": c.customerType || "",
+    "Company Name": c.companyName || "",
     Phone: c.phone || "",
+    "Phone Type": c.phoneType || "",
     Email: c.email || "",
+    "Customer Language": c.customerLanguage || "",
     "Contact 2 Name": c.name2 || "",
     "Contact 2 Phone": c.phone2 || "",
     "Contact 2 Email": c.email2 || "",
-    Address: c.address || "",
+    "Billing Address": formatCustomerAddress(c.billingAddress) || c.address || "",
+    "Billing Attention": (c.billingAddress || {}).attention || "",
+    "Billing Fax": (c.billingAddress || {}).fax || "",
+    "Shipping Address": c.shippingSameAsBilling ? "Same as billing" : formatCustomerAddress(c.shippingAddress),
     Sites: customerSiteIds(c).map(siteNumber).filter(Boolean).join(", ")
   }));
   const workOrders = db.workOrders.map((w) => ({
@@ -2892,6 +2966,101 @@ function CottageOrderTicket({ order, db, onEdit, onDelete, onAdvance, onMarkSold
       "Mark Paid in Full \u2192"
     ))
   );
+}
+function SalesStatCard({ label, value, sub, tone }) {
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, label), /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-serif font-semibold ${tone || "text-[#1E1A13]"}` }, value), sub && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1" }, sub));
+}
+function SalesDashboardView({ db }) {
+  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
+  const cottageOrders = db.cottageOrders || [];
+  const listings = db.consignmentListings || [];
+  const prospects = db.prospects || [];
+  const unitsListed = listings.filter((l) => l.status === "Listed" || l.status === "Pending Offer").length + cottageOrders.filter((o) => o.type === "Display Model" && o.status === "Delivered/Onsite" && !o.soldDate).length;
+  const cottageOrdersSoldThisYear = cottageOrders.filter((o) => {
+    if (!isOrderSold(o)) return false;
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    return dateStr && dateStr.slice(0, 4) === String(currentYear);
+  }).length;
+  const listingsSoldThisYear = listings.filter((l) => l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(currentYear)).length;
+  const unitsSoldThisYear = cottageOrdersSoldThisYear + listingsSoldThisYear;
+  const activeProspects = prospects.filter((p) => p.status !== "Not Interested").length;
+  const daysToSellSamples = [];
+  listings.forEach((l) => {
+    if (l.status === "Sold" && l.listedDate && l.soldDate) {
+      const days = Math.round((new Date(l.soldDate) - new Date(l.listedDate)) / 864e5);
+      if (Number.isFinite(days) && days >= 0) daysToSellSamples.push(days);
+    }
+  });
+  cottageOrders.forEach((o) => {
+    if (o.type === "Display Model" && o.soldDate && o.deliveredDate) {
+      const days = Math.round((new Date(o.soldDate) - new Date(o.deliveredDate)) / 864e5);
+      if (Number.isFinite(days) && days >= 0) daysToSellSamples.push(days);
+    }
+  });
+  const avgDaysToSell = daysToSellSamples.length ? Math.round(daysToSellSamples.reduce((a, b) => a + b, 0) / daysToSellSamples.length) : null;
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Activity overview \u2014 for dollar figures, see Sales Report")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Units Listed", value: unitsListed }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: `Units Sold (${currentYear})`, value: unitsSoldThisYear, tone: "text-[#28633C]" }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Active Prospects", value: activeProspects }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Avg. Days to Sell", value: avgDaysToSell != null ? avgDaysToSell : "\u2014" })));
+}
+function SalesReportView({ db }) {
+  var _a, _b;
+  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
+  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
+  const lastYear = currentYear - 1;
+  const cottageOrders = db.cottageOrders || [];
+  const listings = db.consignmentListings || [];
+  const soldCottageOrders = cottageOrders.filter(isOrderSold);
+  const cottageSoldTotal = soldCottageOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
+  const cottageCollectedTotal = soldCottageOrders.reduce((sum, o) => sum + (isOrderPaidInFull(o) ? Number(o.totalPrice) || 0 : Number(o.depositAmount) || 0), 0);
+  const cottageOutstanding = cottageSoldTotal - cottageCollectedTotal;
+  const cottageAvgSale = soldCottageOrders.length ? cottageSoldTotal / soldCottageOrders.length : 0;
+  const soldListings = listings.filter((l) => l.status === "Sold");
+  const consignmentSoldTotal = soldListings.reduce((sum, l) => sum + (Number(l.soldPrice) || 0), 0);
+  const consignmentCommissionTotal = soldListings.reduce((sum, l) => sum + Number(l.soldPrice || 0) * (effectiveCommissionRate(l, commissionPercent) / 100), 0);
+  const consignmentAvgSale = soldListings.length ? consignmentSoldTotal / soldListings.length : 0;
+  const combinedSoldTotal = cottageSoldTotal + consignmentSoldTotal;
+  const combinedCollectedTotal = cottageCollectedTotal + consignmentSoldTotal;
+  const combinedOutstanding = cottageOutstanding;
+  const yearTotal = (year) => {
+    const cottageYearTotal = cottageOrders.filter((o) => {
+      if (!isOrderSold(o)) return false;
+      const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+      return dateStr && dateStr.slice(0, 4) === String(year);
+    }).reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
+    const listingYearTotal = listings.filter((l) => l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(year)).reduce((sum, l) => sum + (Number(l.soldPrice) || 0), 0);
+    return cottageYearTotal + listingYearTotal;
+  };
+  const thisYearTotal = yearTotal(currentYear);
+  const lastYearTotal = yearTotal(lastYear);
+  const yoyChangePct = lastYearTotal > 0 ? Math.round((thisYearTotal - lastYearTotal) / lastYearTotal * 100) : null;
+  const monthlyTotals = Array(12).fill(0);
+  cottageOrders.forEach((o) => {
+    if (!isOrderSold(o)) return;
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    if (dateStr && dateStr.slice(0, 4) === String(currentYear)) {
+      const m = Number(dateStr.slice(5, 7)) - 1;
+      if (m >= 0 && m < 12) monthlyTotals[m] += Number(o.totalPrice) || 0;
+    }
+  });
+  listings.forEach((l) => {
+    if (l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(currentYear)) {
+      const m = Number(l.soldDate.slice(5, 7)) - 1;
+      if (m >= 0 && m < 12) monthlyTotals[m] += Number(l.soldPrice) || 0;
+    }
+  });
+  const maxMonthly = Math.max(1, ...monthlyTotals);
+  const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const summaryCards = /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Total Sales Value", value: formatPrice(combinedSoldTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Collected", value: formatPrice(combinedCollectedTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, {
+    label: "Outstanding",
+    value: formatPrice(combinedOutstanding),
+    tone: combinedOutstanding > 0 ? "text-[#a8532a]" : "text-[#28633C]"
+  }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Consignment Commission", value: formatPrice(consignmentCommissionTotal) }), /* @__PURE__ */ React.createElement(SalesStatCard, {
+    label: `${currentYear} vs ${lastYear}`,
+    value: yoyChangePct != null ? `${yoyChangePct > 0 ? "+" : ""}${yoyChangePct}%` : "\u2014",
+    sub: `${formatPrice(thisYearTotal)} vs ${formatPrice(lastYearTotal)}`,
+    tone: yoyChangePct == null ? "" : yoyChangePct >= 0 ? "text-[#28633C]" : "text-[#a8532a]"
+  }));
+  const categoryCards = /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "New Cottage Orders"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, soldCottageOrders.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(cottageSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(cottageAvgSale))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Consignment Listings"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Units sold: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, soldListings.length)), /* @__PURE__ */ React.createElement("div", null, "Total sold value: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(consignmentSoldTotal))), /* @__PURE__ */ React.createElement("div", null, "Avg. sale price: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(consignmentAvgSale))))));
+  const monthlyChart = /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-4" }, currentYear, " Monthly Sales"), /* @__PURE__ */ React.createElement("div", { className: "flex items-end gap-1.5 h-40" }, monthlyTotals.map((v, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "flex-1 flex flex-col items-center justify-end gap-1 h-full" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 flex items-end w-full" }, /* @__PURE__ */ React.createElement("div", { className: "w-full rounded-t bg-[#C1652F]", style: { height: `${Math.max(2, v / maxMonthly * 100)}%` }, title: formatPrice(v) })), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, monthLabels[i])))));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Report"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, currentYear, " year to date")), summaryCards, categoryCards, monthlyChart);
 }
 function CottageOrdersView({ db, persist }) {
   var _a, _b;
@@ -4971,23 +5140,26 @@ function WinterizingView({ db, persist, readOnly }) {
 }
 
 const TABS = [
-  { key: "dashboard", label: "Dashboard" },
-  { key: "workorders", label: "Work Orders" },
-  { key: "calendar", label: "Calendar" },
-  { key: "sites", label: "Sites" },
-  { key: "cottages", label: "Cottages" },
-  { key: "winterizing", label: "Winterizing" },
-  { key: "customers", label: "Customers" },
-  { key: "parts", label: "Parts" },
-  { key: "quotes", label: "Quotes" },
-  { key: "staff", label: "Staff" },
-  { key: "cottageorders", label: "New Cottage Orders" },
-  { key: "consignments", label: "Consignment Listings" },
-  { key: "prospects", label: "Prospects / Waitlist" }
+  { key: "dashboard", label: "Dashboard", group: "service" },
+  { key: "workorders", label: "Work Orders", group: "service" },
+  { key: "calendar", label: "Calendar", group: "service" },
+  { key: "sites", label: "Sites", group: "service" },
+  { key: "cottages", label: "Cottages", group: "service" },
+  { key: "winterizing", label: "Winterizing", group: "service" },
+  { key: "customers", label: "Customers", group: "service" },
+  { key: "parts", label: "Parts", group: "service" },
+  { key: "quotes", label: "Quotes", group: "service" },
+  { key: "staff", label: "Staff", group: "service" },
+  { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
+  { key: "salesreport", label: "Sales Report", group: "sales" },
+  { key: "cottageorders", label: "New Cottage Orders", group: "sales" },
+  { key: "consignments", label: "Consignment Listings", group: "sales" },
+  { key: "prospects", label: "Prospects / Waitlist", group: "sales" }
 ];
 function AppContent() {
   const { db, loading, error, persist, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
+  const [mode, setMode] = useState("service");
   const [importPending, setImportPending] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -5067,7 +5239,9 @@ function AppContent() {
   const isManager = role === "manager";
   const isAdminOrManager = isAdmin || isManager;
   const allowedTabKeys = isAdmin ? null : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
-  const effectiveTab = !allowedTabKeys || allowedTabKeys.has(tab) ? tab : "dashboard";
+  const visibleGroup = isAdmin ? mode : "service";
+  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : "dashboard";
+  const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -5096,6 +5270,11 @@ function AppContent() {
     setTab(key);
     setMobileNavOpen(false);
   };
+  const switchMode = (nextMode) => {
+    setMode(nextMode);
+    setTab(nextMode === "sales" ? "salesdashboard" : "dashboard");
+    setMobileNavOpen(false);
+  };
   return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 py-3" }, /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -5109,8 +5288,23 @@ function AppContent() {
     {
       className: `w-[230px] flex-shrink-0 bg-[#FFFDFA] border-r border-[#E2DED5] flex flex-col p-3.5 fixed sm:static inset-y-0 left-0 z-40 transform transition-transform duration-200 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"} sm:translate-x-0`
     },
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 px-2 pb-6" }, /* @__PURE__ */ React.createElement("div", { className: "w-8 h-8 rounded-[9px] bg-[#377249] flex items-center justify-center text-white flex-shrink-0" }, /* @__PURE__ */ React.createElement(IconTag, { className: "w-4 h-4" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-[15px] leading-tight text-[#1E1A13]" }, "Campground Maintenance")),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, (allowedTabKeys ? TABS.filter((t) => allowedTabKeys.has(t.key)) : TABS).map((t) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 px-2 pb-4" }, /* @__PURE__ */ React.createElement("div", { className: "w-8 h-8 rounded-[9px] bg-[#377249] flex items-center justify-center text-white flex-shrink-0" }, /* @__PURE__ */ React.createElement(IconTag, { className: "w-4 h-4" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-[15px] leading-tight text-[#1E1A13]" }, "Campground Maintenance")),
+    isAdmin && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => switchMode("service"),
+        className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "service" ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+      },
+      "Service"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => switchMode("sales"),
+        className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "sales" ? "bg-[#C1652F] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+      },
+      "Sales"
+    )),
+    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key)).map((t) => /* @__PURE__ */ React.createElement(
       "button",
       {
         key: t.key,
@@ -5131,7 +5325,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders") }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
