@@ -109,6 +109,8 @@ const emptyDb = () => ({
   prospects: [],
   winterizingRequests: [],
   pendingWinterizingSignups: [],
+  propaneRequests: [],
+  pendingPropaneSignups: [],
   salesAppointments: [],
   sunspaceOrders: [],
   serviceAppointments: [],
@@ -121,7 +123,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
-const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "sites", "cottages", "winterizing", "customers"]);
+const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "sites", "cottages", "winterizing", "propane", "customers"]);
 const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "staff"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
@@ -146,6 +148,7 @@ const TRASH_COLLECTION = {
   recurringTask: "recurringTasks",
   workOrderTemplate: "workOrderTemplates",
   winterizingRequest: "winterizingRequests",
+  propaneRequest: "propaneRequests",
   salesAppointment: "salesAppointments",
   sunspaceOrder: "sunspaceOrders",
   serviceAppointment: "serviceAppointments",
@@ -361,6 +364,12 @@ function todayISO() {
 }
 function isOverdue(wo) {
   return wo.status !== "Completed" && wo.date && wo.date < todayISO();
+}
+function defaultPropaneRun(requestedDate) {
+  const today = todayISO();
+  if (requestedDate !== today) return "10am";
+  const hour = (/* @__PURE__ */ new Date()).getHours();
+  return hour < 10 ? "10am" : "4pm";
 }
 function customerSiteIds(customer) {
   if (!customer) return [];
@@ -6114,6 +6123,221 @@ function CalendarView({ db, persist, onGoToTab }) {
   return /* @__PURE__ */ React.createElement("div", null, header, grid, selectedPanel, modalEl, confirmEl);
 }
 
+const PROPANE_RUNS = ["10am", "4pm"];
+function PropaneRequestForm({ initial, db, onSave, onCancel }) {
+  const initialCottage = (initial == null ? void 0 : initial.cottageId) ? db.cottages.find((c) => c.id === initial.cottageId) : null;
+  const [siteId, setSiteId] = useState((initialCottage == null ? void 0 : initialCottage.siteId) || "");
+  const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
+  const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
+  const [requestedDate, setRequestedDate] = useState((initial == null ? void 0 : initial.requestedDate) || todayISO());
+  const [run, setRun] = useState((initial == null ? void 0 : initial.run) || defaultPropaneRun((initial == null ? void 0 : initial.requestedDate) || todayISO()));
+  const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const pickSite = (val) => {
+    setSiteId(val);
+    if (val) {
+      const cottagesOnSite = db.cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = db.cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
+    }
+  };
+  const pickCottage = (val) => {
+    setCottageId(val);
+    if (val) {
+      const cottage = db.cottages.find((c) => c.id === val);
+      if (cottage && cottage.siteId) {
+        if (cottage.siteId !== siteId) setSiteId(cottage.siteId);
+        if (!customerId) {
+          const owner = db.customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
+          if (owner) setCustomerId(owner.id);
+        }
+      }
+    }
+  };
+  const pickCustomer = (val) => {
+    setCustomerId(val);
+    if (val && !siteId) {
+      const customer = db.customers.find((c) => c.id === val);
+      const custSiteIds = customer ? customerSiteIds(customer) : [];
+      if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
+    }
+  };
+  const changeDate = (val) => {
+    setRequestedDate(val);
+    setRun(defaultPropaneRun(val));
+  };
+  const submit = () => {
+    if (!cottageId || !requestedDate) return;
+    onSave({
+      id: (initial == null ? void 0 : initial.id) || uid(),
+      cottageId,
+      customerId: customerId || null,
+      requestedDate,
+      run,
+      notes: notes.trim(),
+      completed: (initial == null ? void 0 : initial.completed) || false,
+      completedDate: (initial == null ? void 0 : initial.completedDate) || null,
+      workOrderId: (initial == null ? void 0 : initial.workOrderId) || null,
+      createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
+    });
+  };
+  return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
+    value: siteId,
+    onChange: pickSite,
+    placeholder: "Search sites\u2026",
+    noneLabel: "\u2014 Select a site \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: (siteId ? db.cottages.filter((c) => c.siteId === siteId) : db.cottages).map((c) => {
+      const site = db.sites.find((s) => s.id === c.siteId);
+      return { value: c.id, label: c.name + (site ? ` (Site ${site.number})` : ""), searchText: [c.name, site == null ? void 0 : site.number].filter(Boolean).join(" ") };
+    }),
+    value: cottageId,
+    onChange: pickCottage,
+    placeholder: "Search cottages\u2026",
+    noneLabel: "\u2014 Select a cottage \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
+    value: customerId,
+    onChange: pickCustomer,
+    placeholder: "Search customers\u2026",
+    noneLabel: "No customer linked"
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => changeDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Run" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, PROPANE_RUNS.map((r) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: r,
+      type: "button",
+      onClick: () => setRun(r),
+      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${run === r ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    r
+  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: submit,
+      disabled: !cottageId || !requestedDate,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50"
+    },
+    "Save Request"
+  )));
+}
+function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
+  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
+  const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
+  const guessCustomer = guessSite ? (db.customers || []).find((c) => customerSiteIds(c).includes(guessSite.id)) : null;
+  const [siteId, setSiteId] = useState((guessSite == null ? void 0 : guessSite.id) || "");
+  const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
+  const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
+  const [requestedDate, setRequestedDate] = useState(entry.requestedDate || todayISO());
+  const [run, setRun] = useState(defaultPropaneRun(entry.requestedDate || todayISO()));
+  const [notes, setNotes] = useState(entry.notes || "");
+  const pickSite = (val) => {
+    setSiteId(val);
+    if (val) {
+      const cottagesOnSite = db.cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = db.cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
+    }
+  };
+  const pickCottage = (val) => {
+    setCottageId(val);
+    if (val) {
+      const cottage = db.cottages.find((c) => c.id === val);
+      if (cottage && cottage.siteId) {
+        if (cottage.siteId !== siteId) setSiteId(cottage.siteId);
+        if (!customerId) {
+          const owner = db.customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
+          if (owner) setCustomerId(owner.id);
+        }
+      }
+    }
+  };
+  const pickCustomer = (val) => {
+    setCustomerId(val);
+    if (val && !siteId) {
+      const customer = db.customers.find((c) => c.id === val);
+      const custSiteIds = customer ? customerSiteIds(customer) : [];
+      if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
+    }
+  };
+  const changeDate = (val) => {
+    setRequestedDate(val);
+    setRun(defaultPropaneRun(val));
+  };
+  const confirm = () => {
+    if (!cottageId || !requestedDate) return;
+    onConfirm({
+      id: uid(),
+      cottageId,
+      customerId: customerId || null,
+      requestedDate,
+      run,
+      notes: notes.trim(),
+      completed: false,
+      completedDate: null,
+      workOrderId: null,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  };
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually.")), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
+    value: siteId,
+    onChange: pickSite,
+    placeholder: "Search sites\u2026",
+    noneLabel: "\u2014 Select a site \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: (siteId ? db.cottages.filter((c) => c.siteId === siteId) : db.cottages).map((c) => {
+      const site = db.sites.find((s) => s.id === c.siteId);
+      return { value: c.id, label: c.name + (site ? ` (Site ${site.number})` : ""), searchText: [c.name, site == null ? void 0 : site.number].filter(Boolean).join(" ") };
+    }),
+    value: cottageId,
+    onChange: pickCottage,
+    placeholder: "Search cottages\u2026",
+    noneLabel: "\u2014 Select a cottage \u2014"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
+    value: customerId,
+    onChange: pickCustomer,
+    placeholder: "Search customers\u2026",
+    noneLabel: "No customer linked"
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => changeDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Run" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, PROPANE_RUNS.map((r) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: r,
+      type: "button",
+      onClick: () => setRun(r),
+      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${run === r ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    r
+  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onDiscard, className: "px-4 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Discard Submission"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: confirm,
+      disabled: !cottageId || !requestedDate,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50"
+    },
+    "Confirm Sign-Up"
+  ))));
+}
 function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
   const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
@@ -6572,6 +6796,118 @@ function WinterizingView({ db, persist, readOnly }) {
   })) : null;
   return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl);
 }
+function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRun }) {
+  const cottage = db.cottages.find((c) => c.id === request.cottageId);
+  const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
+  const otherRun = request.run === "10am" ? "4pm" : "10am";
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, cottage ? cottage.name : "Unlinked cottage", site ? ` \u2014 Site ${site.number}` : ""), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
+}
+function PropaneView({ db, persist }) {
+  const [modal, setModal] = useState(null);
+  const [reviewingEntry, setReviewingEntry] = useState(null);
+  const confirm = useConfirm();
+  const actor = useCurrentActor();
+  const requests = db.propaneRequests || [];
+  const pending = db.pendingPropaneSignups || [];
+  const today = todayISO();
+  const active = requests.filter((r) => !r.completed);
+  const overdue = active.filter((r) => r.requestedDate < today);
+  const todayTenAm = active.filter((r) => r.requestedDate === today && r.run === "10am");
+  const todayFourPm = active.filter((r) => r.requestedDate === today && r.run === "4pm");
+  const upcoming = active.filter((r) => r.requestedDate > today).sort((a, b) => a.requestedDate.localeCompare(b.requestedDate));
+  const cottageName = (id) => {
+    const c = id ? db.cottages.find((x) => x.id === id) : null;
+    return c ? c.name : "";
+  };
+  const save = (request) => {
+    const exists = requests.some((r) => r.id === request.id);
+    const next = exists ? requests.map((r) => r.id === request.id ? request : r) : [...requests, request];
+    const activityLog = addLog(db, actor, exists ? `Updated propane request for ${cottageName(request.cottageId) || "unassigned"}` : `Added propane request for ${cottageName(request.cottageId) || "unassigned"}`);
+    persist({ ...db, propaneRequests: next, activityLog });
+    setModal(null);
+  };
+  const remove = (id) => {
+    const request = requests.find((r) => r.id === id);
+    const activityLog = addLog(db, actor, `Removed propane request for ${cottageName(request == null ? void 0 : request.cottageId) || "unassigned"} (moved to trash)`);
+    persist({ ...trashItem(db, "propaneRequest", request, `Propane \u2014 ${cottageName(request == null ? void 0 : request.cottageId) || ""}`), activityLog });
+    confirm.clear();
+  };
+  const moveRun = (request) => {
+    const updated = { ...request, run: request.run === "10am" ? "4pm" : "10am" };
+    const next = requests.map((r) => r.id === request.id ? updated : r);
+    const activityLog = addLog(db, actor, `Moved propane request for ${cottageName(request.cottageId) || "unassigned"} to the ${updated.run} run`);
+    persist({ ...db, propaneRequests: next, activityLog });
+  };
+  const complete = (request) => {
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const wo = {
+      id: uid(),
+      title: "Propane Fill",
+      description: request.notes || "",
+      siteId: cottage ? cottage.siteId : null,
+      cottageId: request.cottageId || null,
+      customerId: request.customerId || null,
+      assignedTo: "",
+      status: "Completed",
+      priority: "Medium",
+      workGroup: "",
+      date: todayISO(),
+      completedDate: todayISO(),
+      partsUsed: [],
+      laborHours: "",
+      laborRateType: "N/A",
+      paymentStatus: ""
+    };
+    const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
+    const nextRequests = requests.map((r) => r.id === request.id ? updated : r);
+    const nextWorkOrders = [...db.workOrders || [], wo];
+    const activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
+    persist({ ...db, propaneRequests: nextRequests, workOrders: nextWorkOrders, activityLog });
+  };
+  const confirmSignup = (request) => {
+    const nextRequests = [...requests, request];
+    const nextPending = pending.filter((p) => p.id !== reviewingEntry.id);
+    const activityLog = addLog(db, actor, `Confirmed propane request from online sign-up`);
+    persist({ ...db, propaneRequests: nextRequests, pendingPropaneSignups: nextPending, activityLog });
+    setReviewingEntry(null);
+  };
+  const discardSignup = (entry) => {
+    const nextPending = pending.filter((p) => p.id !== entry.id);
+    const activityLog = addLog(db, actor, `Discarded propane sign-up submission`);
+    persist({ ...db, pendingPropaneSignups: nextPending, activityLog });
+    setReviewingEntry(null);
+  };
+  const section = (title, list, tone) => /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h3", { className: `text-sm font-semibold mb-2 ${tone || "text-[#1E1A13]"}` }, title, " (", list.length, ")"), list.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic px-1" }, "Nothing here.") : /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] overflow-hidden" }, list.map((r) => /* @__PURE__ */ React.createElement(PropaneRequestRow, {
+    key: r.id,
+    request: r,
+    db,
+    onEdit: (req) => setModal({ mode: "edit", data: req }),
+    onDelete: (req) => confirm.ask(req.id),
+    onComplete: complete,
+    onMoveRun: moveRun
+  }))));
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Propane"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Daily fill runs at 10am and 4pm.")), /* @__PURE__ */ React.createElement("button", {
+    onClick: () => setModal({ mode: "new" }),
+    className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+  }, "+ New Request"));
+  const incomingEl = pending.length > 0 ? /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#F5E3D9] bg-[#FBEEDA] px-4 py-3 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold uppercase tracking-wider text-[#9A6B1F] mb-2" }, "Incoming Sign-Ups \u2014 ", pending.length, " need", pending.length === 1 ? "s" : "", " review"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, pending.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, entry.submittedName || "(no name)", " \u2014 Site ", entry.submittedSiteNumber || "?"), /* @__PURE__ */ React.createElement("button", { onClick: () => setReviewingEntry(entry), className: "text-xs px-2.5 py-1 rounded-full bg-[#377249] text-[#F9F5EC] font-medium hover:bg-[#135C30]" }, "Review"))))) : null;
+  const body = /* @__PURE__ */ React.createElement("div", null, overdue.length > 0 && section("Overdue", overdue, "text-[#a8532a]"), section("Today \u2014 10am Run", todayTenAm), section("Today \u2014 4pm Run", todayFourPm), section("Upcoming", upcoming));
+  const modalEl = modal ? /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Propane Request" : "Edit Propane Request", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(PropaneRequestForm, { initial: modal.data, db, onSave: save, onCancel: () => setModal(null) })) : null;
+  const reviewEl = reviewingEntry ? /* @__PURE__ */ React.createElement(Modal, { title: "Review Propane Sign-Up", onClose: () => setReviewingEntry(null) }, /* @__PURE__ */ React.createElement(PendingPropaneMatchForm, {
+    entry: reviewingEntry,
+    db,
+    onConfirm: confirmSignup,
+    onDiscard: () => discardSignup(reviewingEntry),
+    onCancel: () => setReviewingEntry(null)
+  })) : null;
+  const confirmEl = confirm.target ? /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
+    label: `propane request for ${cottageName((requests.find((r) => r.id === confirm.target) || {}).cottageId) || "unassigned"}`,
+    onConfirm: () => remove(confirm.target),
+    onCancel: confirm.clear
+  }) : null;
+  return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, reviewEl, confirmEl);
+}
 
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
@@ -6583,6 +6919,7 @@ const TABS = [
   { key: "cottages", label: "Cottages", group: "service" },
   { key: "sites", label: "Sites", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
+  { key: "propane", label: "Propane", group: "service" },
   { key: "calendar", label: "Calendar", group: "service" },
   { key: "staff", label: "Staff", group: "service" },
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
@@ -6772,7 +7109,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
