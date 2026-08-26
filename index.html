@@ -1080,11 +1080,25 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
+function BulkGenerateCottagesForm({ count, onGenerate, onCancel }) {
+  const [namePrefix, setNamePrefix] = useState("Northlander");
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This creates one cottage per site that doesn't already have one \u2014 ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, count, " site", count === 1 ? "" : "s", " qualify"), ". Each is named using the prefix below plus the site number (e.g. \"Northlander 1000\" for Site 1000), and linked to that site. If a customer already owns that site, they'll show up as the owner automatically \u2014 nothing else to set."), /* @__PURE__ */ React.createElement(Field, { label: "Name Prefix" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: namePrefix, onChange: (e) => setNamePrefix(e.target.value), placeholder: "e.g. Northlander" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => onGenerate(namePrefix),
+      disabled: !namePrefix.trim() || count === 0,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50"
+    },
+    "Generate ", count, " Cottage", count === 1 ? "" : "s"
+  )));
+}
 function CottagesView({ db, persist, readOnly }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [detailId, setDetailId] = useState(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (c, ownerAction) => {
@@ -1124,6 +1138,26 @@ function CottagesView({ db, persist, readOnly }) {
     persist({ ...db, cottages, customers, activityLog });
     setModal(null);
   };
+  const sitesWithoutCottage = db.sites.filter((s) => !db.cottages.some((c) => c.siteId === s.id));
+  const bulkGenerateCottages = (namePrefix) => {
+    const newCottages = sitesWithoutCottage.map((s) => ({
+      id: uid(),
+      name: `${namePrefix.trim()} ${s.number}`.trim(),
+      color: "",
+      siteId: s.id,
+      features: "",
+      serialNumber: "",
+      year: "",
+      modelNumber: "",
+      bedrooms: null,
+      bathrooms: null,
+      deckPorch: "",
+      sunroom: ""
+    }));
+    const activityLog = addLog(db, actor, `Bulk-generated ${newCottages.length} cottage${newCottages.length === 1 ? "" : "s"} from sites`);
+    persist({ ...db, cottages: [...db.cottages, ...newCottages], activityLog });
+    setBulkOpen(false);
+  };
   const remove = (id) => {
     var _a2, _b2;
     const cottage = db.cottages.find((c) => c.id === id);
@@ -1144,6 +1178,13 @@ function CottagesView({ db, persist, readOnly }) {
       value: filter,
       onChange: (e) => setFilter(e.target.value)
     }
+  ), !readOnly && sitesWithoutCottage.length > 0 && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setBulkOpen(true),
+      className: "px-4 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
+    },
+    "Bulk Generate (", sitesWithoutCottage.length, ")"
   ), !readOnly && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -1160,7 +1201,7 @@ function CottagesView({ db, persist, readOnly }) {
   ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No cottages match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" }, filtered.map((c) => {
     const site = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 relative overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "absolute top-0 left-0 w-full h-1.5", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between mt-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, c.name), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, c.color || "No colour set")))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Site: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, site ? site.number : "Unassigned")), (c.year || c.modelNumber) && /* @__PURE__ */ React.createElement("div", null, c.year && /* @__PURE__ */ React.createElement("span", null, c.year), c.year && c.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), c.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", c.modelNumber)), c.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", c.serialNumber), c.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", c.features)), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })), !readOnly && modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
+  })), !readOnly && modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), !readOnly && bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Generate Cottages", onClose: () => setBulkOpen(false) }, /* @__PURE__ */ React.createElement(BulkGenerateCottagesForm, { count: sitesWithoutCottage.length, onGenerate: bulkGenerateCottages, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
       cottage: db.cottages.find((c) => c.id === detailId),
@@ -1533,13 +1574,7 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
   );
   const [shippingAddress, setShippingAddress] = useState((initial == null ? void 0 : initial.shippingAddress) || emptyCustomerAddress());
   const [siteIds, setSiteIds] = useState(customerSiteIds(initial));
-  const [siteToAdd, setSiteToAdd] = useState("");
   const isDuplicate = name.trim() && (customers || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
-  const addSite = () => {
-    if (!siteToAdd || siteIds.includes(siteToAdd)) return;
-    setSiteIds((ids) => [...ids, siteToAdd]);
-    setSiteToAdd("");
-  };
   const removeSite = (id) => {
     setSiteIds((ids) => ids.filter((sId) => sId !== id));
   };
@@ -1600,25 +1635,15 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
       },
       "\u2715"
     ));
-  })), availableSites.length > 0 ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      className: inputCls,
-      value: siteToAdd,
-      onChange: (e) => setSiteToAdd(e.target.value)
+  })), availableSites.length > 0 ? /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: availableSites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
+    value: "",
+    onChange: (val) => {
+      if (val && !siteIds.includes(val)) setSiteIds((ids) => [...ids, val]);
     },
-    /* @__PURE__ */ React.createElement("option", { value: "" }, "Add a site\u2026"),
-    availableSites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number))
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: addSite,
-      disabled: !siteToAdd,
-      className: "text-xs px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] hover:bg-[#377249]/10 disabled:opacity-40 whitespace-nowrap"
-    },
-    "Add"
-  )) : siteIds.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No sites to add \u2014 unassigned"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1.5" }, "Owns cottages on more than one site? Add each one here.")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
+    placeholder: "Search sites to add\u2026",
+    noneLabel: "Add a site\u2026"
+  }) : siteIds.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No sites to add \u2014 unassigned"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1.5" }, "Owns cottages on more than one site? Add each one here.")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Customer")));
 }
 
 function BulkAddCustomersForm({ sites, onSave, onCancel }) {
