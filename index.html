@@ -124,7 +124,8 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
 const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "sites", "cottages", "winterizing", "propane", "customers"]);
-const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices"]);
+const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "servicereports"]);
+const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "consignments", "sunspace", "prospects"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
   const hasAnyAdmin = Object.values(roles).some((r) => r === "admin");
@@ -737,6 +738,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     },
     /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"),
     /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"),
+    /* @__PURE__ */ React.createElement("option", { value: "salesmanager" }, "Sales Manager"),
     /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")
   ), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline", onClick: () => removeRole(email) }, "Remove"))))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 border-t border-[#E2DED5] pt-3" }, /* @__PURE__ */ React.createElement(
     "input",
@@ -746,7 +748,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
       onChange: (e) => setNewEmail(e.target.value),
       placeholder: "email@example.com"
     }
-  ), /* @__PURE__ */ React.createElement("select", { className: inputCls + " w-32", value: newRole, onChange: (e) => setNewRole(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"), /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"), /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("select", { className: inputCls + " w-32", value: newRole, onChange: (e) => setNewRole(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"), /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"), /* @__PURE__ */ React.createElement("option", { value: "salesmanager" }, "Sales Manager"), /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: addNew,
@@ -6948,6 +6950,88 @@ function PropaneView({ db, persist }) {
   return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, reviewEl, confirmEl);
 }
 
+function buildServiceItems(db, taxRate) {
+  const items = [];
+  const siteOfCottage = (cottageId) => {
+    const cottage = cottageId ? (db.cottages || []).find((c) => c.id === cottageId) : null;
+    return cottage ? cottage.siteId : null;
+  };
+  const cottageLabel = (cottageId) => {
+    const c = cottageId ? (db.cottages || []).find((x) => x.id === cottageId) : null;
+    return c ? c.name : "Unassigned";
+  };
+  (db.workOrders || []).forEach((wo) => {
+    items.push({ id: "wo-" + wo.id, type: "Work Order", date: wo.date || "", status: wo.status || "Open", title: wo.title || "Untitled work order", siteId: wo.siteId || null, assignedTo: wo.assignedTo || "", priority: wo.priority || "" });
+  });
+  (db.winterizingRequests || []).forEach((r) => {
+    items.push({ id: "wint-" + r.id, type: "Winterizing", date: (r.completed ? r.completedDate : r.requestedDate) || "", status: r.completed ? "Completed" : "Pending", title: `Winterizing \u2014 ${cottageLabel(r.cottageId)}`, siteId: siteOfCottage(r.cottageId), assignedTo: "", priority: "" });
+  });
+  (db.propaneRequests || []).forEach((r) => {
+    items.push({ id: "prop-" + r.id, type: "Propane", date: (r.completed ? r.completedDate : r.requestedDate) || "", status: r.completed ? "Completed" : "Pending", title: `Propane \u2014 ${cottageLabel(r.cottageId)}`, siteId: siteOfCottage(r.cottageId), assignedTo: "", priority: "" });
+  });
+  (db.quotes || []).forEach((q) => {
+    items.push({ id: "quote-" + q.id, type: "Quote", date: q.date || "", status: q.status || "Draft", title: q.title || "Untitled quote", siteId: q.siteId || null, assignedTo: "", priority: "" });
+  });
+  (db.invoices || []).forEach((inv) => {
+    items.push({ id: "inv-" + inv.id, type: "Invoice", date: inv.date || "", status: invoiceStatus(inv, inv.taxRate != null ? inv.taxRate : taxRate), title: `Invoice #${inv.invoiceNumber || ""}`, siteId: inv.siteId || null, assignedTo: "", priority: "" });
+  });
+  return items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+function ServiceReportsView({ db }) {
+  var _a, _b;
+  const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
+  const allItems = useMemo(() => buildServiceItems(db, taxRate), [db, taxRate]);
+  const TYPES = ["Work Order", "Winterizing", "Propane", "Quote", "Invoice"];
+  const STATUS_BY_TYPE = {
+    "Work Order": ["Open", "In Progress", "Completed"],
+    Winterizing: ["Pending", "Completed"],
+    Propane: ["Pending", "Completed"],
+    Quote: ["Draft", "Sent", "Accepted", "Declined"],
+    Invoice: ["Draft", "Sent", "Paid"]
+  };
+  const [activeTypes, setActiveTypes] = useState(new Set(TYPES));
+  const [activeStatuses, setActiveStatuses] = useState(/* @__PURE__ */ new Set());
+  const [activeStaff, setActiveStaff] = useState(/* @__PURE__ */ new Set());
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [siteFilter, setSiteFilter] = useState("");
+  const toggleSet = (setFn, current, value) => {
+    const next = new Set(current);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    setFn(next);
+  };
+  const availableStatuses = Array.from(new Set(TYPES.filter((t) => activeTypes.has(t)).flatMap((t) => STATUS_BY_TYPE[t] || [])));
+  const staffList = (db.staff || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = allItems.filter((item) => {
+    if (!activeTypes.has(item.type)) return false;
+    if (activeStatuses.size > 0 && !activeStatuses.has(item.status)) return false;
+    if (activeStaff.size > 0) {
+      if (item.type !== "Work Order") return false;
+      if (!activeStaff.has(item.assignedTo)) return false;
+    }
+    if (dateFrom && item.date && item.date < dateFrom) return false;
+    if (dateTo && item.date && item.date > dateTo) return false;
+    if (siteFilter) {
+      const site = item.siteId ? (db.sites || []).find((s) => s.id === item.siteId) : null;
+      const hay = `${(site == null ? void 0 : site.number) || ""} ${(site == null ? void 0 : site.section) || ""} ${((site == null ? void 0 : site.tags) || []).join(" ")}`.toLowerCase();
+      if (!hay.includes(siteFilter.toLowerCase())) return false;
+    }
+    return true;
+  });
+  const countsByType = TYPES.map((t) => ({ type: t, count: filtered.filter((i) => i.type === t).length }));
+  const siteNumberFor = (siteId) => {
+    if (!siteId) return "\u2014";
+    const site = (db.sites || []).find((s) => s.id === siteId);
+    return site ? site.number : "\u2014";
+  };
+  const staffNameFor = (staffId) => {
+    if (!staffId) return "\u2014";
+    const s = (db.staff || []).find((x) => x.id === staffId);
+    return s ? s.name : staffId;
+  };
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Service Reports"), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Record type"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, TYPES.map((t) => /* @__PURE__ */ React.createElement("button", { key: t, onClick: () => toggleSet(setActiveTypes, activeTypes, t), className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeTypes.has(t) ? "bg-[#DDF1E1] border-[#28633C] text-[#28633C]" : "bg-white border-[#E2DED5] text-[#75716A]"}` }, t)))), availableStatuses.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Status"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, availableStatuses.map((s) => /* @__PURE__ */ React.createElement("button", { key: s, onClick: () => toggleSet(setActiveStatuses, activeStatuses, s), className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeStatuses.has(s) ? "bg-[#FBEEDA] border-[#9A6B1F] text-[#9A6B1F]" : "bg-white border-[#E2DED5] text-[#75716A]"}` }, s))), activeStatuses.size > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setActiveStatuses(/* @__PURE__ */ new Set()), className: "text-[10px] text-[#75716A] hover:underline mt-1" }, "Clear status filter")), staffList.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Assigned staff (Work Orders only)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, staffList.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => toggleSet(setActiveStaff, activeStaff, s.id), className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeStaff.has(s.id) ? "bg-[#E4E1F5] border-[#5B4B8A] text-[#5B4B8A]" : "bg-white border-[#E2DED5] text-[#75716A]"}` }, s.name))), activeStaff.size > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setActiveStaff(/* @__PURE__ */ new Set()), className: "text-[10px] text-[#75716A] hover:underline mt-1" }, "Clear staff filter")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "From", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateFrom, onChange: (e) => setDateFrom(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "To", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateTo, onChange: (e) => setDateTo(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("input", { type: "text", value: siteFilter, onChange: (e) => setSiteFilter(e.target.value), placeholder: "Filter by site #, section, or tag\u2026", className: "flex-1 min-w-[12rem] border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm bg-white" }))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5" }, countsByType.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.type, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, c.type), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, c.count)))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Type"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Title"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Assigned"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Status"))), /* @__PURE__ */ React.createElement("tbody", null, filtered.length === 0 && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 6, className: "px-4 py-6 text-center text-[#75716A] text-sm" }, "No items match these filters.")), filtered.map((item) => /* @__PURE__ */ React.createElement("tr", { key: item.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.date || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.type), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.title), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, siteNumberFor(item.siteId)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.assignedTo ? staffNameFor(item.assignedTo) : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-[#4B4740]" }, item.status))))))));
+}
 function buildTransactionList(db, taxRate, commissionPercent) {
   const rows = [];
   (db.cottageOrders || []).forEach((o) => {
@@ -7279,6 +7363,7 @@ const TABS = [
   { key: "sites", label: "Sites", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
   { key: "calendar", label: "Calendar", group: "service" },
+  { key: "servicereports", label: "Service Reports", group: "service" },
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
   { key: "salesreport", label: "Sales Report", group: "sales" },
   { key: "cottageorders", label: "New Cottage Orders", group: "sales" },
@@ -7373,9 +7458,10 @@ function AppContent() {
   const role = getUserRole(db, actor);
   const isAdmin = role === "admin";
   const isManager = role === "manager";
+  const isSalesManager = role === "salesmanager";
   const isAdminOrManager = isAdmin || isManager;
-  const allowedTabKeys = isAdmin ? null : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
-  const visibleGroup = isAdmin ? mode : "service";
+  const allowedTabKeys = isAdmin ? null : isSalesManager ? /* @__PURE__ */ new Set([...OFFICE_TAB_KEYS, ...SALES_TAB_KEYS]) : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
+  const visibleGroup = isAdmin || isSalesManager ? mode : "service";
   const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
@@ -7435,7 +7521,7 @@ function AppContent() {
       className: `w-[230px] flex-shrink-0 bg-[#FFFDFA] border-r border-[#E2DED5] flex flex-col p-3.5 fixed sm:static inset-y-0 left-0 z-40 transform transition-transform duration-200 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"} sm:translate-x-0`
     },
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 px-2 pb-4" }, /* @__PURE__ */ React.createElement("div", { className: "w-8 h-8 rounded-[9px] bg-[#377249] flex items-center justify-center text-white flex-shrink-0" }, /* @__PURE__ */ React.createElement(IconTag, { className: "w-4 h-4" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-[15px] leading-tight text-[#1E1A13]" }, "Campground Maintenance")),
-    isAdmin && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
+    (isAdmin || isSalesManager) && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => switchMode("service"),
@@ -7449,7 +7535,7 @@ function AppContent() {
         className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "sales" ? "bg-[#C1652F] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
       },
       "Sales"
-    ), /* @__PURE__ */ React.createElement(
+    ), isAdmin && /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => switchMode("admin"),
@@ -7478,7 +7564,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
