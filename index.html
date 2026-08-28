@@ -1251,7 +1251,7 @@ function CampgroundMapView({ db, persist, isAdminOrManager, onCreateWorkOrder })
   const fitToViewport = useCallback((naturalW, naturalH) => {
     const vp = viewportRef.current;
     if (!vp || !naturalW || !naturalH) return;
-    const fit = Math.min(vp.clientWidth / naturalW, vp.clientHeight / naturalH, 1);
+    const fit = clampScale(Math.max(vp.clientWidth / naturalW, vp.clientHeight / naturalH));
     fitScaleRef.current = fit || 1;
     setScale(fitScaleRef.current);
     setPan({
