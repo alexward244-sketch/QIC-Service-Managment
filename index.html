@@ -36,7 +36,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 const firebaseConfig = {
   apiKey: "AIzaSyDNo-dN4e7uw3C3rdlWZ68PXWxUha7ankI",
   authDomain: "qic-service-management-system.firebaseapp.com",
@@ -124,7 +124,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
 const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "sites", "cottages", "winterizing", "propane", "customers"]);
-const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "staff"]);
+const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
   const hasAnyAdmin = Object.values(roles).some((r) => r === "admin");
@@ -462,6 +462,11 @@ const CurrentUserContext = React.createContext(null);
 function useCurrentActor() {
   const email = React.useContext(CurrentUserContext);
   return email || "Unknown";
+}
+function logSystemError(db, persist, source, message) {
+  const entry = { id: uid(), ts: Date.now(), source, message };
+  const systemErrorLog = [entry, ...db.systemErrorLog || []].slice(0, 100);
+  persist({ ...db, systemErrorLog });
 }
 function addLog(db, actor, summary) {
   const entry = { id: uid(), ts: (/* @__PURE__ */ new Date()).toISOString(), actor, summary };
@@ -2333,6 +2338,7 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
       setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
+      logSystemError(db, persist, "Invoice email", `Failed to send invoice ${invoice.invoiceNumber} to ${customer.name}`);
     });
   };
   const filtered = invoices.filter((inv) => {
@@ -2780,6 +2786,7 @@ function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice }) {
       setTimeout(() => setEmailStatus((s) => ({ ...s, [quote.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [quote.id]: "error" }));
+      logSystemError(db, persist, "Quote email", `Failed to send quote "${quote.title}" to ${customer.name}`);
     });
   };
   const remove = (id) => {
@@ -5248,6 +5255,7 @@ function WorkOrdersView({ db, persist, onCreateInvoice }) {
           subject: `Work order assigned: ${wo.title}`,
           message: buildWorkOrderEmailText(wo, db)
         }).catch(() => {
+          logSystemError(db, persist, "Work order assignment email", `Failed to notify ${staffMember.name} about "${wo.title}"`);
         });
         activityLog = addLog({ activityLog }, actor, `Notified ${staffMember.name} by email about "${wo.title}"`);
       }
@@ -6629,6 +6637,7 @@ function WinterizingView({ db, persist, readOnly }) {
           setTimeout(() => setEmailStatus((s) => ({ ...s, [request.id]: void 0 })), 3e3);
         }).catch(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
+          logSystemError(db, persist, "Winterizing completion email", `Failed to email ${customer.name} about ${cottageName(request.cottageId)}`);
         });
       }
     }
@@ -6910,6 +6919,320 @@ function PropaneView({ db, persist }) {
   return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, reviewEl, confirmEl);
 }
 
+function buildTransactionList(db, taxRate, commissionPercent) {
+  const rows = [];
+  (db.cottageOrders || []).forEach((o) => {
+    if (!isOrderSold(o)) return;
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    if (!dateStr) return;
+    rows.push({ id: "co-" + o.id, date: dateStr, segment: "Cottage Sales", description: o.model || "Cottage order", amount: Number(o.totalPrice) || 0 });
+  });
+  (db.consignmentListings || []).forEach((l) => {
+    if (l.status !== "Sold" || !l.soldDate) return;
+    const cottage = (db.cottages || []).find((c) => c.id === l.cottageId);
+    rows.push({ id: "cl-" + l.id, date: l.soldDate, segment: "Consignment / Commission", description: (cottage == null ? void 0 : cottage.name) || "Consignment listing", amount: Number(l.soldPrice) || 0 });
+  });
+  (db.sunspaceOrders || []).forEach((o) => {
+    if (!o.paidInFullDate) return;
+    const included = Object.entries(o.items || {}).filter(([, v]) => v && v.included).map(([k]) => k);
+    rows.push({ id: "ss-" + o.id, date: o.paidInFullDate, segment: "Sunspace Accessories", description: included.length ? included.join(", ") : "Sunspace order", amount: Number(o.totalPrice) || 0 });
+  });
+  (db.invoices || []).forEach((inv) => {
+    if (!isInvoicePaidInFull(inv, taxRate)) return;
+    const dateStr = inv.paidInFullDate || inv.date;
+    if (!dateStr) return;
+    const customer = inv.customerId ? (db.customers || []).find((c) => c.id === inv.customerId) : null;
+    const total = computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total;
+    rows.push({ id: "inv-" + inv.id, date: dateStr, segment: "Service (Invoices)", description: (customer == null ? void 0 : customer.name) ? `${customer.name} \u2014 Inv #${inv.invoiceNumber || ""}` : `Invoice #${inv.invoiceNumber || ""}`, amount: total });
+  });
+  const sitesWithFeeNow = (db.sites || []).filter((s) => getCurrentRate(s) > 0);
+  const now = /* @__PURE__ */ new Date();
+  const year = now.getFullYear();
+  const currentMonthIdx = now.getMonth();
+  for (let m = 0; m <= currentMonthIdx; m++) {
+    const monthStr = String(m + 1).padStart(2, "0");
+    const dateStr = `${year}-${monthStr}-01`;
+    const monthTotal = seasonalMonthlyTotalForDate(db, dateStr);
+    if (monthTotal > 0) {
+      rows.push({ id: `seasonal-${year}-${monthStr}`, date: dateStr, segment: "Seasonal Fees", description: `${sitesWithFeeNow.length} sites billed`, amount: monthTotal });
+    }
+  }
+  return rows.sort((a, b) => a.date < b.date ? 1 : -1);
+}
+function shiftYear(dateStr, delta) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setFullYear(d.getFullYear() + delta);
+  return d.toISOString().slice(0, 10);
+}
+function AdminDashboardView({ db }) {
+  var _a, _b, _c, _d;
+  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
+  const taxRate = (_d = (_c = db.settings) == null ? void 0 : _c.taxRate) != null ? _d : 13;
+  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const yearsWithData = /* @__PURE__ */ new Set([currentYear]);
+  (db.cottageOrders || []).forEach((o) => {
+    if (!isOrderSold(o)) return;
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    if (dateStr) yearsWithData.add(Number(dateStr.slice(0, 4)));
+  });
+  (db.consignmentListings || []).forEach((l) => {
+    if (l.status === "Sold" && l.soldDate) yearsWithData.add(Number(l.soldDate.slice(0, 4)));
+  });
+  (db.sunspaceOrders || []).forEach((o) => {
+    if (o.paidInFullDate) yearsWithData.add(Number(o.paidInFullDate.slice(0, 4)));
+  });
+  (db.invoices || []).forEach((inv) => {
+    if (isInvoicePaidInFull(inv, taxRate)) {
+      const dateStr = inv.paidInFullDate || inv.date;
+      if (dateStr) yearsWithData.add(Number(dateStr.slice(0, 4)));
+    }
+  });
+  const availableYears = Array.from(yearsWithData).sort((a, b) => b - a);
+  const stats = computeSalesYearStats(db, selectedYear, commissionPercent);
+  const invoices = db.invoices || [];
+  const paidServiceInvoices = invoices.filter((inv) => {
+    if (!isInvoicePaidInFull(inv, taxRate)) return false;
+    const dateStr = inv.paidInFullDate || inv.date;
+    return dateStr && dateStr.slice(0, 4) === String(selectedYear);
+  });
+  const serviceSoldTotal = paidServiceInvoices.reduce((sum, inv) => sum + computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total, 0);
+  const serviceAvgSale = paidServiceInvoices.length ? serviceSoldTotal / paidServiceInvoices.length : 0;
+  const sitesWithFee = (db.sites || []).filter((s) => getCurrentRate(s) > 0);
+  const seasonalMonthlyTotal = sitesWithFee.reduce((sum, s) => sum + getCurrentRate(s), 0);
+  const nowForSeasonal = /* @__PURE__ */ new Date();
+  const currentCalendarYear = nowForSeasonal.getFullYear();
+  const elapsedMonths = selectedYear < currentCalendarYear ? 12 : selectedYear > currentCalendarYear ? 0 : nowForSeasonal.getMonth() + 1;
+  let seasonalCollectedTotal = 0;
+  let seasonalAnnualTotal = 0;
+  for (let m = 1; m <= 12; m++) {
+    const monthStr = String(m).padStart(2, "0");
+    const monthTotal = seasonalMonthlyTotalForDate(db, `${selectedYear}-${monthStr}-01`);
+    seasonalAnnualTotal += monthTotal;
+    if (m <= elapsedMonths) seasonalCollectedTotal += monthTotal;
+  }
+  const grandTotal = stats.combinedSoldTotal + serviceSoldTotal + seasonalCollectedTotal;
+  const segments = [
+    { label: "Cottage Sales", value: stats.cottageSoldTotal, count: stats.soldCottageOrders.length, unit: "units sold" },
+    { label: "Consignment / Commission", value: stats.consignmentSoldTotal, count: stats.soldListings.length, unit: "units sold" },
+    { label: "Sunspace Accessories", value: stats.sunspaceSoldTotal, count: stats.paidSunspaceOrders.length, unit: "units sold" },
+    { label: "Service (Invoices)", value: serviceSoldTotal, count: paidServiceInvoices.length, unit: "invoices paid" }
+  ];
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13]" }, "Admin Dashboard"), /* @__PURE__ */ React.createElement(
+    "select",
+    {
+      value: selectedYear,
+      onChange: (e) => setSelectedYear(Number(e.target.value)),
+      className: "border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm bg-[#FFFDFA] text-[#1E1A13]"
+    },
+    availableYears.map((y) => /* @__PURE__ */ React.createElement("option", { key: y, value: y }, y))
+  )), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, selectedYear, " Total Revenue (sales + service + seasonal fees collected to date)"), /* @__PURE__ */ React.createElement("div", { className: "text-3xl font-serif text-[#1E1A13]" }, formatPrice(grandTotal))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, segments.map((seg) => /* @__PURE__ */ React.createElement("div", { key: seg.label, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, seg.label), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, seg.unit, ": ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, seg.count)), /* @__PURE__ */ React.createElement("div", null, "Total: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seg.value))))))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Seasonal Fees"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Sites with fee set: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, sitesWithFee.length)), /* @__PURE__ */ React.createElement("div", null, "Monthly rate (current): ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seasonalMonthlyTotal))), /* @__PURE__ */ React.createElement("div", { className: "pt-1 border-t border-[#E2DED5] mt-1" }, "Collected so far (", elapsedMonths, " mo. in ", selectedYear, "): ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seasonalCollectedTotal))), /* @__PURE__ */ React.createElement("div", null, "Projected full year: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seasonalAnnualTotal))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-[#E2DED5] bg-[#FFFDFA] p-5 opacity-70" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-1" }, "Square (Restaurant, Snack Bar, Waterfront, Main Store)"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Coming soon \u2014 Square API integration."))));
+}
+function AdminReportsView({ db }) {
+  var _a, _b, _c, _d;
+  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
+  const taxRate = (_d = (_c = db.settings) == null ? void 0 : _c.taxRate) != null ? _d : 13;
+  const allRows = useMemo(() => buildTransactionList(db, taxRate, commissionPercent), [db, taxRate, commissionPercent]);
+  const SEGMENTS = ["Cottage Sales", "Consignment / Commission", "Sunspace Accessories", "Service (Invoices)", "Seasonal Fees"];
+  const todayStr = todayISO();
+  const startOfYear = todayStr.slice(0, 4) + "-01-01";
+  const [dateFrom, setDateFrom] = useState(startOfYear);
+  const [dateTo, setDateTo] = useState(todayStr);
+  const [activeSegments, setActiveSegments] = useState(new Set(SEGMENTS));
+  const [compareEnabled, setCompareEnabled] = useState(false);
+  const applyPreset = (preset) => {
+    const now = new Date(todayStr + "T00:00:00");
+    if (preset === "month") {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      setDateFrom(first.toISOString().slice(0, 10));
+      setDateTo(todayStr);
+    } else if (preset === "quarter") {
+      const q = Math.floor(now.getMonth() / 3);
+      const first = new Date(now.getFullYear(), q * 3, 1);
+      setDateFrom(first.toISOString().slice(0, 10));
+      setDateTo(todayStr);
+    } else if (preset === "year") {
+      setDateFrom(now.getFullYear() + "-01-01");
+      setDateTo(todayStr);
+    }
+  };
+  const toggleSegment = (seg) => {
+    setActiveSegments((prev) => {
+      const next = new Set(prev);
+      if (next.has(seg)) next.delete(seg);
+      else next.add(seg);
+      return next;
+    });
+  };
+  const filteredRows = allRows.filter((r) => r.date >= dateFrom && r.date <= dateTo && activeSegments.has(r.segment));
+  const total = filteredRows.reduce((sum, r) => sum + r.amount, 0);
+  const bySegment = SEGMENTS.map((seg) => ({
+    segment: seg,
+    total: filteredRows.filter((r) => r.segment === seg).reduce((sum, r) => sum + r.amount, 0),
+    count: filteredRows.filter((r) => r.segment === seg).length
+  }));
+  const priorFrom = shiftYear(dateFrom, -1);
+  const priorTo = shiftYear(dateTo, -1);
+  const priorRows = allRows.filter((r) => r.date >= priorFrom && r.date <= priorTo && activeSegments.has(r.segment));
+  const priorTotal = priorRows.reduce((sum, r) => sum + r.amount, 0);
+  const pctChange = priorTotal > 0 ? (total - priorTotal) / priorTotal * 100 : null;
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Reports"), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => applyPreset("month"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, "This Month"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyPreset("quarter"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, "This Quarter"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyPreset("year"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, "This Year")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "From", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateFrom, onChange: (e) => setDateFrom(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "To", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateTo, onChange: (e) => setDateTo(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-xs text-[#75716A] font-medium ml-auto" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: compareEnabled, onChange: (e) => setCompareEnabled(e.target.checked) }), "Compare to same period last year")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, SEGMENTS.map((seg) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: seg,
+      onClick: () => toggleSegment(seg),
+      className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeSegments.has(seg) ? "bg-[#DDF1E1] border-[#28633C] text-[#28633C]" : "bg-white border-[#E2DED5] text-[#75716A]"}`
+    },
+    seg
+  )))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Total for selected range"), /* @__PURE__ */ React.createElement("div", { className: "text-3xl font-serif text-[#1E1A13]" }, formatPrice(total)), compareEnabled && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-2" }, "Same period last year: ", /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, formatPrice(priorTotal)), pctChange != null && /* @__PURE__ */ React.createElement("span", { className: `ml-2 font-semibold ${pctChange >= 0 ? "text-[#28633C]" : "text-[#a8532a]"}` }, pctChange >= 0 ? "+" : "", pctChange.toFixed(1), "%"))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, bySegment.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.segment, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-1" }, s.segment), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#75716A]" }, s.count, " transactions"), /* @__PURE__ */ React.createElement("div", { className: "text-base font-medium text-[#1E1A13]" }, formatPrice(s.total))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Segment"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Description"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold text-right" }, "Amount"))), /* @__PURE__ */ React.createElement("tbody", null, filteredRows.length === 0 && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 4, className: "px-4 py-6 text-center text-[#75716A] text-sm" }, "No transactions in this range.")), filteredRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, r.segment), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, r.description), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right font-medium text-[#1E1A13]" }, formatPrice(r.amount))))))));
+}
+function getRateAtDate(site, dateStr) {
+  const history = (site.seasonalFeeHistory || []).filter((h) => h.date <= dateStr).sort((a, b) => a.date < b.date ? 1 : -1);
+  if (history.length > 0) return Number(history[0].amount) || 0;
+  if (!site.seasonalFeeHistory || site.seasonalFeeHistory.length === 0) return Number(site.seasonalFee) || 0;
+  return 0;
+}
+function getCurrentRate(site) {
+  return getRateAtDate(site, todayISO());
+}
+function getUpcomingRate(site) {
+  const today = todayISO();
+  const future = (site.seasonalFeeHistory || []).filter((h) => h.date > today).sort((a, b) => a.date < b.date ? -1 : 1);
+  return future.length > 0 ? future[0] : null;
+}
+function upsertRateHistory(site, dateStr, amount) {
+  const history = (site.seasonalFeeHistory || []).filter((h) => h.date !== dateStr);
+  history.push({ date: dateStr, amount });
+  return history.sort((a, b) => a.date < b.date ? -1 : 1);
+}
+function nextSeptFirst() {
+  const now = new Date();
+  const year = now.getMonth() >= 8 ? now.getFullYear() + 1 : now.getFullYear();
+  return `${year}-09-01`;
+}
+function seasonalMonthlyTotalForDate(db, dateStr) {
+  return (db.sites || []).reduce((sum, s) => sum + getRateAtDate(s, dateStr), 0);
+}
+function getSiteOwner(db, siteId) {
+  return (db.customers || []).find((c) => customerSiteIds(c).includes(siteId)) || null;
+}
+function SeasonalFeesView({ db, persist }) {
+  const actor = useCurrentActor();
+  const [filter, setFilter] = useState("");
+  const [selected, setSelected] = useState(/* @__PURE__ */ new Set());
+  const [bulkAmount, setBulkAmount] = useState("");
+  const [bulkEffectiveDate, setBulkEffectiveDate] = useState(todayISO());
+  const [increasePct, setIncreasePct] = useState("");
+  const [increaseFlat, setIncreaseFlat] = useState("");
+  const [increaseEffectiveDate, setIncreaseEffectiveDate] = useState(nextSeptFirst());
+  const [toast, setToast] = useState(null);
+  const sites = (db.sites || []).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const filteredSites = sites.filter((s) => {
+    if (!filter) return true;
+    const owner = getSiteOwner(db, s.id);
+    const hay = `${s.number} ${(owner == null ? void 0 : owner.name) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const sitesWithFee = sites.filter((s) => getCurrentRate(s) > 0);
+  const totalMonthly = sitesWithFee.reduce((sum, s) => sum + getCurrentRate(s), 0);
+  const totalAnnual = totalMonthly * 12;
+  const toggleSelect = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const selectAllFiltered = () => setSelected(new Set(filteredSites.map((s) => s.id)));
+  const clearSelection = () => setSelected(/* @__PURE__ */ new Set());
+  const updateFee = (siteId, value) => {
+    if (value == null) return;
+    const nextSites = db.sites.map((s) => s.id === siteId ? { ...s, seasonalFeeHistory: upsertRateHistory(s, todayISO(), value), seasonalFee: value } : s);
+    persist({ ...db, sites: nextSites });
+  };
+  const applyBulkSet = () => {
+    const amount = Number(bulkAmount);
+    if (!Number.isFinite(amount) || amount < 0 || selected.size === 0 || !bulkEffectiveDate) return;
+    const nextSites = db.sites.map((s) => selected.has(s.id) ? { ...s, seasonalFeeHistory: upsertRateHistory(s, bulkEffectiveDate, amount), seasonalFee: bulkEffectiveDate <= todayISO() ? amount : s.seasonalFee } : s);
+    const activityLog = addLog(db, actor, `Set seasonal fee to ${formatPrice(amount)}/mo for ${selected.size} site(s), effective ${bulkEffectiveDate}`);
+    persist({ ...db, sites: nextSites, activityLog });
+    setBulkAmount("");
+    setToast(`Updated ${selected.size} site(s)`);
+  };
+  const applyIncrease = (mode) => {
+    const raw = mode === "pct" ? Number(increasePct) : Number(increaseFlat);
+    if (!Number.isFinite(raw) || raw === 0 || !increaseEffectiveDate) return;
+    const targetIds = selected.size > 0 ? selected : new Set(sitesWithFee.map((s) => s.id));
+    if (targetIds.size === 0) return;
+    const nextSites = db.sites.map((s) => {
+      if (!targetIds.has(s.id)) return s;
+      const current = getCurrentRate(s);
+      const updated = Math.round((mode === "pct" ? current * (1 + raw / 100) : current + raw) * 100) / 100;
+      return { ...s, seasonalFeeHistory: upsertRateHistory(s, increaseEffectiveDate, updated), seasonalFee: increaseEffectiveDate <= todayISO() ? updated : s.seasonalFee };
+    });
+    const label = mode === "pct" ? `${raw}%` : formatPrice(raw);
+    const activityLog = addLog(db, actor, `Scheduled seasonal fee increase of ${label} for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
+    persist({ ...db, sites: nextSites, activityLog });
+    setIncreasePct("");
+    setIncreaseFlat("");
+    setToast(`Scheduled increase for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
+  };
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Seasonal Fees"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Sites with a fee set"), /* @__PURE__ */ React.createElement("div", { className: "text-xl font-serif text-[#1E1A13]" }, sitesWithFee.length, " / ", sites.length)), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Current monthly revenue"), /* @__PURE__ */ React.createElement("div", { className: "text-xl font-serif text-[#1E1A13]" }, formatPrice(totalMonthly))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Current annualized rate"), /* @__PURE__ */ React.createElement("div", { className: "text-xl font-serif text-[#1E1A13]" }, formatPrice(totalAnnual)))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-[#1E1A13]" }, selected.size, " selected"), /* @__PURE__ */ React.createElement("button", { onClick: selectAllFiltered, className: "text-xs text-[#377249] hover:underline font-medium" }, "Select all shown"), /* @__PURE__ */ React.createElement("button", { onClick: clearSelection, className: "text-xs text-[#75716A] hover:underline font-medium" }, "Clear selection")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Set fee for selected: $", /* @__PURE__ */ React.createElement("input", { type: "number", value: bulkAmount, onChange: (e) => setBulkAmount(e.target.value), className: "ml-2 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: bulkEffectiveDate, onChange: (e) => setBulkEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), /* @__PURE__ */ React.createElement("button", { onClick: applyBulkSet, disabled: selected.size === 0, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Apply to selected")), /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Annual increase (applies to selected sites, or all sites with a fee if none selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by ", /* @__PURE__ */ React.createElement("input", { type: "number", value: increasePct, onChange: (e) => setIncreasePct(e.target.value), className: "mx-2 w-16 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "%"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("pct"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply % increase"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "or"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by $", /* @__PURE__ */ React.createElement("input", { type: "number", value: increaseFlat, onChange: (e) => setIncreaseFlat(e.target.value), className: "mx-2 w-20 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("flat"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply $ increase"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium ml-2" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: increaseEffectiveDate, onChange: (e) => setIncreaseEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }))))), /* @__PURE__ */ React.createElement("input", { type: "text", value: filter, onChange: (e) => setFilter(e.target.value), placeholder: "Search by site # or customer name\u2026", className: "w-full mb-3 border border-[#E2DED5] rounded-lg px-3 py-2 text-sm bg-white" }), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-8" }), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Current Fee"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Upcoming Change"))), /* @__PURE__ */ React.createElement("tbody", null, filteredSites.map((s) => {
+    const owner = getSiteOwner(db, s.id);
+    const currentRate = getCurrentRate(s);
+    const upcoming = getUpcomingRate(s);
+    return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: selected.has(s.id), onChange: () => toggleSelect(s.id) })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 font-semibold text-[#1E1A13]" }, s.number), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement("input", { type: "number", value: currentRate || "", onChange: (e) => updateFee(s.id, e.target.value === "" ? 0 : Number(e.target.value)), placeholder: "0.00", className: "w-28 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, upcoming ? `${formatPrice(upcoming.amount)}/mo on ${upcoming.date}` : "\u2014"));
+  })))));
+}
+function SystemHealthView({ db, persist }) {
+  const actor = useCurrentActor();
+  const [versionNote, setVersionNote] = useState("");
+  const emailMonthKey = currentMonthKey();
+  const emailUsage = db.emailUsage || {};
+  const emailsUsedThisMonth = emailUsage.month === emailMonthKey ? emailUsage.count || 0 : 0;
+  const emailLimit = ((db.settings || {}).emailMonthlyLimit) || 200;
+  const emailPct = Math.min(100, Math.round(emailsUsedThisMonth / emailLimit * 100));
+  const zohoUsed = ((db.settings || {}).zohoFlowUsedThisMonth) || 0;
+  const zohoLimit = ((db.settings || {}).zohoFlowMonthlyLimit) || 100;
+  const zohoPct = Math.min(100, Math.round(zohoUsed / zohoLimit * 100));
+  const toneFor = (pct) => pct >= 90 ? "text-[#a8532a]" : pct >= 60 ? "text-[#9A6B1F]" : "text-[#28633C]";
+  const barToneFor = (pct) => pct >= 90 ? "bg-[#a8532a]" : pct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
+  const recordCounts = [
+    { label: "Customers", count: (db.customers || []).length },
+    { label: "Sites", count: (db.sites || []).length },
+    { label: "Cottages", count: (db.cottages || []).length },
+    { label: "Work Orders", count: (db.workOrders || []).length },
+    { label: "Quotes", count: (db.quotes || []).length },
+    { label: "Invoices", count: (db.invoices || []).length },
+    { label: "Cottage Orders", count: (db.cottageOrders || []).length },
+    { label: "Consignment Listings", count: (db.consignmentListings || []).length },
+    { label: "Sunspace Orders", count: (db.sunspaceOrders || []).length },
+    { label: "Winterizing Requests", count: (db.winterizingRequests || []).length },
+    { label: "Activity Log Entries", count: (db.activityLog || []).length }
+  ];
+  const estimatedBytes = JSON.stringify(db).length;
+  const estimatedMB = estimatedBytes / (1024 * 1024);
+  const firestoreFreeGB = 1;
+  const storagePct = Math.min(100, (estimatedMB / 1024 / firestoreFreeGB * 100));
+  const versionLog = db.appVersionLog || [];
+  const errorLog = db.systemErrorLog || [];
+  const updateSetting = (key, value) => {
+    persist({ ...db, settings: { ...db.settings, [key]: value } });
+  };
+  const addVersionNote = () => {
+    if (!versionNote.trim()) return;
+    const entry = { id: uid(), date: todayISO(), note: versionNote.trim() };
+    const appVersionLog = [entry, ...versionLog].slice(0, 50);
+    const activityLog = addLog(db, actor, `Logged app update: ${versionNote.trim()}`);
+    persist({ ...db, appVersionLog, activityLog });
+    setVersionNote("");
+  };
+  const clearErrors = () => {
+    persist({ ...db, systemErrorLog: [] });
+  };
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "System Health & Alerts"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 200), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS free plan: "), "200 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
+}
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
@@ -6922,13 +7245,17 @@ const TABS = [
   { key: "sites", label: "Sites", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
   { key: "calendar", label: "Calendar", group: "service" },
-  { key: "staff", label: "Staff", group: "service" },
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
   { key: "salesreport", label: "Sales Report", group: "sales" },
   { key: "cottageorders", label: "New Cottage Orders", group: "sales" },
   { key: "consignments", label: "Consignment Listings", group: "sales" },
   { key: "sunspace", label: "Sunspace Accessories", group: "sales" },
-  { key: "prospects", label: "Prospects / Waitlist", group: "sales" }
+  { key: "prospects", label: "Prospects / Waitlist", group: "sales" },
+  { key: "admindashboard", label: "Admin Dashboard", group: "admin" },
+  { key: "adminreports", label: "Reports", group: "admin" },
+  { key: "seasonalfees", label: "Seasonal Fees", group: "admin" },
+  { key: "systemhealth", label: "System Health", group: "admin" },
+  { key: "staff", label: "Staff", group: "admin" }
 ];
 function AppContent() {
   const { db, loading, error, persist, retry } = useDb();
@@ -7015,7 +7342,7 @@ function AppContent() {
   const isAdminOrManager = isAdmin || isManager;
   const allowedTabKeys = isAdmin ? null : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
   const visibleGroup = isAdmin ? mode : "service";
-  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : "dashboard";
+  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
@@ -7047,7 +7374,7 @@ function AppContent() {
   };
   const switchMode = (nextMode) => {
     setMode(nextMode);
-    setTab(nextMode === "sales" ? "salesdashboard" : "dashboard");
+    setTab(nextMode === "sales" ? "salesdashboard" : nextMode === "admin" ? "admindashboard" : "dashboard");
     setMobileNavOpen(false);
   };
   const goToServiceTab = (key) => {
@@ -7088,6 +7415,13 @@ function AppContent() {
         className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "sales" ? "bg-[#C1652F] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
       },
       "Sales"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => switchMode("admin"),
+        className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "admin" ? "bg-[#5B4B8A] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+      },
+      "Admin"
     )),
     /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key)).map((t) => /* @__PURE__ */ React.createElement(
       "button",
@@ -7110,7 +7444,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
