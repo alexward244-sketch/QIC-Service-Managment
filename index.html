@@ -801,8 +801,28 @@ function SitesView({ db, persist, readOnly }) {
   };
   const bulkEdit = (field, value, ids) => {
     const idSet = new Set(ids);
-    const sites = db.sites.map((s) => idSet.has(s.id) ? { ...s, [field]: value } : s);
-    const fieldLabel = { section: "section", hookups: "hookups", notes: "notes" }[field] || field;
+    let sites;
+    let fieldLabel;
+    if (field === "tags_add") {
+      const tag = value.trim();
+      sites = db.sites.map((s) => {
+        if (!idSet.has(s.id) || !tag) return s;
+        const existing = s.tags || [];
+        if (existing.some((t) => t.toLowerCase() === tag.toLowerCase())) return s;
+        return { ...s, tags: [...existing, tag] };
+      });
+      fieldLabel = `tag "${value.trim()}" (added)`;
+    } else if (field === "tags_remove") {
+      const tag = value.trim();
+      sites = db.sites.map((s) => {
+        if (!idSet.has(s.id) || !tag) return s;
+        return { ...s, tags: (s.tags || []).filter((t) => t.toLowerCase() !== tag.toLowerCase()) };
+      });
+      fieldLabel = `tag "${value.trim()}" (removed)`;
+    } else {
+      sites = db.sites.map((s) => idSet.has(s.id) ? { ...s, [field]: value } : s);
+      fieldLabel = { section: "section", hookups: "hookups", notes: "notes" }[field] || field;
+    }
     const activityLog = addLog(db, actor, `Bulk-updated ${fieldLabel} for ${ids.length} site${ids.length === 1 ? "" : "s"}`);
     persist({ ...db, sites, activityLog });
     setBulkEditOpen(false);
@@ -953,15 +973,15 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
     if (selected.size === 0) return;
     onSave(field, value, Array.from(selected));
   };
-  const fieldLabel = { section: "Section", hookups: "Hookups", notes: "Notes" }[field];
+  const fieldLabel = { section: "Section", hookups: "Hookups", notes: "Notes", tags_add: "Tag to Add", tags_remove: "Tag to Remove" }[field];
   const sortedSites = sites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Set one field to a value, then check off which sites should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => setField(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "section" }, "Section"), /* @__PURE__ */ React.createElement("option", { value: "hookups" }, "Hookups"), /* @__PURE__ */ React.createElement("option", { value: "notes" }, "Notes"))), /* @__PURE__ */ React.createElement(Field, { label: `New ${fieldLabel} Value` }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Set one field to a value, then check off which sites should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => setField(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "section" }, "Section"), /* @__PURE__ */ React.createElement("option", { value: "hookups" }, "Hookups"), /* @__PURE__ */ React.createElement("option", { value: "notes" }, "Notes"), /* @__PURE__ */ React.createElement("option", { value: "tags_add" }, "Tags (add)"), /* @__PURE__ */ React.createElement("option", { value: "tags_remove" }, "Tags (remove)"))), /* @__PURE__ */ React.createElement(Field, { label: `New ${fieldLabel} Value` }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
       value,
       onChange: (e) => setValue(e.target.value),
-      placeholder: field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : "e.g. Access notes",
+      placeholder: field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : field === "tags_add" || field === "tags_remove" ? "e.g. Pebble Beach" : "e.g. Access notes",
       autoFocus: true
     }
   ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Apply to (", selected.size, " selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: selectAll, className: "text-[#377249] hover:underline font-medium" }, "Select All"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: clearAll, className: "text-[#75716A] hover:underline font-medium" }, "Clear"))), /* @__PURE__ */ React.createElement("div", { className: "max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, sortedSites.map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
@@ -972,7 +992,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
       onChange: () => toggle(s.id),
       className: "accent-[#377249]"
     }
-  ), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, "Site ", s.number)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] truncate max-w-[10rem]" }, s[field] || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, "Site ", s.number)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] truncate max-w-[10rem]" }, field === "tags_add" || field === "tags_remove" ? (s.tags || []).join(", ") || "\u2014" : s[field] || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
