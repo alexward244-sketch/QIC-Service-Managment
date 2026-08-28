@@ -7154,7 +7154,7 @@ function SeasonalFeesView({ db, persist }) {
   const applyBulkSet = () => {
     const amount = Number(bulkAmount);
     if (!Number.isFinite(amount) || amount < 0 || selected.size === 0 || !bulkEffectiveDate) return;
-    const nextSites = db.sites.map((s) => selected.has(s.id) ? { ...s, seasonalFeeHistory: upsertRateHistory(s, bulkEffectiveDate, amount), seasonalFee: bulkEffectiveDate <= todayISO() ? amount : s.seasonalFee } : s);
+    const nextSites = db.sites.map((s) => selected.has(s.id) ? { ...s, seasonalFeeHistory: upsertRateHistory(s, bulkEffectiveDate, amount), seasonalFee: bulkEffectiveDate <= todayISO() ? amount : s.seasonalFee != null ? s.seasonalFee : null } : s);
     const activityLog = addLog(db, actor, `Set seasonal fee to ${formatPrice(amount)}/mo for ${selected.size} site(s), effective ${bulkEffectiveDate}`);
     persist({ ...db, sites: nextSites, activityLog });
     setBulkAmount("");
@@ -7169,7 +7169,7 @@ function SeasonalFeesView({ db, persist }) {
       if (!targetIds.has(s.id)) return s;
       const current = getCurrentRate(s);
       const updated = Math.round((mode === "pct" ? current * (1 + raw / 100) : current + raw) * 100) / 100;
-      return { ...s, seasonalFeeHistory: upsertRateHistory(s, increaseEffectiveDate, updated), seasonalFee: increaseEffectiveDate <= todayISO() ? updated : s.seasonalFee };
+      return { ...s, seasonalFeeHistory: upsertRateHistory(s, increaseEffectiveDate, updated), seasonalFee: increaseEffectiveDate <= todayISO() ? updated : s.seasonalFee != null ? s.seasonalFee : null };
     });
     const label = mode === "pct" ? `${raw}%` : formatPrice(raw);
     const activityLog = addLog(db, actor, `Scheduled seasonal fee increase of ${label} for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
