@@ -253,6 +253,8 @@ const RATE_OPTIONS = [
 ];
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const PAYMENT_STATUS = ["Paid", "Invoice"];
+const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho"];
+const TANK_PART_NAMES = ["20lb Propane Tank Filled", "30lb Propane Tank Filled", "40lb Propane Tank Filled", "100lb Propane Refill Filled"];
 const SALUTATION_OPTIONS = ["", "Mr.", "Mrs.", "Ms.", "Dr.", "Mx."];
 const PHONE_TYPE_OPTIONS = ["Mobile", "Work", "Home"];
 const CUSTOMER_LANGUAGE_OPTIONS = ["English", "French"];
@@ -1003,6 +1005,16 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
   const [field, setField] = useState("section");
   const [value, setValue] = useState("");
   const [selected, setSelected] = useState(() => /* @__PURE__ */ new Set());
+  const [tagFilter, setTagFilter] = useState(() => /* @__PURE__ */ new Set());
+  const allTags = Array.from(/* @__PURE__ */ new Set(sites.flatMap((s) => s.tags || []))).sort();
+  const toggleTagFilter = (tag) => {
+    setTagFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
   const toggle = (id) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -1011,14 +1023,15 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
       return next;
     });
   };
-  const selectAll = () => setSelected(new Set(sites.map((s) => s.id)));
+  const sortedSites = sites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const visibleSites = tagFilter.size === 0 ? sortedSites : sortedSites.filter((s) => Array.from(tagFilter).every((t) => (s.tags || []).includes(t)));
+  const selectAll = () => setSelected(new Set(visibleSites.map((s) => s.id)));
   const clearAll = () => setSelected(/* @__PURE__ */ new Set());
   const submit = () => {
     if (selected.size === 0) return;
     onSave(field, value, Array.from(selected));
   };
   const fieldLabel = { section: "Section", hookups: "Hookups", notes: "Notes", tags_add: "Tag to Add", tags_remove: "Tag to Remove" }[field];
-  const sortedSites = sites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Set one field to a value, then check off which sites should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => setField(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "section" }, "Section"), /* @__PURE__ */ React.createElement("option", { value: "hookups" }, "Hookups"), /* @__PURE__ */ React.createElement("option", { value: "notes" }, "Notes"), /* @__PURE__ */ React.createElement("option", { value: "tags_add" }, "Tags (add)"), /* @__PURE__ */ React.createElement("option", { value: "tags_remove" }, "Tags (remove)"))), /* @__PURE__ */ React.createElement(Field, { label: `New ${fieldLabel} Value` }, /* @__PURE__ */ React.createElement(
     "input",
     {
@@ -1028,7 +1041,16 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
       placeholder: field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : field === "tags_add" || field === "tags_remove" ? "e.g. Pebble Beach" : "e.g. Access notes",
       autoFocus: true
     }
-  ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Apply to (", selected.size, " selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: selectAll, className: "text-[#377249] hover:underline font-medium" }, "Select All"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: clearAll, className: "text-[#75716A] hover:underline font-medium" }, "Clear"))), /* @__PURE__ */ React.createElement("div", { className: "max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, sortedSites.map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+  ))), allTags.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold block mb-1.5" }, "Filter Sites By Tag", tagFilter.size > 0 ? ` (${tagFilter.size} selected)` : ""), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, allTags.map((tag) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: tag,
+      type: "button",
+      onClick: () => toggleTagFilter(tag),
+      className: `px-2.5 py-1 rounded-full text-xs font-medium border transition ${tagFilter.has(tag) ? "bg-[#377249] text-white border-[#377249]" : "bg-white text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
+    },
+    tag
+  )), tagFilter.size > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTagFilter(/* @__PURE__ */ new Set()), className: "px-2.5 py-1 rounded-full text-xs font-medium text-[#75716A] hover:underline" }, "Clear filter"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Apply to (", selected.size, " selected", tagFilter.size > 0 ? `, ${visibleSites.length} shown` : "", ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: selectAll, className: "text-[#377249] hover:underline font-medium" }, tagFilter.size > 0 ? "Select All Shown" : "Select All"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: clearAll, className: "text-[#75716A] hover:underline font-medium" }, "Clear"))), /* @__PURE__ */ React.createElement("div", { className: "max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, visibleSites.map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "checkbox",
@@ -6335,7 +6357,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), !initial && /propane/i.test(`${title} ${workGroup}`) && /* @__PURE__ */ React.createElement("div", { className: "rounded-md border border-[#F5E3D9] bg-[#FBEEDA] px-3 py-2 mb-3 text-xs text-[#9A6B1F]" }, "Propane requests are tracked on the ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, "Propane tab"), " \u2014 it schedules the 10am/4pm run and tracks payment. Consider creating this there instead."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
@@ -6606,6 +6628,22 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   const [requestedDate, setRequestedDate] = useState((initial == null ? void 0 : initial.requestedDate) || todayISO());
   const [run, setRun] = useState((initial == null ? void 0 : initial.run) || defaultPropaneRun((initial == null ? void 0 : initial.requestedDate) || todayISO()));
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const [payment, setPayment] = useState((initial == null ? void 0 : initial.payment) || "");
+  const [paymentMethod, setPaymentMethod] = useState((initial == null ? void 0 : initial.paymentMethod) || "");
+  const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
+  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
+  const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
+  const setTankQuantity = (partId, qty) => {
+    setPartsUsed((items) => {
+      const n = Math.max(0, Math.floor(Number(qty) || 0));
+      const without = items.filter((pu) => pu.partId !== partId);
+      return n > 0 ? [...without, { partId, quantity: n }] : without;
+    });
+  };
+  const choosePayment = (val) => {
+    setPayment(val);
+    if (val !== "Paid") setPaymentMethod("");
+  };
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -6656,6 +6694,9 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
       requestedDate,
       run,
       notes: notes.trim(),
+      payment,
+      paymentMethod: payment === "Paid" ? paymentMethod : "",
+      partsUsed,
       completed: (initial == null ? void 0 : initial.completed) || false,
       completedDate: (initial == null ? void 0 : initial.completedDate) || null,
       workOrderId: (initial == null ? void 0 : initial.workOrderId) || null,
@@ -6694,7 +6735,48 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
       className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${run === r ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
     },
     r
-  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions" })), tankParts.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Tanks" }, /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, tankParts.map((part) => /* @__PURE__ */ React.createElement("div", { key: part.id, className: "flex items-center justify-between gap-3 border border-[#E2DED5] rounded-md px-3 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13]" }, part.name, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, " \u2014 ", formatPrice(part.price))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTankQuantity(part.id, tankQuantity(part.id) - 1),
+      className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
+    },
+    "\u2212"
+  ), /* @__PURE__ */ React.createElement("span", { className: "w-5 text-center text-sm font-medium" }, tankQuantity(part.id)), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTankQuantity(part.id, tankQuantity(part.id) + 1),
+      className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
+    },
+    "+"
+  ))))), TANK_PART_NAMES.some((name) => !tankParts.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mt-1" }, "Some tank sizes aren't set up in Parts yet.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => choosePayment("Paid"),
+      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${payment === "Paid" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "Paid"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => choosePayment("Invoice"),
+      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${payment === "Invoice" ? "bg-[#9A6B1F] text-[#F9F5EC] border-[#9A6B1F]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "To Invoice (Accounting)"
+  )), payment === "Paid" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-2" }, PROPANE_PAYMENT_METHODS.map((m) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: m,
+      type: "button",
+      onClick: () => setPaymentMethod(m),
+      className: `flex-1 px-3 py-1.5 rounded-md text-xs font-medium border ${paymentMethod === m ? "bg-[#28633C] text-[#F9F5EC] border-[#28633C]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    m
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -7276,7 +7358,12 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRu
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
   const otherRun = request.run === "10am" ? "4pm" : "10am";
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, cottage ? cottage.name : "Unlinked cottage", site ? ` \u2014 Site ${site.number}` : ""), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
+  const paymentLabel = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
+  const tankSummary = (request.partsUsed || []).map((pu) => {
+    const part = (db.parts || []).find((p) => p.id === pu.partId);
+    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
+  }).filter(Boolean).join(", ");
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
 }
 function PropaneView({ db, persist }) {
   const [modal, setModal] = useState(null);
@@ -7316,10 +7403,12 @@ function PropaneView({ db, persist }) {
   };
   const complete = (request) => {
     const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const paymentNote = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "method not set"}` : request.payment === "Invoice" ? "To be invoiced by accounting" : "";
+    const description = [request.notes, paymentNote].filter(Boolean).join(paymentNote ? "\n\n" : "");
     const wo = {
       id: uid(),
       title: "Propane Fill",
-      description: request.notes || "",
+      description,
       siteId: cottage ? cottage.siteId : null,
       cottageId: request.cottageId || null,
       customerId: request.customerId || null,
@@ -7329,10 +7418,10 @@ function PropaneView({ db, persist }) {
       workGroup: "",
       date: todayISO(),
       completedDate: todayISO(),
-      partsUsed: [],
+      partsUsed: request.partsUsed || [],
       laborHours: "",
       laborRateType: "N/A",
-      paymentStatus: ""
+      paymentStatus: request.payment || ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
     const nextRequests = requests.map((r) => r.id === request.id ? updated : r);
