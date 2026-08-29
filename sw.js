@@ -1,12 +1,52 @@
 // Bump this whenever you deploy changes to index.html so devices pick up the new version.
-const CACHE_NAME = "qic-app-shell-v1";
+const CACHE_NAME = "qic-app-shell-v4";
+
+// Firebase Messaging needs its own SDK loaded inside the service worker context,
+// since this file runs separately from index.html and can't reuse its Firebase instance.
+importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js");
+
+firebase.initializeApp({
+  apiKey: "AIzaSyDNo-dN4e7uw3C3rdlWZ68PXWxUha7ankI",
+  authDomain: "qic-service-management-system.firebaseapp.com",
+  projectId: "qic-service-management-system",
+  storageBucket: "qic-service-management-system.firebasestorage.app",
+  messagingSenderId: "559612881987",
+  appId: "1:559612881987:web:d91ce4fdb9dfa2f391f8f6"
+});
+
+const messaging = firebase.messaging();
+
+// Fires when a push arrives while the app is closed or in the background.
+messaging.onBackgroundMessage((payload) => {
+  const title = (payload.notification && payload.notification.title) || "QIC Service";
+  const body = (payload.notification && payload.notification.body) || "";
+  self.registration.showNotification(title, {
+    body,
+    icon: "icon-192.png",
+    badge: "icon-192.png"
+  });
+});
+
+// Tapping the notification focuses an already-open tab instead of opening a duplicate one.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if ("focus" in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow("./index.html");
+    })
+  );
+});
 
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 // Firebase/Firestore endpoints stream live data and shouldn't be intercepted or cached —

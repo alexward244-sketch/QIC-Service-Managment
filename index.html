@@ -33,6 +33,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -139,6 +140,7 @@ const emptyDb = () => ({
   emailUsage: { month: "", count: 0 },
   campgroundMap: null,
   userRoles: {},
+  pushTokens: {},
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5, commissionPercent: 8 }
 });
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -795,7 +797,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
-function SitesView({ db, persist, readOnly }) {
+function SitesView({ db, persist, readOnly, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -803,6 +805,9 @@ function SitesView({ db, persist, readOnly }) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState(() => /* @__PURE__ */ new Set());
+  useEffect(() => {
+    if (filterPrefill) setFilter(filterPrefill.term);
+  }, [filterPrefill && filterPrefill.ts]);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const toggleSection = (name) => {
@@ -1542,10 +1547,13 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
-function CottagesView({ db, persist, readOnly }) {
+function CottagesView({ db, persist, readOnly, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  useEffect(() => {
+    if (filterPrefill) setFilter(filterPrefill.term);
+  }, [filterPrefill && filterPrefill.ts]);
   const [detailId, setDetailId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
@@ -2044,10 +2052,13 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 
-function CustomersView({ db, persist }) {
+function CustomersView({ db, persist, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  useEffect(() => {
+    if (filterPrefill) setFilter(filterPrefill.term);
+  }, [filterPrefill && filterPrefill.ts]);
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const confirm = useConfirm();
@@ -2959,7 +2970,74 @@ function StatCard({ label, value, onClick, tone }) {
     /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
   );
 }
-function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
+function DashboardSearch({ db, onJump }) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const term = q.trim().toLowerCase();
+  const results = useMemo(() => {
+    if (!term) return [];
+    const out = [];
+    for (const c of db.customers) {
+      const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.name2 || ""} ${c.phone2 || ""} ${c.email2 || ""} ${c.address || ""}`.toLowerCase();
+      if (hay.includes(term)) out.push({ type: "Customer", label: c.name, sub: c.phone || c.email || "", tab: "customers", term: c.name });
+      if (out.filter((r) => r.type === "Customer").length >= 4) break;
+    }
+    for (const s of db.sites) {
+      const hay = `${s.number} ${s.section || ""} ${(s.tags || []).join(" ")} ${s.hookups || ""} ${s.notes || ""}`.toLowerCase();
+      if (hay.includes(term)) out.push({ type: "Site", label: `Site ${s.number}`, sub: s.section || "", tab: "sites", term: s.number });
+      if (out.filter((r) => r.type === "Site").length >= 4) break;
+    }
+    for (const w of db.workOrders) {
+      const site = db.sites.find((s) => s.id === w.siteId);
+      const hay = `${w.title} ${w.description || ""} ${(site == null ? void 0 : site.number) || ""} ${w.assignedTo || ""}`.toLowerCase();
+      if (hay.includes(term)) out.push({ type: "Work Order", label: w.title, sub: (site == null ? void 0 : site.number) ? `Site ${site.number}` : w.status, tab: "workorders", term: w.title });
+      if (out.filter((r) => r.type === "Work Order").length >= 4) break;
+    }
+    for (const qt of db.quotes || []) {
+      const site = db.sites.find((s) => s.id === qt.siteId);
+      const customer = db.customers.find((c) => c.id === qt.customerId);
+      const hay = `${qt.title} ${(site == null ? void 0 : site.number) || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
+      if (hay.includes(term)) out.push({ type: "Quote", label: qt.title, sub: (customer == null ? void 0 : customer.name) || "", tab: "quotes", term: qt.title });
+      if (out.filter((r) => r.type === "Quote").length >= 4) break;
+    }
+    for (const cot of db.cottages || []) {
+      const hay = `${cot.name} ${cot.color || ""} ${cot.features || ""} ${cot.year || ""} ${cot.modelNumber || ""} ${cot.serialNumber || ""}`.toLowerCase();
+      if (hay.includes(term)) out.push({ type: "Cottage", label: cot.name, sub: cot.year || cot.modelNumber || "", tab: "cottages", term: cot.name });
+      if (out.filter((r) => r.type === "Cottage").length >= 4) break;
+    }
+    return out.slice(0, 12);
+  }, [term, db.customers, db.sites, db.workOrders, db.quotes, db.cottages]);
+  const pick = (r) => {
+    onJump(r.tab, r.term);
+    setQ("");
+    setOpen(false);
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "relative w-full sm:w-72" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls,
+      placeholder: "Search customers, sites, work orders, quotes\u2026",
+      value: q,
+      onChange: (e) => {
+        setQ(e.target.value);
+        setOpen(true);
+      },
+      onFocus: () => setOpen(true),
+      onBlur: () => setTimeout(() => setOpen(false), 150)
+    }
+  ), open && term && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 w-full bg-white border border-[#E2DED5] rounded-md shadow-lg max-h-80 overflow-y-auto" }, results.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "px-3 py-2.5 text-sm text-[#75716A]" }, "No matches.") : results.map((r, i) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: i,
+      onMouseDown: () => pick(r),
+      className: "w-full text-left px-3 py-2 hover:bg-[#F1EEE9] border-b border-[#F1EEE9] last:border-b-0"
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#377249] font-medium" }, r.type),
+    /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13]" }, r.label),
+    r.sub && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, r.sub)
+  ))));
+}
+function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys }) {
   var _a, _b;
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
@@ -2989,7 +3067,7 @@ function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
   const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
   const daysSinceBackup = db.lastBackupAt ? Math.floor((Date.now() - new Date(db.lastBackupAt).getTime()) / (24 * 60 * 60 * 1e3)) : null;
   const backupStale = daysSinceBackup === null || daysSinceBackup >= 14;
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-start justify-between gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), /* @__PURE__ */ React.createElement(DashboardSearch, { db, onJump: onSearchJump })), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => exportDatabase(db, persist),
@@ -3114,10 +3192,13 @@ const QUOTE_STATUS_STYLES = {
   Accepted: "bg-[#377249]/10 text-[#377249]",
   Declined: "bg-[#F5E3D9] text-[#a8532a]"
 };
-function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice }) {
+function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPrefill }) {
   var _a, _b, _c, _d, _e, _f;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
+  useEffect(() => {
+    if (filterPrefill) setFilter(filterPrefill.term);
+  }, [filterPrefill && filterPrefill.ts]);
   const [emailStatus, setEmailStatus] = useState({});
   const [commentsFor, setCommentsFor] = useState(null);
   const [toast, setToast] = useState(null);
@@ -5585,7 +5666,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
     ))
   );
 }
-function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill }) {
+function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
   var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
   useEffect(() => {
@@ -5595,6 +5676,9 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
     }
   }, [workOrderPrefill]);
   const [filter, setFilter] = useState("");
+  useEffect(() => {
+    if (filterPrefill) setFilter(filterPrefill.term);
+  }, [filterPrefill && filterPrefill.ts]);
   const [groupFilter, setGroupFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -7725,6 +7809,22 @@ function SystemHealthView({ db, persist }) {
   };
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "System Health & Alerts"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 200), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS free plan: "), "200 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
 }
+function ParkSubNav({ active, onSelect, allowedTabKeys }) {
+  const items = [
+    { key: "customers", label: "Customers" },
+    { key: "sites", label: "Sites" },
+    { key: "cottages", label: "Cottages" }
+  ].filter((it) => !allowedTabKeys || allowedTabKeys.has(it.key));
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-5 flex-wrap" }, items.map((it) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: it.key,
+      onClick: () => onSelect(it.key),
+      className: `px-4 py-1.5 rounded-full text-sm font-semibold border transition ${active === it.key ? "bg-[#377249] text-white border-[#377249]" : "bg-white text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
+    },
+    it.label
+  )));
+}
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
@@ -7732,9 +7832,10 @@ const TABS = [
   { key: "workorders", label: "Work Orders", group: "service" },
   { key: "propane", label: "Propane", group: "service" },
   { key: "parts", label: "Parts", group: "service" },
-  { key: "customers", label: "Customers", group: "service" },
-  { key: "cottages", label: "Cottages", group: "service" },
-  { key: "sites", label: "Sites", group: "service" },
+  { key: "thepark", label: "The Park", group: "service" },
+  { key: "customers", label: "Customers", group: "service", hidden: true },
+  { key: "cottages", label: "Cottages", group: "service", hidden: true },
+  { key: "sites", label: "Sites", group: "service", hidden: true },
   { key: "map", label: "Site Map", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
   { key: "calendar", label: "Calendar", group: "service" },
@@ -7761,6 +7862,49 @@ function AppContent() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [manageRolesOpen, setManageRolesOpen] = useState(false);
+  const [notifStatus, setNotifStatus] = useState(
+    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
+  );
+  const VAPID_KEY = "REPLACE_WITH_YOUR_VAPID_KEY";
+  const enablePushNotifications = async () => {
+    try {
+      if (typeof Notification === "undefined") {
+        alert("This browser doesn't support notifications.");
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      setNotifStatus(permission);
+      if (permission !== "granted") return;
+      const registration = await navigator.serviceWorker.ready;
+      const messaging = firebase.messaging();
+      const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+      if (token) {
+        const key = (actor || "").trim().toLowerCase();
+        const current = dbRef.current || {};
+        const existingTokens = (current.pushTokens || {})[key] || [];
+        if (!existingTokens.includes(token)) {
+          const pushTokens = { ...current.pushTokens || {}, [key]: [...existingTokens, token] };
+          persistRef.current({ ...current, pushTokens });
+        }
+      }
+    } catch (err) {
+      console.warn("Push setup failed:", err);
+      logSystemError(dbRef.current, persistRef.current, "Push Notifications", (err == null ? void 0 : err.message) || "Failed to enable notifications");
+    }
+  };
+  useEffect(() => {
+    if (typeof Notification === "undefined" || notifStatus !== "granted") return;
+    try {
+      const messaging = firebase.messaging();
+      messaging.onMessage((payload) => {
+        var _a, _b;
+        const title = ((_a = payload.notification) == null ? void 0 : _a.title) || "Notification";
+        const body = ((_b = payload.notification) == null ? void 0 : _b.body) || "";
+        new Notification(title, { body, icon: "icon-192.png" });
+      });
+    } catch (e) {
+    }
+  }, [notifStatus]);
   const importInputRef = useRef(null);
   const actor = useCurrentActor();
   const generatedRef = useRef(false);
@@ -7864,9 +8008,17 @@ function AppContent() {
     }
     setImportPending(null);
   };
+  const [parkTab, setParkTab] = useState("customers");
+  const PARK_KEYS = ["customers", "sites", "cottages"];
   const selectTab = (key) => {
     setTab(key);
+    if (PARK_KEYS.includes(key)) setParkTab(key);
     setMobileNavOpen(false);
+  };
+  const [searchPrefill, setSearchPrefill] = useState(null);
+  const jumpToSearchResult = (tabKey, term) => {
+    setSearchPrefill({ tab: tabKey, term, ts: Date.now() });
+    selectTab(tabKey);
   };
   const switchMode = (nextMode) => {
     setMode(nextMode);
@@ -7924,17 +8076,28 @@ function AppContent() {
       },
       "Admin"
     )),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key)).map((t) => /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !t.hidden).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key === "thepark" ? parkTab : t.key)).map((t) => {
+      const isActive = t.key === "thepark" ? PARK_KEYS.includes(effectiveTab) : effectiveTab === t.key;
+      return /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          key: t.key,
+          onClick: () => selectTab(t.key === "thepark" ? parkTab : t.key),
+          className: `flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${isActive ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
+        },
+        /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${isActive ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
+        t.label
+      );
+    })),
+    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, notifStatus !== "unsupported" && /* @__PURE__ */ React.createElement(
       "button",
       {
-        key: t.key,
-        onClick: () => selectTab(t.key),
-        className: `flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${effectiveTab === t.key ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
+        onClick: notifStatus === "granted" ? void 0 : enablePushNotifications,
+        disabled: notifStatus === "granted" || notifStatus === "denied",
+        className: `w-full text-left text-[11px] font-semibold px-2 py-1.5 rounded-md ${notifStatus === "granted" ? "text-[#28633C]" : notifStatus === "denied" ? "text-[#9A968D]" : "text-[#377249] hover:bg-[#F1EEE9]"}`
       },
-      /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${effectiveTab === t.key ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
-      t.label
-    ))),
-    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      notifStatus === "granted" ? "\u2713 Notifications on" : notifStatus === "denied" ? "Notifications blocked (check browser settings)" : "Enable Notifications"
+    ), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       var _a;
       return (_a = importInputRef.current) == null ? void 0 : _a.click();
     }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setManageRolesOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Manage Access"), /* @__PURE__ */ React.createElement(
@@ -7945,7 +8108,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null) }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
