@@ -5,16 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Campground Maintenance</title>
 
-<!-- PWA: installability -->
-<link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#377249" />
-<link rel="icon" href="icon-192.png" />
-<!-- iOS home screen support (iOS ignores manifest.json for icons/standalone mode) -->
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="QIC Service" />
-<link rel="apple-touch-icon" href="icon-192.png" />
-
 <!-- React -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -32,8 +22,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -48,7 +36,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-const { useState, useEffect, useCallback, useRef, useMemo } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 const firebaseConfig = {
   apiKey: "AIzaSyDNo-dN4e7uw3C3rdlWZ68PXWxUha7ankI",
   authDomain: "qic-service-management-system.firebaseapp.com",
@@ -59,17 +47,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db_ = firebase.firestore();
-// Lets the app read/write to a local on-device cache when signal is spotty or absent,
-// then automatically syncs any changes to Firestore once a connection is available again.
-try {
-  db_.enablePersistence({ synchronizeTabs: true }).catch((err) => {
-    console.warn("Offline persistence not enabled:", err && err.code);
-  });
-} catch (e) {
-  console.warn("Offline persistence not supported in this browser:", e);
-}
 const DOC_REF = db_.collection("campground").doc("data");
-const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_SERVICE_ID = "service_ujhwvid";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
@@ -138,18 +116,15 @@ const emptyDb = () => ({
   serviceAppointments: [],
   invoices: [],
   emailUsage: { month: "", count: 0 },
-  campgroundMap: null,
   userRoles: {},
-  pushTokens: {},
   settings: { taxRate: 13, laborRate: 65, shopSuppliesPercent: 5, commissionPercent: 8 }
 });
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
-const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "customers"]);
-const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "servicereports"]);
-const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "consignments", "sunspace", "prospects"]);
+const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "sites", "cottages", "winterizing", "propane", "customers"]);
+const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "staff"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
   const hasAnyAdmin = Object.values(roles).some((r) => r === "admin");
@@ -178,9 +153,6 @@ const TRASH_COLLECTION = {
   sunspaceOrder: "sunspaceOrders",
   serviceAppointment: "serviceAppointments",
   invoice: "invoices",
-  prospect: "prospects",
-  cottageOrder: "cottageOrders",
-  consignmentListing: "consignmentListings",
 };
 const TRASH_RETENTION_DAYS = 30;
 
@@ -253,8 +225,6 @@ const RATE_OPTIONS = [
 ];
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const PAYMENT_STATUS = ["Paid", "Invoice"];
-const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho"];
-const TANK_PART_NAMES = ["20lb Propane Tank Filled", "30lb Propane Tank Filled", "40lb Propane Tank Filled", "100lb Propane Refill Filled"];
 const SALUTATION_OPTIONS = ["", "Mr.", "Mrs.", "Ms.", "Dr.", "Mx."];
 const PHONE_TYPE_OPTIONS = ["Mobile", "Work", "Home"];
 const CUSTOMER_LANGUAGE_OPTIONS = ["English", "French"];
@@ -493,11 +463,6 @@ function useCurrentActor() {
   const email = React.useContext(CurrentUserContext);
   return email || "Unknown";
 }
-function logSystemError(db, persist, source, message) {
-  const entry = { id: uid(), ts: Date.now(), source, message };
-  const systemErrorLog = [entry, ...db.systemErrorLog || []].slice(0, 100);
-  persist({ ...db, systemErrorLog });
-}
 function addLog(db, actor, summary) {
   const entry = { id: uid(), ts: (/* @__PURE__ */ new Date()).toISOString(), actor, summary };
   return [entry, ...db.activityLog || []].slice(0, 200);
@@ -598,9 +563,6 @@ function useDb() {
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
-}
-function IconPin({ className = "" }) {
-  return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M12 21s7-6.2 7-11.5A7 7 0 0 0 5 9.5C5 14.8 12 21 12 21Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "9.5", r: "2.4" }));
 }
 function Field({ label, children }) {
   return /* @__PURE__ */ React.createElement("label", { className: "block mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-1 font-semibold" }, label), children);
@@ -704,23 +666,6 @@ function ConfirmDeleteModal({ label, onConfirm, onCancel, message }) {
     "Yes, delete"
   )));
 }
-function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Send invoice?", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Email invoice ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, invoice.invoiceNumber), " to:"), /* @__PURE__ */ React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-5 space-y-0.5" }, /* @__PURE__ */ React.createElement("li", null, "\u2022 ", customer.name, " \u2014 ", customer.email), accountingEmail && /* @__PURE__ */ React.createElement("li", null, "\u2022 Accounting \u2014 ", accountingEmail)), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: onCancel,
-      style: { padding: "8px 16px", fontSize: 14, borderRadius: 6, color: "#75716A", background: "transparent", border: "1px solid #E2DED5" }
-    },
-    "Cancel"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: onConfirm,
-      style: { padding: "8px 16px", fontSize: 14, borderRadius: 6, color: "#ffffff", backgroundColor: "#377249", fontWeight: 600, border: "none" }
-    },
-    "Yes, send"
-  )));
-}
 function TrashModal({ db, persist, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
@@ -732,16 +677,7 @@ function TrashModal({ db, persist, onClose }) {
     part: "Part",
     staff: "Staff",
     recurringTask: "Recurring Task",
-    workOrderTemplate: "Work Order Template",
-    winterizingRequest: "Winterizing Request",
-    propaneRequest: "Propane Request",
-    salesAppointment: "Sales Appointment",
-    sunspaceOrder: "Sunspace Order",
-    serviceAppointment: "Service Appointment",
-    invoice: "Invoice",
-    prospect: "Prospect",
-    cottageOrder: "Cottage Order",
-    consignmentListing: "Consignment Listing"
+    workOrderTemplate: "Work Order Template"
   })[type] || type;
   const restore = (entry) => {
     const activityLog = addLog(db, actor, `Restored ${labelFor(entry.type).toLowerCase()} "${entry.label}" from trash`);
@@ -796,7 +732,6 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     },
     /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"),
     /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"),
-    /* @__PURE__ */ React.createElement("option", { value: "salesmanager" }, "Sales Manager"),
     /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")
   ), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline", onClick: () => removeRole(email) }, "Remove"))))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 border-t border-[#E2DED5] pt-3" }, /* @__PURE__ */ React.createElement(
     "input",
@@ -806,7 +741,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
       onChange: (e) => setNewEmail(e.target.value),
       placeholder: "email@example.com"
     }
-  ), /* @__PURE__ */ React.createElement("select", { className: inputCls + " w-32", value: newRole, onChange: (e) => setNewRole(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"), /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"), /* @__PURE__ */ React.createElement("option", { value: "salesmanager" }, "Sales Manager"), /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("select", { className: inputCls + " w-32", value: newRole, onChange: (e) => setNewRole(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"), /* @__PURE__ */ React.createElement("option", { value: "manager" }, "Service Manager"), /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: addNew,
@@ -816,7 +751,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
-function SitesView({ db, persist, readOnly, filterPrefill }) {
+function SitesView({ db, persist, readOnly }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -824,9 +759,6 @@ function SitesView({ db, persist, readOnly, filterPrefill }) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState(() => /* @__PURE__ */ new Set());
-  useEffect(() => {
-    if (filterPrefill) setFilter(filterPrefill.term);
-  }, [filterPrefill && filterPrefill.ts]);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const toggleSection = (name) => {
@@ -864,28 +796,8 @@ function SitesView({ db, persist, readOnly, filterPrefill }) {
   };
   const bulkEdit = (field, value, ids) => {
     const idSet = new Set(ids);
-    let sites;
-    let fieldLabel;
-    if (field === "tags_add") {
-      const tag = value.trim();
-      sites = db.sites.map((s) => {
-        if (!idSet.has(s.id) || !tag) return s;
-        const existing = s.tags || [];
-        if (existing.some((t) => t.toLowerCase() === tag.toLowerCase())) return s;
-        return { ...s, tags: [...existing, tag] };
-      });
-      fieldLabel = `tag "${value.trim()}" (added)`;
-    } else if (field === "tags_remove") {
-      const tag = value.trim();
-      sites = db.sites.map((s) => {
-        if (!idSet.has(s.id) || !tag) return s;
-        return { ...s, tags: (s.tags || []).filter((t) => t.toLowerCase() !== tag.toLowerCase()) };
-      });
-      fieldLabel = `tag "${value.trim()}" (removed)`;
-    } else {
-      sites = db.sites.map((s) => idSet.has(s.id) ? { ...s, [field]: value } : s);
-      fieldLabel = { section: "section", hookups: "hookups", notes: "notes" }[field] || field;
-    }
+    const sites = db.sites.map((s) => idSet.has(s.id) ? { ...s, [field]: value } : s);
+    const fieldLabel = { section: "section", hookups: "hookups", notes: "notes" }[field] || field;
     const activityLog = addLog(db, actor, `Bulk-updated ${fieldLabel} for ${ids.length} site${ids.length === 1 ? "" : "s"}`);
     persist({ ...db, sites, activityLog });
     setBulkEditOpen(false);
@@ -899,7 +811,7 @@ function SitesView({ db, persist, readOnly, filterPrefill }) {
   };
   const filtered = db.sites.filter((s) => {
     if (!filter) return true;
-    const hay = `${s.number} ${s.section || ""} ${(s.tags || []).join(" ")} ${s.hookups || ""} ${s.notes || ""}`.toLowerCase();
+    const hay = `${s.number} ${s.section || ""} ${s.hookups || ""} ${s.notes || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Sites"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Site numbers, sections, and hookup notes.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
@@ -964,7 +876,10 @@ function SitesView({ db, persist, readOnly, filterPrefill }) {
       },
       /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 font-semibold text-sm text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("span", { className: `inline-block transition-transform ${isCollapsed ? "-rotate-90" : ""}` }, "\u25BE"), sectionName),
       /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#75716A] bg-white rounded-full px-2 py-0.5" }, sorted.length)
-    ), !isCollapsed && /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#FFFDFA] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Hookups"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Notes"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2 w-32" }))), /* @__PURE__ */ React.createElement("tbody", null, sorted.map((s) => /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(s.id) }, s.number)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, s.hookups || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-xs truncate" }, s.notes || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(s.id) }, "View"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: s }) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(s.id) }, "Delete"))))))));
+    ), !isCollapsed && /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#FFFDFA] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Hookups"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2" }, "Notes"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2 w-32" }))), /* @__PURE__ */ React.createElement("tbody", null, sorted.map((s) => {
+    const ownerCount = db.customers.filter((c) => customerSiteIds(c).includes(s.id)).length;
+    return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(s.id) }, s.number), ownerCount > 1 && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#F5E3D9] text-[#a8532a] px-1.5 py-0.5 rounded-full align-middle font-medium" }, ownerCount, " Owners")), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, s.hookups || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-xs truncate" }, s.notes || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(s.id) }, "View"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: s }) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(s.id) }, "Delete"))));
+  }))));
   })), !readOnly && modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Site" : "Edit Site", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(SiteForm, { initial: modal.data, sites: db.sites, onSave: save, onCancel: () => setModal(null) })), !readOnly && bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Sites", onClose: () => setBulkOpen(false) }, /* @__PURE__ */ React.createElement(BulkAddSitesForm, { onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), !readOnly && bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Edit Sites", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkEditSitesForm, { sites: db.sites, onSave: bulkEdit, onCancel: () => setBulkEditOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     SiteDetailModal,
     {
@@ -1022,16 +937,6 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
   const [field, setField] = useState("section");
   const [value, setValue] = useState("");
   const [selected, setSelected] = useState(() => /* @__PURE__ */ new Set());
-  const [tagFilter, setTagFilter] = useState(() => /* @__PURE__ */ new Set());
-  const allTags = Array.from(/* @__PURE__ */ new Set(sites.flatMap((s) => s.tags || []))).sort();
-  const toggleTagFilter = (tag) => {
-    setTagFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(tag)) next.delete(tag);
-      else next.add(tag);
-      return next;
-    });
-  };
   const toggle = (id) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -1040,34 +945,24 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
       return next;
     });
   };
-  const sortedSites = sites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
-  const visibleSites = tagFilter.size === 0 ? sortedSites : sortedSites.filter((s) => Array.from(tagFilter).every((t) => (s.tags || []).includes(t)));
-  const selectAll = () => setSelected(new Set(visibleSites.map((s) => s.id)));
+  const selectAll = () => setSelected(new Set(sites.map((s) => s.id)));
   const clearAll = () => setSelected(/* @__PURE__ */ new Set());
   const submit = () => {
     if (selected.size === 0) return;
     onSave(field, value, Array.from(selected));
   };
-  const fieldLabel = { section: "Section", hookups: "Hookups", notes: "Notes", tags_add: "Tag to Add", tags_remove: "Tag to Remove" }[field];
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Set one field to a value, then check off which sites should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => setField(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "section" }, "Section"), /* @__PURE__ */ React.createElement("option", { value: "hookups" }, "Hookups"), /* @__PURE__ */ React.createElement("option", { value: "notes" }, "Notes"), /* @__PURE__ */ React.createElement("option", { value: "tags_add" }, "Tags (add)"), /* @__PURE__ */ React.createElement("option", { value: "tags_remove" }, "Tags (remove)"))), /* @__PURE__ */ React.createElement(Field, { label: `New ${fieldLabel} Value` }, /* @__PURE__ */ React.createElement(
+  const fieldLabel = { section: "Section", hookups: "Hookups", notes: "Notes" }[field];
+  const sortedSites = sites.slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Set one field to a value, then check off which sites should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => setField(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "section" }, "Section"), /* @__PURE__ */ React.createElement("option", { value: "hookups" }, "Hookups"), /* @__PURE__ */ React.createElement("option", { value: "notes" }, "Notes"))), /* @__PURE__ */ React.createElement(Field, { label: `New ${fieldLabel} Value` }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
       value,
       onChange: (e) => setValue(e.target.value),
-      placeholder: field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : field === "tags_add" || field === "tags_remove" ? "e.g. Pebble Beach" : "e.g. Access notes",
+      placeholder: field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : "e.g. Access notes",
       autoFocus: true
     }
-  ))), allTags.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold block mb-1.5" }, "Filter Sites By Tag", tagFilter.size > 0 ? ` (${tagFilter.size} selected)` : ""), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, allTags.map((tag) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: tag,
-      type: "button",
-      onClick: () => toggleTagFilter(tag),
-      className: `px-2.5 py-1 rounded-full text-xs font-medium border transition ${tagFilter.has(tag) ? "bg-[#377249] text-white border-[#377249]" : "bg-white text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
-    },
-    tag
-  )), tagFilter.size > 0 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setTagFilter(/* @__PURE__ */ new Set()), className: "px-2.5 py-1 rounded-full text-xs font-medium text-[#75716A] hover:underline" }, "Clear filter"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Apply to (", selected.size, " selected", tagFilter.size > 0 ? `, ${visibleSites.length} shown` : "", ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: selectAll, className: "text-[#377249] hover:underline font-medium" }, tagFilter.size > 0 ? "Select All Shown" : "Select All"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: clearAll, className: "text-[#75716A] hover:underline font-medium" }, "Clear"))), /* @__PURE__ */ React.createElement("div", { className: "max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, visibleSites.map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 mt-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Apply to (", selected.size, " selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: selectAll, className: "text-[#377249] hover:underline font-medium" }, "Select All"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: clearAll, className: "text-[#75716A] hover:underline font-medium" }, "Clear"))), /* @__PURE__ */ React.createElement("div", { className: "max-h-56 overflow-y-auto rounded-md border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, sortedSites.map((s) => /* @__PURE__ */ React.createElement("label", { key: s.id, className: "flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-[#FFFDFA] cursor-pointer" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "checkbox",
@@ -1075,7 +970,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
       onChange: () => toggle(s.id),
       className: "accent-[#377249]"
     }
-  ), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, "Site ", s.number)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] truncate max-w-[10rem]" }, field === "tags_add" || field === "tags_remove" ? (s.tags || []).join(", ") || "\u2014" : s[field] || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, "Site ", s.number)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] truncate max-w-[10rem]" }, s[field] || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -1098,7 +993,7 @@ function SiteDetailModal({ site, db, persist, readOnly, onClose, onEdit }) {
   const customers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
   const workOrders = db.workOrders.filter((w) => w.siteId === site.id);
   const quotes = db.quotes.filter((q) => q.siteId === site.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Site ${site.number}`, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, site.section && /* @__PURE__ */ React.createElement("div", null, "Section: ", site.section), (site.tags || []).length > 0 && /* @__PURE__ */ React.createElement("div", null, "Tags: ", site.tags.join(", ")), site.hookups && /* @__PURE__ */ React.createElement("div", null, "Hookups: ", site.hookups), site.notes && /* @__PURE__ */ React.createElement("div", null, "Notes: ", site.notes)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages on this site." }, cottages.map((c) => /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Site ${site.number}`, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, site.section && /* @__PURE__ */ React.createElement("div", null, "Section: ", site.section), site.hookups && /* @__PURE__ */ React.createElement("div", null, "Hookups: ", site.hookups), site.notes && /* @__PURE__ */ React.createElement("div", null, "Notes: ", site.notes)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages on this site." }, cottages.map((c) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: c.id,
@@ -1245,328 +1140,19 @@ function QuoteCommentsModal({ quote, db, persist, onClose }) {
   )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
-const MAP_MIN_SCALE = 0.15;
-const MAP_MAX_SCALE = 6;
-function clampScale(s) {
-  return Math.min(MAP_MAX_SCALE, Math.max(MAP_MIN_SCALE, s));
-}
-function MapUploader({ onUpload, uploading, uploadPct, uploadError, hasExisting }) {
-  const inputRef = useRef(null);
-  return /* @__PURE__ */ React.createElement("div", { className: "text-center py-16 border-2 border-dashed border-[#E2DED5] rounded-xl" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#75716A] text-sm mb-3" }, hasExisting ? "Upload a new image to replace the current map." : "Upload a photo, scan, or PDF export of your site map to get started."), uploading ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium" }, "Uploading\u2026 ", uploadPct, "%") : /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => {
-        var _a;
-        return (_a = inputRef.current) == null ? void 0 : _a.click();
-      },
-      className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium"
-    },
-    hasExisting ? "Replace Map Image" : "Upload Map Image"
-  ), uploadError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-3" }, uploadError), /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      ref: inputRef,
-      type: "file",
-      accept: "image/*",
-      className: "hidden",
-      onChange: (e) => {
-        const file = e.target.files && e.target.files[0];
-        e.target.value = "";
-        if (file) onUpload(file);
-      }
-    }
-  ));
-}
-function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreateWorkOrder, onViewFull, onUnpin }) {
-  if (!site) return null;
-  const cottages = db.cottages.filter((c) => c.siteId === site.id);
-  const customers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
-  const hasRecord = cottages.length > 0 || customers.length > 0;
-  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-4 py-3 border-b border-[#EEEBE5] sticky top-0 bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-[15px] text-[#377249] font-semibold" }, "Site ", site.number), site.section && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, site.section)), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "text-[#75716A] hover:text-[#1E1A13] w-7 h-7 rounded-full hover:bg-[#F1EEE9] flex items-center justify-center" }, "\u2715"));
-  const cottageBlock = cottages.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Cottage", cottages.length > 1 ? "s" : ""), cottages.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-0.5" }, c.name, (c.year || c.modelNumber) && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " \xB7 ", [c.year, c.modelNumber ? `Model ${c.modelNumber}` : ""].filter(Boolean).join(" \xB7 ")))));
-  const customerBlock = customers.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Customer", customers.length > 1 ? "s" : ""), customers.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-0.5" }, c.name, c.phone && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " \xB7 ", c.phone))));
-  const infoBlock = hasRecord ? /* @__PURE__ */ React.createElement(React.Fragment, null, cottageBlock, customerBlock) : /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No cottage or customer on file \u2014 treated as a transient site.");
-  const actions = /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-2 mt-2" }, hasRecord && /* @__PURE__ */ React.createElement("button", { onClick: () => onViewFull(site), className: "px-3 py-2 text-sm text-[#377249] border border-[#377249]/40 rounded-md hover:bg-[#DDF1E1] font-medium" }, "View Full Details"), /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(site), className: "px-3 py-2 text-sm bg-[#C1652F] text-white rounded-md hover:bg-[#a8532a] font-medium" }, "Create Work Order"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => onUnpin(site), className: "px-3 py-2 text-xs text-[#a8532a] hover:underline" }, "Unpin this site from the map"));
-  const body = /* @__PURE__ */ React.createElement("div", { className: "p-4" }, infoBlock, actions);
-  return /* @__PURE__ */ React.createElement("div", { className: "fixed sm:absolute left-0 right-0 sm:left-auto sm:right-4 bottom-0 sm:bottom-auto sm:top-4 w-full sm:w-80 bg-[#FFFDFA] border border-[#E2DED5] rounded-t-xl sm:rounded-xl shadow-2xl z-30 max-h-[70vh] overflow-y-auto" }, header, body);
-}
-function CampgroundMapView({ db, persist, isAdminOrManager, onCreateWorkOrder }) {
-  const actor = useCurrentActor();
-  const sites = db.sites || [];
-  const mapInfo = db.campgroundMap;
-  const [uploading, setUploading] = useState(false);
-  const [uploadPct, setUploadPct] = useState(0);
-  const [uploadError, setUploadError] = useState(null);
-  const [scale, setScale] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [editMode, setEditMode] = useState(false);
-  const [placingSiteId, setPlacingSiteId] = useState(null);
-  const [selectedSiteId, setSelectedSiteId] = useState(null);
-  const [viewingSite, setViewingSite] = useState(null);
-  const [unplacedSearch, setUnplacedSearch] = useState("");
-  const [toast, setToast] = useState(null);
-  const viewportRef = useRef(null);
-  const canvasRef = useRef(null);
-  const fitScaleRef = useRef(1);
-  const panStateRef = useRef({ panning: false, startX: 0, startY: 0, startPan: { x: 0, y: 0 } });
-  const draggingRef = useRef(null);
-  const [, forceTick] = useState(0);
-  const fitToViewport = useCallback((naturalW, naturalH) => {
-    const vp = viewportRef.current;
-    if (!vp || !naturalW || !naturalH) return;
-    const fit = clampScale(Math.max(vp.clientWidth / naturalW, vp.clientHeight / naturalH));
-    fitScaleRef.current = fit || 1;
-    setScale(fitScaleRef.current);
-    setPan({
-      x: (vp.clientWidth - naturalW * fitScaleRef.current) / 2,
-      y: (vp.clientHeight - naturalH * fitScaleRef.current) / 2
-    });
-  }, []);
-  const handleImageLoad = (e) => {
-    fitToViewport(e.target.naturalWidth, e.target.naturalHeight);
-  };
-  const handleUpload = (file) => {
-    if (!file.type.startsWith("image/")) {
-      setUploadError("Please choose an image file.");
-      return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-      setUploadError("That image is larger than 20MB \u2014 try a smaller export.");
-      return;
-    }
-    setUploadError(null);
-    setUploading(true);
-    setUploadPct(0);
-    const path = `campground-map/map-${Date.now()}-${file.name}`.replace(/\s+/g, "_");
-    const ref = storage_.ref().child(path);
-    const task = ref.put(file);
-    task.on(
-      "state_changed",
-      (snap) => setUploadPct(Math.round(snap.bytesTransferred / snap.totalBytes * 100)),
-      (err) => {
-        setUploading(false);
-        setUploadError((err == null ? void 0 : err.message) || "Upload failed. Please try again.");
-      },
-      () => {
-        task.snapshot.ref.getDownloadURL().then((url) => {
-          const oldPath = mapInfo && mapInfo.storagePath;
-          const activityLog = addLog(db, actor, "Uploaded a new campground map image");
-          persist({ ...db, campgroundMap: { imageUrl: url, storagePath: path, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, activityLog });
-          setUploading(false);
-          if (oldPath && oldPath !== path) {
-            storage_.ref().child(oldPath).delete().catch(() => {
-            });
-          }
-        });
-      }
-    );
-  };
-  const posFromEvent = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    const xPct = Math.min(100, Math.max(0, (e.clientX - rect.left) / rect.width * 100));
-    const yPct = Math.min(100, Math.max(0, (e.clientY - rect.top) / rect.height * 100));
-    return { xPct, yPct };
-  };
-  const handleWheel = (e) => {
-    if (!mapInfo) return;
-    e.preventDefault();
-    const vpRect = viewportRef.current.getBoundingClientRect();
-    const cursorX = e.clientX - vpRect.left;
-    const cursorY = e.clientY - vpRect.top;
-    const nextScale = clampScale(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
-    const contentX = (cursorX - pan.x) / scale;
-    const contentY = (cursorY - pan.y) / scale;
-    setPan({ x: cursorX - contentX * nextScale, y: cursorY - contentY * nextScale });
-    setScale(nextScale);
-  };
-  const zoomBy = (factor) => {
-    const vp = viewportRef.current;
-    const cursorX = vp.clientWidth / 2;
-    const cursorY = vp.clientHeight / 2;
-    const nextScale = clampScale(scale * factor);
-    const contentX = (cursorX - pan.x) / scale;
-    const contentY = (cursorY - pan.y) / scale;
-    setPan({ x: cursorX - contentX * nextScale, y: cursorY - contentY * nextScale });
-    setScale(nextScale);
-  };
-  const handleViewportPointerDown = (e) => {
-    if (e.target.closest("[data-map-pin]")) return;
-    if (editMode && placingSiteId) return;
-    panStateRef.current = { panning: true, startX: e.clientX, startY: e.clientY, startPan: pan };
-    viewportRef.current.setPointerCapture(e.pointerId);
-  };
-  const handleViewportPointerMove = (e) => {
-    if (draggingRef.current) {
-      const { xPct, yPct } = posFromEvent(e);
-      draggingRef.current.pos = { xPct, yPct };
-      forceTick((t) => t + 1);
-      return;
-    }
-    if (!panStateRef.current.panning) return;
-    const dx = e.clientX - panStateRef.current.startX;
-    const dy = e.clientY - panStateRef.current.startY;
-    setPan({ x: panStateRef.current.startPan.x + dx, y: panStateRef.current.startPan.y + dy });
-  };
-  const endPointerInteractions = (e) => {
-    panStateRef.current.panning = false;
-    if (draggingRef.current) {
-      const { siteId, pos } = draggingRef.current;
-      draggingRef.current = null;
-      const nextSites = sites.map((s) => s.id === siteId ? { ...s, mapX: pos.xPct, mapY: pos.yPct } : s);
-      persist({ ...db, sites: nextSites });
-    }
-  };
-  const handleCanvasClick = (e) => {
-    if (!editMode || !placingSiteId) {
-      if (!e.target.closest("[data-map-pin]")) setSelectedSiteId(null);
-      return;
-    }
-    const { xPct, yPct } = posFromEvent(e);
-    const site = sites.find((s) => s.id === placingSiteId);
-    const nextSites = sites.map((s) => s.id === placingSiteId ? { ...s, mapX: xPct, mapY: yPct } : s);
-    const activityLog = addLog(db, actor, `Placed Site ${site ? site.number : ""} on the campground map`);
-    persist({ ...db, sites: nextSites, activityLog });
-    setPlacingSiteId(null);
-    setToast(`Site ${site ? site.number : ""} placed`);
-  };
-  const startDragPin = (e, site) => {
-    if (!editMode) return;
-    e.stopPropagation();
-    draggingRef.current = { siteId: site.id, pos: { xPct: site.mapX, yPct: site.mapY } };
-    viewportRef.current.setPointerCapture(e.pointerId);
-  };
-  const unpinSite = (site) => {
-    const nextSites = sites.map((s) => s.id === site.id ? { ...s, mapX: null, mapY: null } : s);
-    const activityLog = addLog(db, actor, `Removed Site ${site.number} from the campground map`);
-    persist({ ...db, sites: nextSites, activityLog });
-    setSelectedSiteId(null);
-  };
-  const placedSites = sites.filter((s) => s.mapX != null && s.mapY != null);
-  const allUnplaced = sites.filter((s) => s.mapX == null || s.mapY == null);
-  const unplacedFiltered = allUnplaced.filter((s) => !unplacedSearch || s.number.toLowerCase().includes(unplacedSearch.toLowerCase()) || (s.section || "").toLowerCase().includes(unplacedSearch.toLowerCase()));
-  const unplacedBySection = {};
-  unplacedFiltered.forEach((s) => {
-    const key = s.section || "No Section";
-    (unplacedBySection[key] = unplacedBySection[key] || []).push(s);
-  });
-  const unplacedSectionNames = Object.keys(unplacedBySection).sort((a, b) => a.localeCompare(b));
-  unplacedSectionNames.forEach((k) => unplacedBySection[k].sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true })));
-  const selectedSite = selectedSiteId ? sites.find((s) => s.id === selectedSiteId) : null;
-  if (!mapInfo) {
-    if (!isAdminOrManager) {
-      return /* @__PURE__ */ React.createElement(EmptyState, { text: "No campground map has been uploaded yet. Ask an Admin or Manager to add one." });
-    }
-    return /* @__PURE__ */ React.createElement(MapUploader, { onUpload: handleUpload, uploading, uploadPct, uploadError, hasExisting: false });
-  }
-  return /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 mb-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { onClick: () => zoomBy(1.3), className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-bold" }, "+"), /* @__PURE__ */ React.createElement("button", { onClick: () => zoomBy(1 / 1.3), className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-bold" }, "\u2212"), /* @__PURE__ */ React.createElement("button", { onClick: () => fitToViewport(canvasRef.current.querySelector("img").naturalWidth, canvasRef.current.querySelector("img").naturalHeight), className: "px-2.5 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-medium" }, "Reset View"), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, placedSites.length, " of ", sites.length, " sites placed")), isAdminOrManager && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => {
-        setEditMode((m) => !m);
-        setPlacingSiteId(null);
-        setSelectedSiteId(null);
-      },
-      className: `px-3 py-1.5 text-xs font-semibold rounded-md ${editMode ? "bg-[#377249] text-white" : "border border-[#E2DED5] bg-[#FFFDFA] text-[#4B4740] hover:bg-[#F1EEE9]"}`
-    },
-    editMode ? "Done Editing Pins" : "Edit Pins"
-  ))), editMode && /* @__PURE__ */ React.createElement("div", { className: "mb-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Unplaced Sites (", allUnplaced.length, ")"), placingSiteId && /* @__PURE__ */ React.createElement("button", { onClick: () => setPlacingSiteId(null), className: "text-xs text-[#a8532a] hover:underline" }, "Cancel placing")), placingSiteId ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium mb-2" }, "Click on the map to drop the pin for Site ", (sites.find((s) => s.id === placingSiteId) || {}).number, "\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: inputCls + " mb-2",
-      placeholder: "Search site number or section\u2026",
-      value: unplacedSearch,
-      onChange: (e) => setUnplacedSearch(e.target.value)
-    }
-  ), /* @__PURE__ */ React.createElement("div", { className: "max-h-64 overflow-y-auto space-y-2.5" }, unplacedSectionNames.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "Every site has been placed on the map.") : unplacedSectionNames.map((section) => /* @__PURE__ */ React.createElement("div", { key: section }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] font-semibold text-[#377249] mb-1" }, section, " (", unplacedBySection[section].length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, unplacedBySection[section].slice(0, 300).map((s) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: s.id,
-      onClick: () => setPlacingSiteId(s.id),
-      className: "text-xs px-2 py-1 rounded-full border border-[#E2DED5] bg-[#F9F5EC] hover:bg-[#DDF1E1] hover:border-[#377249] font-medium"
-    },
-    s.number
-  ))))))), isAdminOrManager && /* @__PURE__ */ React.createElement(MapUploader, { onUpload: handleUpload, uploading, uploadPct, uploadError, hasExisting: true })), /* @__PURE__ */ React.createElement(
-    "div",
-    {
-      ref: viewportRef,
-      onWheel: handleWheel,
-      onPointerDown: handleViewportPointerDown,
-      onPointerMove: handleViewportPointerMove,
-      onPointerUp: endPointerInteractions,
-      onPointerCancel: endPointerInteractions,
-      className: "relative w-full h-[calc(100vh-160px)] min-h-[420px] rounded-xl border border-[#E2DED5] bg-[#EEEBE5] overflow-hidden touch-none",
-      style: { cursor: editMode && placingSiteId ? "crosshair" : panStateRef.current.panning ? "grabbing" : "grab" }
-    },
-    /* @__PURE__ */ React.createElement(
-      "div",
-      {
-        ref: canvasRef,
-        onClick: handleCanvasClick,
-        className: "absolute top-0 left-0",
-        style: { transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, transformOrigin: "0 0" }
-      },
-      /* @__PURE__ */ React.createElement("img", { src: mapInfo.imageUrl, onLoad: handleImageLoad, draggable: false, className: "block max-w-none select-none", alt: "Campground map" }),
-      placedSites.map((s) => {
-        const pos = draggingRef.current && draggingRef.current.siteId === s.id ? draggingRef.current.pos : { xPct: s.mapX, yPct: s.mapY };
-        const hasRecord = db.cottages.some((c) => c.siteId === s.id) || db.customers.some((c) => customerSiteIds(c).includes(s.id));
-        return /* @__PURE__ */ React.createElement(
-          "button",
-          {
-            key: s.id,
-            "data-map-pin": "true",
-            onPointerDown: (e) => startDragPin(e, s),
-            onClick: (e) => {
-              e.stopPropagation();
-              if (editMode) return;
-              setSelectedSiteId(s.id);
-            },
-            className: "absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow -translate-x-1/2 -translate-y-1/2 hover:scale-125 transition-transform",
-            style: {
-              left: `${pos.xPct}%`,
-              top: `${pos.yPct}%`,
-              background: hasRecord ? "#377249" : "#C1652F",
-              cursor: editMode ? "grab" : "pointer"
-            },
-            title: `Site ${s.number}`
-          }
-        );
-      })
-    )
-  ), selectedSite && !editMode && /* @__PURE__ */ React.createElement(
-    MapSitePopover,
-    {
-      site: selectedSite,
-      db,
-      persist,
-      isAdminOrManager,
-      onClose: () => setSelectedSiteId(null),
-      onCreateWorkOrder: (site) => {
-        setSelectedSiteId(null);
-        onCreateWorkOrder(site);
-      },
-      onViewFull: (site) => {
-        setSelectedSiteId(null);
-        setViewingSite(site);
-      },
-      onUnpin: unpinSite
-    }
-  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, readOnly: true, onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
-}
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
   const [section, setSection] = useState((initial == null ? void 0 : initial.section) || "");
   const [hookups, setHookups] = useState((initial == null ? void 0 : initial.hookups) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
-  const [tagsInput, setTagsInput] = useState(((initial == null ? void 0 : initial.tags) || []).join(", "));
   const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && s.number.trim().toLowerCase() === number.trim().toLowerCase());
   const submit = () => {
     if (!number.trim()) return;
-    const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
-    onSave({ id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags });
+    onSave({ id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim() });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Tags" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: tagsInput, onChange: (e) => setTagsInput(e.target.value), placeholder: "e.g. Pebble Beach, Waterfront, Premium" }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Comma-separated. Used for filtering, e.g. in Seasonal Fees.")), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Access notes, terrain, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Site")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Access notes, terrain, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Site")));
 }
 const COLOR_SWATCH = {
   Red: "#B5432E",
@@ -1586,13 +1172,10 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
-function CottagesView({ db, persist, readOnly, filterPrefill }) {
+function CottagesView({ db, persist, readOnly }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
-  useEffect(() => {
-    if (filterPrefill) setFilter(filterPrefill.term);
-  }, [filterPrefill && filterPrefill.ts]);
   const [detailId, setDetailId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
@@ -1644,13 +1227,6 @@ function CottagesView({ db, persist, readOnly, filterPrefill }) {
     if (!filter) return true;
     const hay = `${c.name} ${c.color || ""} ${c.features || ""} ${c.year || ""} ${c.modelNumber || ""} ${c.serialNumber || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
-  }).sort((a, b) => {
-    const siteA = db.sites.find((s) => s.id === a.siteId);
-    const siteB = db.sites.find((s) => s.id === b.siteId);
-    if (!siteA && !siteB) return 0;
-    if (!siteA) return 1;
-    if (!siteB) return -1;
-    return siteA.number.localeCompare(siteB.number, void 0, { numeric: true });
   });
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Cottages"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Cottage name, colour, and linked site.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
     "input",
@@ -2091,13 +1667,10 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 
-function CustomersView({ db, persist, filterPrefill }) {
+function CustomersView({ db, persist }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
-  useEffect(() => {
-    if (filterPrefill) setFilter(filterPrefill.term);
-  }, [filterPrefill && filterPrefill.ts]);
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const confirm = useConfirm();
@@ -2700,7 +2273,6 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [emailStatus, setEmailStatus] = useState({});
-  const [sendConfirm, setSendConfirm] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
@@ -2764,7 +2336,6 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
       setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
-      logSystemError(db, persist, "Invoice email", `Failed to send invoice ${invoice.invoiceNumber} to ${customer.name}`);
     });
   };
   const filtered = invoices.filter((inv) => {
@@ -2812,7 +2383,7 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
       {
         className: "text-[#377249] hover:underline disabled:opacity-50",
         disabled: es === "sending",
-        onClick: () => setSendConfirm(inv)
+        onClick: () => sendInvoice(inv)
       },
       es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
     ), status !== "Paid" && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => markPaidInFull(inv) }, "Mark Paid in Full"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(inv.id) }, "Delete"))));
@@ -2833,17 +2404,7 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
     onConfirm: () => remove(confirm.target),
     onCancel: confirm.clear
   }) : null;
-  const sendConfirmEl = sendConfirm ? /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, {
-    invoice: sendConfirm,
-    customer: db.customers.find((c) => c.id === sendConfirm.customerId) || {},
-    accountingEmail: ((db.settings || {}).accountingEmail || "").trim(),
-    onConfirm: () => {
-      sendInvoice(sendConfirm);
-      setSendConfirm(null);
-    },
-    onCancel: () => setSendConfirm(null)
-  }) : null;
-  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl);
+  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl);
 }
 
 function PartsView({ db, persist }) {
@@ -3020,74 +2581,7 @@ function StatCard({ label, value, onClick, tone }) {
     /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
   );
 }
-function DashboardSearch({ db, onJump }) {
-  const [q, setQ] = useState("");
-  const [open, setOpen] = useState(false);
-  const term = q.trim().toLowerCase();
-  const results = useMemo(() => {
-    if (!term) return [];
-    const out = [];
-    for (const c of db.customers) {
-      const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.name2 || ""} ${c.phone2 || ""} ${c.email2 || ""} ${c.address || ""}`.toLowerCase();
-      if (hay.includes(term)) out.push({ type: "Customer", label: c.name, sub: c.phone || c.email || "", tab: "customers", term: c.name });
-      if (out.filter((r) => r.type === "Customer").length >= 4) break;
-    }
-    for (const s of db.sites) {
-      const hay = `${s.number} ${s.section || ""} ${(s.tags || []).join(" ")} ${s.hookups || ""} ${s.notes || ""}`.toLowerCase();
-      if (hay.includes(term)) out.push({ type: "Site", label: `Site ${s.number}`, sub: s.section || "", tab: "sites", term: s.number });
-      if (out.filter((r) => r.type === "Site").length >= 4) break;
-    }
-    for (const w of db.workOrders) {
-      const site = db.sites.find((s) => s.id === w.siteId);
-      const hay = `${w.title} ${w.description || ""} ${(site == null ? void 0 : site.number) || ""} ${w.assignedTo || ""}`.toLowerCase();
-      if (hay.includes(term)) out.push({ type: "Work Order", label: w.title, sub: (site == null ? void 0 : site.number) ? `Site ${site.number}` : w.status, tab: "workorders", term: w.title });
-      if (out.filter((r) => r.type === "Work Order").length >= 4) break;
-    }
-    for (const qt of db.quotes || []) {
-      const site = db.sites.find((s) => s.id === qt.siteId);
-      const customer = db.customers.find((c) => c.id === qt.customerId);
-      const hay = `${qt.title} ${(site == null ? void 0 : site.number) || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
-      if (hay.includes(term)) out.push({ type: "Quote", label: qt.title, sub: (customer == null ? void 0 : customer.name) || "", tab: "quotes", term: qt.title });
-      if (out.filter((r) => r.type === "Quote").length >= 4) break;
-    }
-    for (const cot of db.cottages || []) {
-      const hay = `${cot.name} ${cot.color || ""} ${cot.features || ""} ${cot.year || ""} ${cot.modelNumber || ""} ${cot.serialNumber || ""}`.toLowerCase();
-      if (hay.includes(term)) out.push({ type: "Cottage", label: cot.name, sub: cot.year || cot.modelNumber || "", tab: "cottages", term: cot.name });
-      if (out.filter((r) => r.type === "Cottage").length >= 4) break;
-    }
-    return out.slice(0, 12);
-  }, [term, db.customers, db.sites, db.workOrders, db.quotes, db.cottages]);
-  const pick = (r) => {
-    onJump(r.tab, r.term);
-    setQ("");
-    setOpen(false);
-  };
-  return /* @__PURE__ */ React.createElement("div", { className: "relative w-full sm:w-72" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: inputCls,
-      placeholder: "Search customers, sites, work orders, quotes\u2026",
-      value: q,
-      onChange: (e) => {
-        setQ(e.target.value);
-        setOpen(true);
-      },
-      onFocus: () => setOpen(true),
-      onBlur: () => setTimeout(() => setOpen(false), 150)
-    }
-  ), open && term && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 w-full bg-white border border-[#E2DED5] rounded-md shadow-lg max-h-80 overflow-y-auto" }, results.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "px-3 py-2.5 text-sm text-[#75716A]" }, "No matches.") : results.map((r, i) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: i,
-      onMouseDown: () => pick(r),
-      className: "w-full text-left px-3 py-2 hover:bg-[#F1EEE9] border-b border-[#F1EEE9] last:border-b-0"
-    },
-    /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#377249] font-medium" }, r.type),
-    /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13]" }, r.label),
-    r.sub && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, r.sub)
-  ))));
-}
-function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys }) {
+function DashboardView({ db, onGoToTab, persist, allowedTabKeys }) {
   var _a, _b;
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
@@ -3117,7 +2611,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys })
   const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
   const daysSinceBackup = db.lastBackupAt ? Math.floor((Date.now() - new Date(db.lastBackupAt).getTime()) / (24 * 60 * 60 * 1e3)) : null;
   const backupStale = daysSinceBackup === null || daysSinceBackup >= 14;
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-start justify-between gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), /* @__PURE__ */ React.createElement(DashboardSearch, { db, onJump: onSearchJump })), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => exportDatabase(db, persist),
@@ -3242,13 +2736,10 @@ const QUOTE_STATUS_STYLES = {
   Accepted: "bg-[#377249]/10 text-[#377249]",
   Declined: "bg-[#F5E3D9] text-[#a8532a]"
 };
-function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPrefill }) {
+function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice }) {
   var _a, _b, _c, _d, _e, _f;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
-  useEffect(() => {
-    if (filterPrefill) setFilter(filterPrefill.term);
-  }, [filterPrefill && filterPrefill.ts]);
   const [emailStatus, setEmailStatus] = useState({});
   const [commentsFor, setCommentsFor] = useState(null);
   const [toast, setToast] = useState(null);
@@ -3292,7 +2783,6 @@ function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPref
       setTimeout(() => setEmailStatus((s) => ({ ...s, [quote.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [quote.id]: "error" }));
-      logSystemError(db, persist, "Quote email", `Failed to send quote "${quote.title}" to ${customer.name}`);
     });
   };
   const remove = (id) => {
@@ -5716,19 +5206,10 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
     ))
   );
 }
-function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
+function WorkOrdersView({ db, persist, onCreateInvoice }) {
   var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
-  useEffect(() => {
-    if (workOrderPrefill) {
-      setModal({ mode: "new", data: { siteId: workOrderPrefill.siteId } });
-      if (onConsumeWorkOrderPrefill) onConsumeWorkOrderPrefill();
-    }
-  }, [workOrderPrefill]);
   const [filter, setFilter] = useState("");
-  useEffect(() => {
-    if (filterPrefill) setFilter(filterPrefill.term);
-  }, [filterPrefill && filterPrefill.ts]);
   const [groupFilter, setGroupFilter] = useState("");
   const [recurringOpen, setRecurringOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -5770,7 +5251,6 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
           subject: `Work order assigned: ${wo.title}`,
           message: buildWorkOrderEmailText(wo, db)
         }).catch(() => {
-          logSystemError(db, persist, "Work order assignment email", `Failed to notify ${staffMember.name} about "${wo.title}"`);
         });
         activityLog = addLog({ activityLog }, actor, `Notified ${staffMember.name} by email about "${wo.title}"`);
       }
@@ -6385,7 +5865,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), !initial && /propane/i.test(`${title} ${workGroup}`) && /* @__PURE__ */ React.createElement("div", { className: "rounded-md border border-[#F5E3D9] bg-[#FBEEDA] px-3 py-2 mb-3 text-xs text-[#9A6B1F]" }, "Propane requests are tracked on the ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, "Propane tab"), " \u2014 it schedules the 10am/4pm run and tracks payment. Consider creating this there instead."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
@@ -6656,22 +6136,6 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   const [requestedDate, setRequestedDate] = useState((initial == null ? void 0 : initial.requestedDate) || todayISO());
   const [run, setRun] = useState((initial == null ? void 0 : initial.run) || defaultPropaneRun((initial == null ? void 0 : initial.requestedDate) || todayISO()));
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
-  const [payment, setPayment] = useState((initial == null ? void 0 : initial.payment) || "");
-  const [paymentMethod, setPaymentMethod] = useState((initial == null ? void 0 : initial.paymentMethod) || "");
-  const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
-  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
-  const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
-  const setTankQuantity = (partId, qty) => {
-    setPartsUsed((items) => {
-      const n = Math.max(0, Math.floor(Number(qty) || 0));
-      const without = items.filter((pu) => pu.partId !== partId);
-      return n > 0 ? [...without, { partId, quantity: n }] : without;
-    });
-  };
-  const choosePayment = (val) => {
-    setPayment(val);
-    if (val !== "Paid") setPaymentMethod("");
-  };
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -6722,9 +6186,6 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
       requestedDate,
       run,
       notes: notes.trim(),
-      payment,
-      paymentMethod: payment === "Paid" ? paymentMethod : "",
-      partsUsed,
       completed: (initial == null ? void 0 : initial.completed) || false,
       completedDate: (initial == null ? void 0 : initial.completedDate) || null,
       workOrderId: (initial == null ? void 0 : initial.workOrderId) || null,
@@ -6763,48 +6224,7 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
       className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${run === r ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
     },
     r
-  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions" })), tankParts.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Tanks" }, /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, tankParts.map((part) => /* @__PURE__ */ React.createElement("div", { key: part.id, className: "flex items-center justify-between gap-3 border border-[#E2DED5] rounded-md px-3 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13]" }, part.name, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, " \u2014 ", formatPrice(part.price))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: () => setTankQuantity(part.id, tankQuantity(part.id) - 1),
-      className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
-    },
-    "\u2212"
-  ), /* @__PURE__ */ React.createElement("span", { className: "w-5 text-center text-sm font-medium" }, tankQuantity(part.id)), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: () => setTankQuantity(part.id, tankQuantity(part.id) + 1),
-      className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
-    },
-    "+"
-  ))))), TANK_PART_NAMES.some((name) => !tankParts.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mt-1" }, "Some tank sizes aren't set up in Parts yet.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: () => choosePayment("Paid"),
-      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${payment === "Paid" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
-    },
-    "Paid"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: () => choosePayment("Invoice"),
-      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${payment === "Invoice" ? "bg-[#9A6B1F] text-[#F9F5EC] border-[#9A6B1F]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
-    },
-    "To Invoice (Accounting)"
-  )), payment === "Paid" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-2" }, PROPANE_PAYMENT_METHODS.map((m) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: m,
-      type: "button",
-      onClick: () => setPaymentMethod(m),
-      className: `flex-1 px-3 py-1.5 rounded-md text-xs font-medium border ${paymentMethod === m ? "bg-[#28633C] text-[#F9F5EC] border-[#28633C]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
-    },
-    m
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Any special instructions" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -7212,7 +6632,6 @@ function WinterizingView({ db, persist, readOnly }) {
           setTimeout(() => setEmailStatus((s) => ({ ...s, [request.id]: void 0 })), 3e3);
         }).catch(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
-          logSystemError(db, persist, "Winterizing completion email", `Failed to email ${customer.name} about ${cottageName(request.cottageId)}`);
         });
       }
     }
@@ -7386,12 +6805,7 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRu
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
   const otherRun = request.run === "10am" ? "4pm" : "10am";
-  const paymentLabel = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
-  const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
-  }).filter(Boolean).join(", ");
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, cottage ? cottage.name : "Unlinked cottage", site ? ` \u2014 Site ${site.number}` : ""), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
 }
 function PropaneView({ db, persist }) {
   const [modal, setModal] = useState(null);
@@ -7431,12 +6845,10 @@ function PropaneView({ db, persist }) {
   };
   const complete = (request) => {
     const cottage = db.cottages.find((c) => c.id === request.cottageId);
-    const paymentNote = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "method not set"}` : request.payment === "Invoice" ? "To be invoiced by accounting" : "";
-    const description = [request.notes, paymentNote].filter(Boolean).join(paymentNote ? "\n\n" : "");
     const wo = {
       id: uid(),
       title: "Propane Fill",
-      description,
+      description: request.notes || "",
       siteId: cottage ? cottage.siteId : null,
       cottageId: request.cottageId || null,
       customerId: request.customerId || null,
@@ -7446,10 +6858,10 @@ function PropaneView({ db, persist }) {
       workGroup: "",
       date: todayISO(),
       completedDate: todayISO(),
-      partsUsed: request.partsUsed || [],
+      partsUsed: [],
       laborHours: "",
       laborRateType: "N/A",
-      paymentStatus: request.payment || ""
+      paymentStatus: ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
     const nextRequests = requests.map((r) => r.id === request.id ? updated : r);
@@ -7501,447 +6913,6 @@ function PropaneView({ db, persist }) {
   return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, reviewEl, confirmEl);
 }
 
-function buildServiceItems(db, taxRate) {
-  const items = [];
-  const siteOfCottage = (cottageId) => {
-    const cottage = cottageId ? (db.cottages || []).find((c) => c.id === cottageId) : null;
-    return cottage ? cottage.siteId : null;
-  };
-  const cottageLabel = (cottageId) => {
-    const c = cottageId ? (db.cottages || []).find((x) => x.id === cottageId) : null;
-    return c ? c.name : "Unassigned";
-  };
-  (db.workOrders || []).forEach((wo) => {
-    items.push({ id: "wo-" + wo.id, type: "Work Order", date: wo.date || "", status: wo.status || "Open", title: wo.title || "Untitled work order", siteId: wo.siteId || null, assignedTo: wo.assignedTo || "", priority: wo.priority || "" });
-  });
-  (db.winterizingRequests || []).forEach((r) => {
-    items.push({ id: "wint-" + r.id, type: "Winterizing", date: (r.completed ? r.completedDate : r.requestedDate) || "", status: r.completed ? "Completed" : "Pending", title: `Winterizing \u2014 ${cottageLabel(r.cottageId)}`, siteId: siteOfCottage(r.cottageId), assignedTo: "", priority: "" });
-  });
-  (db.propaneRequests || []).forEach((r) => {
-    items.push({ id: "prop-" + r.id, type: "Propane", date: (r.completed ? r.completedDate : r.requestedDate) || "", status: r.completed ? "Completed" : "Pending", title: `Propane \u2014 ${cottageLabel(r.cottageId)}`, siteId: siteOfCottage(r.cottageId), assignedTo: "", priority: "" });
-  });
-  (db.quotes || []).forEach((q) => {
-    items.push({ id: "quote-" + q.id, type: "Quote", date: q.date || "", status: q.status || "Draft", title: q.title || "Untitled quote", siteId: q.siteId || null, assignedTo: "", priority: "" });
-  });
-  (db.invoices || []).forEach((inv) => {
-    items.push({ id: "inv-" + inv.id, type: "Invoice", date: inv.date || "", status: invoiceStatus(inv, inv.taxRate != null ? inv.taxRate : taxRate), title: `Invoice #${inv.invoiceNumber || ""}`, siteId: inv.siteId || null, assignedTo: "", priority: "" });
-  });
-  return items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-}
-function ServiceReportsView({ db }) {
-  var _a, _b;
-  const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
-  const allItems = useMemo(() => buildServiceItems(db, taxRate), [db, taxRate]);
-  const TYPES = ["Work Order", "Winterizing", "Propane", "Quote", "Invoice"];
-  const STATUS_BY_TYPE = {
-    "Work Order": ["Open", "In Progress", "Completed"],
-    Winterizing: ["Pending", "Completed"],
-    Propane: ["Pending", "Completed"],
-    Quote: ["Draft", "Sent", "Accepted", "Declined"],
-    Invoice: ["Draft", "Sent", "Paid"]
-  };
-  const [activeTypes, setActiveTypes] = useState(new Set(TYPES));
-  const [activeStatuses, setActiveStatuses] = useState(/* @__PURE__ */ new Set());
-  const [activeStaff, setActiveStaff] = useState(/* @__PURE__ */ new Set());
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [siteFilter, setSiteFilter] = useState("");
-  const [page, setPage] = useState(0);
-  const PAGE_SIZE = 20;
-  const toggleSet = (setFn, current, value) => {
-    const next = new Set(current);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    setFn(next);
-  };
-  const availableStatuses = Array.from(new Set(TYPES.filter((t) => activeTypes.has(t)).flatMap((t) => STATUS_BY_TYPE[t] || [])));
-  const staffList = (db.staff || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-  const filtered = allItems.filter((item) => {
-    if (!activeTypes.has(item.type)) return false;
-    if (activeStatuses.size > 0 && !activeStatuses.has(item.status)) return false;
-    if (activeStaff.size > 0) {
-      if (item.type !== "Work Order") return false;
-      if (!activeStaff.has(item.assignedTo)) return false;
-    }
-    if (dateFrom && item.date && item.date < dateFrom) return false;
-    if (dateTo && item.date && item.date > dateTo) return false;
-    if (siteFilter) {
-      const site = item.siteId ? (db.sites || []).find((s) => s.id === item.siteId) : null;
-      const hay = `${(site == null ? void 0 : site.number) || ""} ${(site == null ? void 0 : site.section) || ""} ${((site == null ? void 0 : site.tags) || []).join(" ")}`.toLowerCase();
-      if (!hay.includes(siteFilter.toLowerCase())) return false;
-    }
-    return true;
-  });
-  const countsByType = TYPES.map((t) => ({ type: t, count: filtered.filter((i) => i.type === t).length }));
-  useEffect(() => {
-    setPage(0);
-  }, [activeTypes, activeStatuses, activeStaff, dateFrom, dateTo, siteFilter]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const pagedItems = filtered.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
-  const siteNumberFor = (siteId) => {
-    if (!siteId) return "\u2014";
-    const site = (db.sites || []).find((s) => s.id === siteId);
-    return site ? site.number : "\u2014";
-  };
-  const staffNameFor = (staffId) => {
-    if (!staffId) return "\u2014";
-    const s = (db.staff || []).find((x) => x.id === staffId);
-    return s ? s.name : staffId;
-  };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Service Reports"), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Record type"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, TYPES.map((t) => /* @__PURE__ */ React.createElement("button", { key: t, onClick: () => toggleSet(setActiveTypes, activeTypes, t), className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeTypes.has(t) ? "bg-[#DDF1E1] border-[#28633C] text-[#28633C]" : "bg-white border-[#E2DED5] text-[#75716A]"}` }, t)))), availableStatuses.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Status"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, availableStatuses.map((s) => /* @__PURE__ */ React.createElement("button", { key: s, onClick: () => toggleSet(setActiveStatuses, activeStatuses, s), className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeStatuses.has(s) ? "bg-[#FBEEDA] border-[#9A6B1F] text-[#9A6B1F]" : "bg-white border-[#E2DED5] text-[#75716A]"}` }, s))), activeStatuses.size > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setActiveStatuses(/* @__PURE__ */ new Set()), className: "text-[10px] text-[#75716A] hover:underline mt-1" }, "Clear status filter")), staffList.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Assigned staff (Work Orders only)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, staffList.map((s) => /* @__PURE__ */ React.createElement("button", { key: s.id, onClick: () => toggleSet(setActiveStaff, activeStaff, s.id), className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeStaff.has(s.id) ? "bg-[#E4E1F5] border-[#5B4B8A] text-[#5B4B8A]" : "bg-white border-[#E2DED5] text-[#75716A]"}` }, s.name))), activeStaff.size > 0 && /* @__PURE__ */ React.createElement("button", { onClick: () => setActiveStaff(/* @__PURE__ */ new Set()), className: "text-[10px] text-[#75716A] hover:underline mt-1" }, "Clear staff filter")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "From", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateFrom, onChange: (e) => setDateFrom(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "To", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateTo, onChange: (e) => setDateTo(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("input", { type: "text", value: siteFilter, onChange: (e) => setSiteFilter(e.target.value), placeholder: "Filter by site #, section, or tag\u2026", className: "flex-1 min-w-[12rem] border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm bg-white" }))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5" }, countsByType.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.type, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, c.type), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, c.count)))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Type"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Title"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Assigned"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Status"))), /* @__PURE__ */ React.createElement("tbody", null, filtered.length === 0 && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 6, className: "px-4 py-6 text-center text-[#75716A] text-sm" }, "No items match these filters.")), pagedItems.map((item) => /* @__PURE__ */ React.createElement("tr", { key: item.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.date || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.type), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.title), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, siteNumberFor(item.siteId)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, item.assignedTo ? staffNameFor(item.assignedTo) : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-medium text-[#4B4740]" }, item.status)))))), filtered.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", null, "Showing ", currentPage * PAGE_SIZE + 1, "\u2013", Math.min((currentPage + 1) * PAGE_SIZE, filtered.length), " of ", filtered.length), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setPage((p) => Math.max(0, p - 1)),
-      disabled: currentPage === 0,
-      className: "px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#E2DED5] bg-white text-[#4B4740] hover:bg-[#F1EEE9] disabled:opacity-40 disabled:cursor-not-allowed"
-    },
-    "\u2190 Prev"
-  ), /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Page ", currentPage + 1, " of ", pageCount), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setPage((p) => Math.min(pageCount - 1, p + 1)),
-      disabled: currentPage >= pageCount - 1,
-      className: "px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#E2DED5] bg-white text-[#4B4740] hover:bg-[#F1EEE9] disabled:opacity-40 disabled:cursor-not-allowed"
-    },
-    "Next \u2192"
-  )))));
-}
-function buildTransactionList(db, taxRate, commissionPercent) {
-  const rows = [];
-  (db.cottageOrders || []).forEach((o) => {
-    if (!isOrderSold(o)) return;
-    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
-    if (!dateStr) return;
-    rows.push({ id: "co-" + o.id, date: dateStr, segment: "Cottage Sales", description: o.model || "Cottage order", amount: Number(o.totalPrice) || 0 });
-  });
-  (db.consignmentListings || []).forEach((l) => {
-    if (l.status !== "Sold" || !l.soldDate) return;
-    const cottage = (db.cottages || []).find((c) => c.id === l.cottageId);
-    rows.push({ id: "cl-" + l.id, date: l.soldDate, segment: "Consignment / Commission", description: (cottage == null ? void 0 : cottage.name) || "Consignment listing", amount: Number(l.soldPrice) || 0 });
-  });
-  (db.sunspaceOrders || []).forEach((o) => {
-    if (!o.paidInFullDate) return;
-    const included = Object.entries(o.items || {}).filter(([, v]) => v && v.included).map(([k]) => k);
-    rows.push({ id: "ss-" + o.id, date: o.paidInFullDate, segment: "Sunspace Accessories", description: included.length ? included.join(", ") : "Sunspace order", amount: Number(o.totalPrice) || 0 });
-  });
-  (db.invoices || []).forEach((inv) => {
-    if (!isInvoicePaidInFull(inv, taxRate)) return;
-    const dateStr = inv.paidInFullDate || inv.date;
-    if (!dateStr) return;
-    const customer = inv.customerId ? (db.customers || []).find((c) => c.id === inv.customerId) : null;
-    const total = computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total;
-    rows.push({ id: "inv-" + inv.id, date: dateStr, segment: "Service (Invoices)", description: (customer == null ? void 0 : customer.name) ? `${customer.name} \u2014 Inv #${inv.invoiceNumber || ""}` : `Invoice #${inv.invoiceNumber || ""}`, amount: total });
-  });
-  const sitesWithFeeNow = (db.sites || []).filter((s) => getCurrentRate(s) > 0);
-  const now = /* @__PURE__ */ new Date();
-  const year = now.getFullYear();
-  const currentMonthIdx = now.getMonth();
-  for (let m = 0; m <= currentMonthIdx; m++) {
-    const monthStr = String(m + 1).padStart(2, "0");
-    const dateStr = `${year}-${monthStr}-01`;
-    const monthTotal = seasonalMonthlyTotalForDate(db, dateStr);
-    if (monthTotal > 0) {
-      rows.push({ id: `seasonal-${year}-${monthStr}`, date: dateStr, segment: "Seasonal Fees", description: `${sitesWithFeeNow.length} sites billed`, amount: monthTotal });
-    }
-  }
-  return rows.sort((a, b) => a.date < b.date ? 1 : -1);
-}
-function shiftYear(dateStr, delta) {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setFullYear(d.getFullYear() + delta);
-  return d.toISOString().slice(0, 10);
-}
-function AdminDashboardView({ db }) {
-  var _a, _b, _c, _d;
-  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
-  const taxRate = (_d = (_c = db.settings) == null ? void 0 : _c.taxRate) != null ? _d : 13;
-  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-  const yearsWithData = /* @__PURE__ */ new Set([currentYear]);
-  (db.cottageOrders || []).forEach((o) => {
-    if (!isOrderSold(o)) return;
-    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
-    if (dateStr) yearsWithData.add(Number(dateStr.slice(0, 4)));
-  });
-  (db.consignmentListings || []).forEach((l) => {
-    if (l.status === "Sold" && l.soldDate) yearsWithData.add(Number(l.soldDate.slice(0, 4)));
-  });
-  (db.sunspaceOrders || []).forEach((o) => {
-    if (o.paidInFullDate) yearsWithData.add(Number(o.paidInFullDate.slice(0, 4)));
-  });
-  (db.invoices || []).forEach((inv) => {
-    if (isInvoicePaidInFull(inv, taxRate)) {
-      const dateStr = inv.paidInFullDate || inv.date;
-      if (dateStr) yearsWithData.add(Number(dateStr.slice(0, 4)));
-    }
-  });
-  const availableYears = Array.from(yearsWithData).sort((a, b) => b - a);
-  const stats = computeSalesYearStats(db, selectedYear, commissionPercent);
-  const invoices = db.invoices || [];
-  const paidServiceInvoices = invoices.filter((inv) => {
-    if (!isInvoicePaidInFull(inv, taxRate)) return false;
-    const dateStr = inv.paidInFullDate || inv.date;
-    return dateStr && dateStr.slice(0, 4) === String(selectedYear);
-  });
-  const serviceSoldTotal = paidServiceInvoices.reduce((sum, inv) => sum + computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total, 0);
-  const serviceAvgSale = paidServiceInvoices.length ? serviceSoldTotal / paidServiceInvoices.length : 0;
-  const sitesWithFee = (db.sites || []).filter((s) => getCurrentRate(s) > 0);
-  const seasonalMonthlyTotal = sitesWithFee.reduce((sum, s) => sum + getCurrentRate(s), 0);
-  const nowForSeasonal = /* @__PURE__ */ new Date();
-  const currentCalendarYear = nowForSeasonal.getFullYear();
-  const elapsedMonths = selectedYear < currentCalendarYear ? 12 : selectedYear > currentCalendarYear ? 0 : nowForSeasonal.getMonth() + 1;
-  let seasonalCollectedTotal = 0;
-  let seasonalAnnualTotal = 0;
-  for (let m = 1; m <= 12; m++) {
-    const monthStr = String(m).padStart(2, "0");
-    const monthTotal = seasonalMonthlyTotalForDate(db, `${selectedYear}-${monthStr}-01`);
-    seasonalAnnualTotal += monthTotal;
-    if (m <= elapsedMonths) seasonalCollectedTotal += monthTotal;
-  }
-  const grandTotal = stats.combinedSoldTotal + serviceSoldTotal + seasonalCollectedTotal;
-  const segments = [
-    { label: "Cottage Sales", value: stats.cottageSoldTotal, count: stats.soldCottageOrders.length, unit: "units sold" },
-    { label: "Consignment / Commission", value: stats.consignmentSoldTotal, count: stats.soldListings.length, unit: "units sold" },
-    { label: "Sunspace Accessories", value: stats.sunspaceSoldTotal, count: stats.paidSunspaceOrders.length, unit: "units sold" },
-    { label: "Service (Invoices)", value: serviceSoldTotal, count: paidServiceInvoices.length, unit: "invoices paid" }
-  ];
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 flex-wrap gap-3" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13]" }, "Admin Dashboard"), /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      value: selectedYear,
-      onChange: (e) => setSelectedYear(Number(e.target.value)),
-      className: "border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm bg-[#FFFDFA] text-[#1E1A13]"
-    },
-    availableYears.map((y) => /* @__PURE__ */ React.createElement("option", { key: y, value: y }, y))
-  )), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, selectedYear, " Total Revenue (sales + service + seasonal fees collected to date)"), /* @__PURE__ */ React.createElement("div", { className: "text-3xl font-serif text-[#1E1A13]" }, formatPrice(grandTotal))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, segments.map((seg) => /* @__PURE__ */ React.createElement("div", { key: seg.label, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, seg.label), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, seg.unit, ": ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, seg.count)), /* @__PURE__ */ React.createElement("div", null, "Total: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seg.value))))))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-3" }, "Seasonal Fees"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Sites with fee set: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, sitesWithFee.length)), /* @__PURE__ */ React.createElement("div", null, "Monthly rate (current): ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seasonalMonthlyTotal))), /* @__PURE__ */ React.createElement("div", { className: "pt-1 border-t border-[#E2DED5] mt-1" }, "Collected so far (", elapsedMonths, " mo. in ", selectedYear, "): ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seasonalCollectedTotal))), /* @__PURE__ */ React.createElement("div", null, "Projected full year: ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(seasonalAnnualTotal))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-dashed border-[#E2DED5] bg-[#FFFDFA] p-5 opacity-70" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-1" }, "Square (Restaurant, Snack Bar, Waterfront, Main Store)"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Coming soon \u2014 Square API integration."))));
-}
-function AdminReportsView({ db }) {
-  var _a, _b, _c, _d;
-  const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
-  const taxRate = (_d = (_c = db.settings) == null ? void 0 : _c.taxRate) != null ? _d : 13;
-  const allRows = useMemo(() => buildTransactionList(db, taxRate, commissionPercent), [db, taxRate, commissionPercent]);
-  const SEGMENTS = ["Cottage Sales", "Consignment / Commission", "Sunspace Accessories", "Service (Invoices)", "Seasonal Fees"];
-  const todayStr = todayISO();
-  const startOfYear = todayStr.slice(0, 4) + "-01-01";
-  const [dateFrom, setDateFrom] = useState(startOfYear);
-  const [dateTo, setDateTo] = useState(todayStr);
-  const [activeSegments, setActiveSegments] = useState(new Set(SEGMENTS));
-  const [compareEnabled, setCompareEnabled] = useState(false);
-  const applyPreset = (preset) => {
-    const now = new Date(todayStr + "T00:00:00");
-    if (preset === "month") {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      setDateFrom(first.toISOString().slice(0, 10));
-      setDateTo(todayStr);
-    } else if (preset === "quarter") {
-      const q = Math.floor(now.getMonth() / 3);
-      const first = new Date(now.getFullYear(), q * 3, 1);
-      setDateFrom(first.toISOString().slice(0, 10));
-      setDateTo(todayStr);
-    } else if (preset === "year") {
-      setDateFrom(now.getFullYear() + "-01-01");
-      setDateTo(todayStr);
-    }
-  };
-  const toggleSegment = (seg) => {
-    setActiveSegments((prev) => {
-      const next = new Set(prev);
-      if (next.has(seg)) next.delete(seg);
-      else next.add(seg);
-      return next;
-    });
-  };
-  const filteredRows = allRows.filter((r) => r.date >= dateFrom && r.date <= dateTo && activeSegments.has(r.segment));
-  const total = filteredRows.reduce((sum, r) => sum + r.amount, 0);
-  const bySegment = SEGMENTS.map((seg) => ({
-    segment: seg,
-    total: filteredRows.filter((r) => r.segment === seg).reduce((sum, r) => sum + r.amount, 0),
-    count: filteredRows.filter((r) => r.segment === seg).length
-  }));
-  const priorFrom = shiftYear(dateFrom, -1);
-  const priorTo = shiftYear(dateTo, -1);
-  const priorRows = allRows.filter((r) => r.date >= priorFrom && r.date <= priorTo && activeSegments.has(r.segment));
-  const priorTotal = priorRows.reduce((sum, r) => sum + r.amount, 0);
-  const pctChange = priorTotal > 0 ? (total - priorTotal) / priorTotal * 100 : null;
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Reports"), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => applyPreset("month"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, "This Month"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyPreset("quarter"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, "This Quarter"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyPreset("year"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, "This Year")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "From", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateFrom, onChange: (e) => setDateFrom(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "To", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateTo, onChange: (e) => setDateTo(e.target.value), className: "ml-2 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm bg-white" })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-xs text-[#75716A] font-medium ml-auto" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: compareEnabled, onChange: (e) => setCompareEnabled(e.target.checked) }), "Compare to same period last year")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, SEGMENTS.map((seg) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: seg,
-      onClick: () => toggleSegment(seg),
-      className: `px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${activeSegments.has(seg) ? "bg-[#DDF1E1] border-[#28633C] text-[#28633C]" : "bg-white border-[#E2DED5] text-[#75716A]"}`
-    },
-    seg
-  )))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Total for selected range"), /* @__PURE__ */ React.createElement("div", { className: "text-3xl font-serif text-[#1E1A13]" }, formatPrice(total)), compareEnabled && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-2" }, "Same period last year: ", /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, formatPrice(priorTotal)), pctChange != null && /* @__PURE__ */ React.createElement("span", { className: `ml-2 font-semibold ${pctChange >= 0 ? "text-[#28633C]" : "text-[#a8532a]"}` }, pctChange >= 0 ? "+" : "", pctChange.toFixed(1), "%"))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, bySegment.map((s) => /* @__PURE__ */ React.createElement("div", { key: s.segment, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-1" }, s.segment), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#75716A]" }, s.count, " transactions"), /* @__PURE__ */ React.createElement("div", { className: "text-base font-medium text-[#1E1A13]" }, formatPrice(s.total))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Segment"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Description"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold text-right" }, "Amount"))), /* @__PURE__ */ React.createElement("tbody", null, filteredRows.length === 0 && /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { colSpan: 4, className: "px-4 py-6 text-center text-[#75716A] text-sm" }, "No transactions in this range.")), filteredRows.map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, r.segment), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, r.description), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right font-medium text-[#1E1A13]" }, formatPrice(r.amount))))))));
-}
-function getRateAtDate(site, dateStr) {
-  const history = (site.seasonalFeeHistory || []).filter((h) => h.date <= dateStr).sort((a, b) => a.date < b.date ? 1 : -1);
-  if (history.length > 0) return Number(history[0].amount) || 0;
-  if (!site.seasonalFeeHistory || site.seasonalFeeHistory.length === 0) return Number(site.seasonalFee) || 0;
-  return 0;
-}
-function getCurrentRate(site) {
-  return getRateAtDate(site, todayISO());
-}
-function getUpcomingRate(site) {
-  const today = todayISO();
-  const future = (site.seasonalFeeHistory || []).filter((h) => h.date > today).sort((a, b) => a.date < b.date ? -1 : 1);
-  return future.length > 0 ? future[0] : null;
-}
-function upsertRateHistory(site, dateStr, amount) {
-  const history = (site.seasonalFeeHistory || []).filter((h) => h.date !== dateStr);
-  history.push({ date: dateStr, amount });
-  return history.sort((a, b) => a.date < b.date ? -1 : 1);
-}
-function nextSeptFirst() {
-  const now = new Date();
-  const year = now.getMonth() >= 8 ? now.getFullYear() + 1 : now.getFullYear();
-  return `${year}-09-01`;
-}
-function seasonalMonthlyTotalForDate(db, dateStr) {
-  return (db.sites || []).reduce((sum, s) => sum + getRateAtDate(s, dateStr), 0);
-}
-function getSiteOwner(db, siteId) {
-  return (db.customers || []).find((c) => customerSiteIds(c).includes(siteId)) || null;
-}
-function SeasonalFeesView({ db, persist }) {
-  const actor = useCurrentActor();
-  const [filter, setFilter] = useState("");
-  const [selected, setSelected] = useState(/* @__PURE__ */ new Set());
-  const [bulkAmount, setBulkAmount] = useState("");
-  const [bulkEffectiveDate, setBulkEffectiveDate] = useState(todayISO());
-  const [increasePct, setIncreasePct] = useState("");
-  const [increaseFlat, setIncreaseFlat] = useState("");
-  const [increaseEffectiveDate, setIncreaseEffectiveDate] = useState(nextSeptFirst());
-  const [toast, setToast] = useState(null);
-  const sites = (db.sites || []).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
-  const filteredSites = sites.filter((s) => {
-    if (!filter) return true;
-    const owner = getSiteOwner(db, s.id);
-    const hay = `${s.number} ${s.section || ""} ${(s.tags || []).join(" ")} ${(owner == null ? void 0 : owner.name) || ""}`.toLowerCase();
-    return hay.includes(filter.toLowerCase());
-  });
-  const allTags = Array.from(/* @__PURE__ */ new Set(sites.flatMap((s) => s.tags || []))).sort();
-  const selectByTag = (tag) => {
-    const matchIds = sites.filter((s) => (s.tags || []).includes(tag)).map((s) => s.id);
-    setSelected(new Set(matchIds));
-  };
-  const sitesWithFee = sites.filter((s) => getCurrentRate(s) > 0);
-  const totalMonthly = sitesWithFee.reduce((sum, s) => sum + getCurrentRate(s), 0);
-  const totalAnnual = totalMonthly * 12;
-  const toggleSelect = (id) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  const selectAllFiltered = () => setSelected(new Set(filteredSites.map((s) => s.id)));
-  const clearSelection = () => setSelected(/* @__PURE__ */ new Set());
-  const updateFee = (siteId, value) => {
-    if (value == null) return;
-    const nextSites = db.sites.map((s) => s.id === siteId ? { ...s, seasonalFeeHistory: upsertRateHistory(s, todayISO(), value), seasonalFee: value } : s);
-    persist({ ...db, sites: nextSites });
-  };
-  const applyBulkSet = () => {
-    const amount = Number(bulkAmount);
-    if (!Number.isFinite(amount) || amount < 0 || selected.size === 0 || !bulkEffectiveDate) return;
-    const nextSites = db.sites.map((s) => selected.has(s.id) ? { ...s, seasonalFeeHistory: upsertRateHistory(s, bulkEffectiveDate, amount), seasonalFee: bulkEffectiveDate <= todayISO() ? amount : s.seasonalFee != null ? s.seasonalFee : null } : s);
-    const activityLog = addLog(db, actor, `Set seasonal fee to ${formatPrice(amount)}/mo for ${selected.size} site(s), effective ${bulkEffectiveDate}`);
-    persist({ ...db, sites: nextSites, activityLog });
-    setBulkAmount("");
-    setToast(`Updated ${selected.size} site(s)`);
-  };
-  const applyIncrease = (mode) => {
-    const raw = mode === "pct" ? Number(increasePct) : Number(increaseFlat);
-    if (!Number.isFinite(raw) || raw === 0 || !increaseEffectiveDate) return;
-    const targetIds = selected.size > 0 ? selected : new Set(sitesWithFee.map((s) => s.id));
-    if (targetIds.size === 0) return;
-    const nextSites = db.sites.map((s) => {
-      if (!targetIds.has(s.id)) return s;
-      const current = getCurrentRate(s);
-      const updated = Math.round((mode === "pct" ? current * (1 + raw / 100) : current + raw) * 100) / 100;
-      return { ...s, seasonalFeeHistory: upsertRateHistory(s, increaseEffectiveDate, updated), seasonalFee: increaseEffectiveDate <= todayISO() ? updated : s.seasonalFee != null ? s.seasonalFee : null };
-    });
-    const label = mode === "pct" ? `${raw}%` : formatPrice(raw);
-    const activityLog = addLog(db, actor, `Scheduled seasonal fee increase of ${label} for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
-    persist({ ...db, sites: nextSites, activityLog });
-    setIncreasePct("");
-    setIncreaseFlat("");
-    setToast(`Scheduled increase for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
-  };
-  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Seasonal Fees"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Sites with a fee set"), /* @__PURE__ */ React.createElement("div", { className: "text-xl font-serif text-[#1E1A13]" }, sitesWithFee.length, " / ", sites.length)), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Current monthly revenue"), /* @__PURE__ */ React.createElement("div", { className: "text-xl font-serif text-[#1E1A13]" }, formatPrice(totalMonthly))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] font-medium mb-1" }, "Current annualized rate"), /* @__PURE__ */ React.createElement("div", { className: "text-xl font-serif text-[#1E1A13]" }, formatPrice(totalAnnual)))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-[#1E1A13]" }, selected.size, " selected"), /* @__PURE__ */ React.createElement("button", { onClick: selectAllFiltered, className: "text-xs text-[#377249] hover:underline font-medium" }, "Select all shown"), /* @__PURE__ */ React.createElement("button", { onClick: clearSelection, className: "text-xs text-[#75716A] hover:underline font-medium" }, "Clear selection")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Set fee for selected: $", /* @__PURE__ */ React.createElement("input", { type: "number", value: bulkAmount, onChange: (e) => setBulkAmount(e.target.value), className: "ml-2 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: bulkEffectiveDate, onChange: (e) => setBulkEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), /* @__PURE__ */ React.createElement("button", { onClick: applyBulkSet, disabled: selected.size === 0, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Apply to selected")), /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Annual increase (applies to selected sites, or all sites with a fee if none selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by ", /* @__PURE__ */ React.createElement("input", { type: "number", value: increasePct, onChange: (e) => setIncreasePct(e.target.value), className: "mx-2 w-16 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "%"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("pct"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply % increase"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "or"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by $", /* @__PURE__ */ React.createElement("input", { type: "number", value: increaseFlat, onChange: (e) => setIncreaseFlat(e.target.value), className: "mx-2 w-20 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("flat"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply $ increase"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium ml-2" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: increaseEffectiveDate, onChange: (e) => setIncreaseEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }))))), /* @__PURE__ */ React.createElement("input", { type: "text", value: filter, onChange: (e) => setFilter(e.target.value), placeholder: "Search by site #, section, tag, or customer name\u2026", className: "w-full mb-2 border border-[#E2DED5] rounded-lg px-3 py-2 text-sm bg-white" }), allTags.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] font-medium" }, "Select by tag:"), allTags.map((tag) => /* @__PURE__ */ React.createElement("button", { key: tag, onClick: () => selectByTag(tag), className: "px-2.5 py-1 rounded-full text-xs font-medium bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, tag))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-8" }), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Tags"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Current Fee"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Upcoming Change"))), /* @__PURE__ */ React.createElement("tbody", null, filteredSites.map((s) => {
-    const owner = getSiteOwner(db, s.id);
-    const currentRate = getCurrentRate(s);
-    const upcoming = getUpcomingRate(s);
-    return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: selected.has(s.id), onChange: () => toggleSelect(s.id) })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 font-semibold text-[#1E1A13]" }, s.number), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, (s.tags || []).length ? s.tags.join(", ") : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement("input", { type: "number", value: currentRate || "", onChange: (e) => updateFee(s.id, e.target.value === "" ? 0 : Number(e.target.value)), placeholder: "0.00", className: "w-28 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, upcoming ? `${formatPrice(upcoming.amount)}/mo on ${upcoming.date}` : "\u2014"));
-  })))));
-}
-function SystemHealthView({ db, persist }) {
-  const actor = useCurrentActor();
-  const [versionNote, setVersionNote] = useState("");
-  const emailMonthKey = currentMonthKey();
-  const emailUsage = db.emailUsage || {};
-  const emailsUsedThisMonth = emailUsage.month === emailMonthKey ? emailUsage.count || 0 : 0;
-  const emailLimit = ((db.settings || {}).emailMonthlyLimit) || 200;
-  const emailPct = Math.min(100, Math.round(emailsUsedThisMonth / emailLimit * 100));
-  const zohoUsed = ((db.settings || {}).zohoFlowUsedThisMonth) || 0;
-  const zohoLimit = ((db.settings || {}).zohoFlowMonthlyLimit) || 100;
-  const zohoPct = Math.min(100, Math.round(zohoUsed / zohoLimit * 100));
-  const toneFor = (pct) => pct >= 90 ? "text-[#a8532a]" : pct >= 60 ? "text-[#9A6B1F]" : "text-[#28633C]";
-  const barToneFor = (pct) => pct >= 90 ? "bg-[#a8532a]" : pct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
-  const recordCounts = [
-    { label: "Customers", count: (db.customers || []).length },
-    { label: "Sites", count: (db.sites || []).length },
-    { label: "Cottages", count: (db.cottages || []).length },
-    { label: "Work Orders", count: (db.workOrders || []).length },
-    { label: "Quotes", count: (db.quotes || []).length },
-    { label: "Invoices", count: (db.invoices || []).length },
-    { label: "Cottage Orders", count: (db.cottageOrders || []).length },
-    { label: "Consignment Listings", count: (db.consignmentListings || []).length },
-    { label: "Sunspace Orders", count: (db.sunspaceOrders || []).length },
-    { label: "Winterizing Requests", count: (db.winterizingRequests || []).length },
-    { label: "Activity Log Entries", count: (db.activityLog || []).length }
-  ];
-  const estimatedBytes = JSON.stringify(db).length;
-  const estimatedMB = estimatedBytes / (1024 * 1024);
-  const firestoreFreeGB = 1;
-  const storagePct = Math.min(100, (estimatedMB / 1024 / firestoreFreeGB * 100));
-  const versionLog = db.appVersionLog || [];
-  const errorLog = db.systemErrorLog || [];
-  const updateSetting = (key, value) => {
-    persist({ ...db, settings: { ...db.settings, [key]: value } });
-  };
-  const addVersionNote = () => {
-    if (!versionNote.trim()) return;
-    const entry = { id: uid(), date: todayISO(), note: versionNote.trim() };
-    const appVersionLog = [entry, ...versionLog].slice(0, 50);
-    const activityLog = addLog(db, actor, `Logged app update: ${versionNote.trim()}`);
-    persist({ ...db, appVersionLog, activityLog });
-    setVersionNote("");
-  };
-  const clearErrors = () => {
-    persist({ ...db, systemErrorLog: [] });
-  };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "System Health & Alerts"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 200), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS free plan: "), "200 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
-}
-function ParkSubNav({ active, onSelect, allowedTabKeys }) {
-  const items = [
-    { key: "customers", label: "Customers" },
-    { key: "sites", label: "Sites" },
-    { key: "cottages", label: "Cottages" }
-  ].filter((it) => !allowedTabKeys || allowedTabKeys.has(it.key));
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-5 flex-wrap" }, items.map((it) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: it.key,
-      onClick: () => onSelect(it.key),
-      className: `px-4 py-1.5 rounded-full text-sm font-semibold border transition ${active === it.key ? "bg-[#377249] text-white border-[#377249]" : "bg-white text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
-    },
-    it.label
-  )));
-}
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
@@ -7949,80 +6920,28 @@ const TABS = [
   { key: "workorders", label: "Work Orders", group: "service" },
   { key: "propane", label: "Propane", group: "service" },
   { key: "parts", label: "Parts", group: "service" },
-  { key: "thepark", label: "The Park", group: "service" },
-  { key: "customers", label: "Customers", group: "service", hidden: true },
-  { key: "cottages", label: "Cottages", group: "service", hidden: true },
-  { key: "sites", label: "Sites", group: "service", hidden: true },
-  { key: "map", label: "Site Map", group: "service" },
+  { key: "customers", label: "Customers", group: "service" },
+  { key: "cottages", label: "Cottages", group: "service" },
+  { key: "sites", label: "Sites", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
   { key: "calendar", label: "Calendar", group: "service" },
-  { key: "servicereports", label: "Service Reports", group: "service" },
+  { key: "staff", label: "Staff", group: "service" },
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
   { key: "salesreport", label: "Sales Report", group: "sales" },
   { key: "cottageorders", label: "New Cottage Orders", group: "sales" },
   { key: "consignments", label: "Consignment Listings", group: "sales" },
   { key: "sunspace", label: "Sunspace Accessories", group: "sales" },
-  { key: "prospects", label: "Prospects / Waitlist", group: "sales" },
-  { key: "admindashboard", label: "Admin Dashboard", group: "admin" },
-  { key: "adminreports", label: "Reports", group: "admin" },
-  { key: "seasonalfees", label: "Seasonal Fees", group: "admin" },
-  { key: "systemhealth", label: "System Health", group: "admin" },
-  { key: "staff", label: "Staff", group: "admin" }
+  { key: "prospects", label: "Prospects / Waitlist", group: "sales" }
 ];
 function AppContent() {
   const { db, loading, error, persist, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [mode, setMode] = useState("service");
   const [invoicePrefill, setInvoicePrefill] = useState(null);
-  const [workOrderPrefill, setWorkOrderPrefill] = useState(null);
   const [importPending, setImportPending] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [manageRolesOpen, setManageRolesOpen] = useState(false);
-  const [parkTab, setParkTab] = useState("customers");
-  const [searchPrefill, setSearchPrefill] = useState(null);
-  const [notifStatus, setNotifStatus] = useState(
-    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
-  );
-  const VAPID_KEY = "BKyelv6IM5rfJ2rIEeCBEpn_WYKa7LcjjYnxmH3C-YJH3mux5QhL281_awCm3Dvy-HUiFyNbfdnDwuysdQ7KjpI";
-  const enablePushNotifications = async () => {
-    try {
-      if (typeof Notification === "undefined") {
-        alert("This browser doesn't support notifications.");
-        return;
-      }
-      const permission = await Notification.requestPermission();
-      setNotifStatus(permission);
-      if (permission !== "granted") return;
-      const registration = await navigator.serviceWorker.ready;
-      const messaging = firebase.messaging();
-      const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
-      if (token) {
-        const key = (actor || "").trim().toLowerCase();
-        const current = dbRef.current || {};
-        const existingTokens = (current.pushTokens || {})[key] || [];
-        if (!existingTokens.includes(token)) {
-          const pushTokens = { ...current.pushTokens || {}, [key]: [...existingTokens, token] };
-          persistRef.current({ ...current, pushTokens });
-        }
-      }
-    } catch (err) {
-      console.warn("Push setup failed:", err);
-      logSystemError(dbRef.current, persistRef.current, "Push Notifications", (err == null ? void 0 : err.message) || "Failed to enable notifications");
-    }
-  };
-  useEffect(() => {
-    if (typeof Notification === "undefined" || notifStatus !== "granted") return;
-    try {
-      const messaging = firebase.messaging();
-      messaging.onMessage((payload) => {
-        const title = (payload.data && payload.data.title) || "Notification";
-        const body = (payload.data && payload.data.body) || "";
-        new Notification(title, { body, icon: "icon-192.png" });
-      });
-    } catch (e) {
-    }
-  }, [notifStatus]);
   const importInputRef = useRef(null);
   const actor = useCurrentActor();
   const generatedRef = useRef(false);
@@ -8096,11 +7015,10 @@ function AppContent() {
   const role = getUserRole(db, actor);
   const isAdmin = role === "admin";
   const isManager = role === "manager";
-  const isSalesManager = role === "salesmanager";
   const isAdminOrManager = isAdmin || isManager;
-  const allowedTabKeys = isAdmin ? null : isSalesManager ? /* @__PURE__ */ new Set([...OFFICE_TAB_KEYS, ...SALES_TAB_KEYS]) : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
-  const visibleGroup = isAdmin || isSalesManager ? mode : "service";
-  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : "dashboard";
+  const allowedTabKeys = isAdmin ? null : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
+  const visibleGroup = isAdmin ? mode : "service";
+  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
@@ -8126,19 +7044,13 @@ function AppContent() {
     }
     setImportPending(null);
   };
-  const PARK_KEYS = ["customers", "sites", "cottages"];
   const selectTab = (key) => {
     setTab(key);
-    if (PARK_KEYS.includes(key)) setParkTab(key);
     setMobileNavOpen(false);
-  };
-  const jumpToSearchResult = (tabKey, term) => {
-    setSearchPrefill({ tab: tabKey, term, ts: Date.now() });
-    selectTab(tabKey);
   };
   const switchMode = (nextMode) => {
     setMode(nextMode);
-    setTab(nextMode === "sales" ? "salesdashboard" : nextMode === "admin" ? "admindashboard" : "dashboard");
+    setTab(nextMode === "sales" ? "salesdashboard" : "dashboard");
     setMobileNavOpen(false);
   };
   const goToServiceTab = (key) => {
@@ -8149,11 +7061,6 @@ function AppContent() {
   const createInvoiceFromSource = (source, sourceType) => {
     setInvoicePrefill({ source, sourceType });
     setTab("invoices");
-    setMobileNavOpen(false);
-  };
-  const createWorkOrderFromSite = (site) => {
-    setWorkOrderPrefill({ siteId: site.id, ts: Date.now() });
-    setTab("workorders");
     setMobileNavOpen(false);
   };
   return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 py-3" }, /* @__PURE__ */ React.createElement(
@@ -8170,7 +7077,7 @@ function AppContent() {
       className: `w-[230px] flex-shrink-0 bg-[#FFFDFA] border-r border-[#E2DED5] flex flex-col p-3.5 fixed sm:static inset-y-0 left-0 z-40 transform transition-transform duration-200 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"} sm:translate-x-0`
     },
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2.5 px-2 pb-4" }, /* @__PURE__ */ React.createElement("div", { className: "w-8 h-8 rounded-[9px] bg-[#377249] flex items-center justify-center text-white flex-shrink-0" }, /* @__PURE__ */ React.createElement(IconTag, { className: "w-4 h-4" })), /* @__PURE__ */ React.createElement("div", { className: "font-serif text-[15px] leading-tight text-[#1E1A13]" }, "Campground Maintenance")),
-    (isAdmin || isSalesManager) && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
+    isAdmin && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => switchMode("service"),
@@ -8184,36 +7091,18 @@ function AppContent() {
         className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "sales" ? "bg-[#C1652F] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
       },
       "Sales"
-    ), isAdmin && /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        onClick: () => switchMode("admin"),
-        className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "admin" ? "bg-[#5B4B8A] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
-      },
-      "Admin"
     )),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !t.hidden).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key === "thepark" ? parkTab : t.key)).map((t) => {
-      const isActive = t.key === "thepark" ? PARK_KEYS.includes(effectiveTab) : effectiveTab === t.key;
-      return /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          key: t.key,
-          onClick: () => selectTab(t.key === "thepark" ? parkTab : t.key),
-          className: `flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${isActive ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
-        },
-        /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${isActive ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
-        t.label
-      );
-    })),
-    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, notifStatus !== "unsupported" && /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key)).map((t) => /* @__PURE__ */ React.createElement(
       "button",
       {
-        onClick: notifStatus === "granted" ? void 0 : enablePushNotifications,
-        disabled: notifStatus === "granted" || notifStatus === "denied",
-        className: `w-full text-left text-[11px] font-semibold px-2 py-1.5 rounded-md ${notifStatus === "granted" ? "text-[#28633C]" : notifStatus === "denied" ? "text-[#9A968D]" : "text-[#377249] hover:bg-[#F1EEE9]"}`
+        key: t.key,
+        onClick: () => selectTab(t.key),
+        className: `flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${effectiveTab === t.key ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
       },
-      notifStatus === "granted" ? "\u2713 Notifications on" : notifStatus === "denied" ? "Notifications blocked (check browser settings)" : "Enable Notifications"
-    ), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+      /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${effectiveTab === t.key ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
+      t.label
+    ))),
+    /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       var _a;
       return (_a = importInputRef.current) == null ? void 0 : _a.click();
     }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setManageRolesOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Manage Access"), /* @__PURE__ */ React.createElement(
@@ -8224,7 +7113,7 @@ function AppContent() {
       },
       "Sign out"
     )), /* @__PURE__ */ React.createElement("input", { ref: importInputRef, type: "file", accept: "application/json", onChange: handleImportFile, className: "hidden" }))
-  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { className: "flex-1 min-w-0 px-6 sm:px-8 py-6 pt-16 sm:pt-6" }, error && /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between gap-3 text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", null, error), /* @__PURE__ */ React.createElement("button", { onClick: retry, className: "px-2 py-1 rounded bg-white/60 hover:bg-white font-medium whitespace-nowrap" }, "Retry")), /* @__PURE__ */ React.createElement("main", null, effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote") }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdminOrManager && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), isAdmin && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), isAdmin && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), isAdmin && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), isAdmin && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), isAdmin && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), isAdmin && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -8318,14 +7207,6 @@ function App() {
   return /* @__PURE__ */ React.createElement(ErrorBoundary, null, /* @__PURE__ */ React.createElement(AuthGate, null));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((err) => {
-      console.warn("Service worker registration failed:", err);
-    });
-  });
-}
 </script>
 </body>
 </html>
