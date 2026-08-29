@@ -1,5 +1,5 @@
 // Bump this whenever you deploy changes to index.html so devices pick up the new version.
-const CACHE_NAME = "qic-app-shell-v4";
+const CACHE_NAME = "qic-app-shell-v5";
 
 // Firebase Messaging needs its own SDK loaded inside the service worker context,
 // since this file runs separately from index.html and can't reuse its Firebase instance.
@@ -78,6 +78,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
+  // Only http(s) requests are cacheable — browser extensions (chrome-extension://,
+  // moz-extension://) inject requests the Cache API can't store, which was throwing
+  // a console error on every load.
+  if (!request.url.startsWith("http")) return;
 
   const url = new URL(request.url);
   if (PASSTHROUGH_HOSTS.some((h) => url.hostname.includes(h))) return;

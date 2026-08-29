@@ -7862,6 +7862,8 @@ function AppContent() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [manageRolesOpen, setManageRolesOpen] = useState(false);
+  const [parkTab, setParkTab] = useState("customers");
+  const [searchPrefill, setSearchPrefill] = useState(null);
   const [notifStatus, setNotifStatus] = useState(
     typeof Notification !== "undefined" ? Notification.permission : "unsupported"
   );
@@ -8008,14 +8010,12 @@ function AppContent() {
     }
     setImportPending(null);
   };
-  const [parkTab, setParkTab] = useState("customers");
   const PARK_KEYS = ["customers", "sites", "cottages"];
   const selectTab = (key) => {
     setTab(key);
     if (PARK_KEYS.includes(key)) setParkTab(key);
     setMobileNavOpen(false);
   };
-  const [searchPrefill, setSearchPrefill] = useState(null);
   const jumpToSearchResult = (tabKey, term) => {
     setSearchPrefill({ tab: tabKey, term, ts: Date.now() });
     selectTab(tabKey);
