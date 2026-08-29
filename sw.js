@@ -1,5 +1,5 @@
 // Bump this whenever you deploy changes to index.html so devices pick up the new version.
-const CACHE_NAME = "qic-app-shell-v6";
+const CACHE_NAME = "qic-app-shell-v7";
 
 // Firebase Messaging needs its own SDK loaded inside the service worker context,
 // since this file runs separately from index.html and can't reuse its Firebase instance.
@@ -21,7 +21,9 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   const title = (payload.data && payload.data.title) || "QIC Service";
   const body = (payload.data && payload.data.body) || "";
-  self.registration.showNotification(title, {
+  // Returning this promise matters: without it, the browser assumes we didn't
+  // show anything and displays its own generic placeholder notification instead.
+  return self.registration.showNotification(title, {
     body,
     icon: "icon-192.png",
     badge: "icon-192.png"
