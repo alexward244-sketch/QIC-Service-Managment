@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Campground Maintenance</title>
 
+<!-- PWA: installability -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#377249" />
+<link rel="icon" href="icon-192.png" />
+<!-- iOS home screen support (iOS ignores manifest.json for icons/standalone mode) -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="QIC Service" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+
 <!-- React -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -48,6 +58,15 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db_ = firebase.firestore();
+// Lets the app read/write to a local on-device cache when signal is spotty or absent,
+// then automatically syncs any changes to Firestore once a connection is available again.
+try {
+  db_.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+    console.warn("Offline persistence not enabled:", err && err.code);
+  });
+} catch (e) {
+  console.warn("Offline persistence not supported in this browser:", e);
+}
 const DOC_REF = db_.collection("campground").doc("data");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
@@ -8020,6 +8039,14 @@ function App() {
   return /* @__PURE__ */ React.createElement(ErrorBoundary, null, /* @__PURE__ */ React.createElement(AuthGate, null));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((err) => {
+      console.warn("Service worker registration failed:", err);
+    });
+  });
+}
 </script>
 </body>
 </html>
