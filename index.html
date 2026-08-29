@@ -7899,9 +7899,8 @@ function AppContent() {
     try {
       const messaging = firebase.messaging();
       messaging.onMessage((payload) => {
-        var _a, _b;
-        const title = ((_a = payload.notification) == null ? void 0 : _a.title) || "Notification";
-        const body = ((_b = payload.notification) == null ? void 0 : _b.body) || "";
+        const title = (payload.data && payload.data.title) || "Notification";
+        const body = (payload.data && payload.data.body) || "";
         new Notification(title, { body, icon: "icon-192.png" });
       });
     } catch (e) {

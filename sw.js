@@ -1,5 +1,5 @@
 // Bump this whenever you deploy changes to index.html so devices pick up the new version.
-const CACHE_NAME = "qic-app-shell-v5";
+const CACHE_NAME = "qic-app-shell-v6";
 
 // Firebase Messaging needs its own SDK loaded inside the service worker context,
 // since this file runs separately from index.html and can't reuse its Firebase instance.
@@ -19,8 +19,8 @@ const messaging = firebase.messaging();
 
 // Fires when a push arrives while the app is closed or in the background.
 messaging.onBackgroundMessage((payload) => {
-  const title = (payload.notification && payload.notification.title) || "QIC Service";
-  const body = (payload.notification && payload.notification.body) || "";
+  const title = (payload.data && payload.data.title) || "QIC Service";
+  const body = (payload.data && payload.data.body) || "";
   self.registration.showNotification(title, {
     body,
     icon: "icon-192.png",
