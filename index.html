@@ -382,7 +382,8 @@ const CONSIGNMENT_STATUS_STYLES = {
   Sold: "bg-[#DDF1E1] text-[#28633C]",
   Withdrawn: "bg-[#F5E3D9] text-[#a8532a]"
 };
-const PROSPECT_STATUS = ["New", "Contacted", "Toured", "Not Interested"];
+const PROSPECT_STATUS = ["New", "Contacted", "Toured", "Quoted", "Deposit", "Sold", "Not Interested"];
+const PROSPECT_SOURCES = ["Referral", "Website", "Walk-in", "Repeat Customer", "Radio", "TV", "Social Media", "Other"];
 const FREQUENCY_OPTIONS = [
   { label: "Weekly", days: 7 },
   { label: "Every 2 weeks", days: 14 },
@@ -408,6 +409,20 @@ function customerSiteIds(customer) {
   if (Array.isArray(customer.siteIds)) return customer.siteIds;
   if (customer.siteId) return [customer.siteId];
   return [];
+}
+function buildCustomerFromContact(name, phone, email) {
+  return {
+    id: uid(),
+    name: (name || "").trim(),
+    phone: (phone || "").trim(),
+    email: (email || "").trim(),
+    name2: "",
+    phone2: "",
+    email2: "",
+    address: "",
+    siteIds: [],
+    siteId: null
+  };
 }
 function effectiveCommissionRate(listing, defaultRate) {
   return (listing == null ? void 0 : listing.commissionOverride) != null ? listing.commissionOverride : defaultRate;
@@ -1704,12 +1719,77 @@ function CottagesView({ db, persist, readOnly, filterPrefill }) {
     }
   ));
 }
-function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
+function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose, linkedProspect }) {
+  const [ownerType, setOwnerType] = useState((linkedProspect == null ? void 0 : linkedProspect.customerId) ? "existing" : "new");
+  const [customerId, setCustomerId] = useState((linkedProspect == null ? void 0 : linkedProspect.customerId) || "");
+  const [switchToNewConfirm, setSwitchToNewConfirm] = useState(false);
+  const [name, setName] = useState((linkedProspect == null ? void 0 : linkedProspect.name) || "");
+  const [phone, setPhone] = useState((linkedProspect == null ? void 0 : linkedProspect.phone) || "");
+  const [email, setEmail] = useState((linkedProspect == null ? void 0 : linkedProspect.email) || "");
   const actor = useCurrentActor();
+  const closeDealForProspect = (db2, actorName) => {
+    if (!linkedProspect) return db2;
+    const entry = { id: uid(), text: `Deal closed \u2014 ownership transferred on ${todayISO()}`, author: actorName, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const prospects = (db2.prospects || []).map(
+      (p) => p.id === linkedProspect.id ? { ...p, status: "Sold", commentLog: [entry, ...p.commentLog || []] } : p
+    );
+    return { ...db2, prospects };
+  };
+  const pickCustomer = (id) => {
+    setCustomerId(id);
+    const c = db.customers.find((cust) => cust.id === id);
+    if (c) {
+      setName(c.name || "");
+      setPhone(c.phone || "");
+      setEmail(c.email || "");
+    }
+  };
+  const requestSwitchToNew = () => {
+    if (customerId) {
+      setSwitchToNewConfirm(true);
+    } else {
+      setOwnerType("new");
+    }
+  };
+  const confirmSwitchToNew = () => {
+    setCustomerId("");
+    setName("");
+    setPhone("");
+    setEmail("");
+    setOwnerType("new");
+    setSwitchToNewConfirm(false);
+  };
+  const oldIds = new Set(oldCustomers.map((c) => c.id));
   const submit = () => {
+    if (ownerType === "existing") {
+      if (!customerId) return;
+      const target = db.customers.find((c) => c.id === customerId);
+      if (!target) return;
+      const customers = db.customers.map((c) => {
+        let siteIds = customerSiteIds(c);
+        if (oldIds.has(c.id) && c.id !== customerId) {
+          siteIds = siteIds.filter((sId) => sId !== site.id);
+        }
+        if (c.id === customerId && !siteIds.includes(site.id)) {
+          siteIds = [...siteIds, site.id];
+        }
+        return { ...c, siteIds, siteId: siteIds[0] || null };
+      });
+      const transferEntry = {
+        id: uid(),
+        date: todayISO(),
+        fromCustomerName: oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "Unknown",
+        toCustomerName: target.name,
+        cottageName: cottage.name
+      };
+      const sites = db.sites.map(
+        (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
+      );
+      const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}`);
+      persist(closeDealForProspect({ ...db, customers, sites, activityLog }, actor));
+      onClose();
+      return;
+    }
     if (!name.trim()) return;
     const newCustomer = {
       id: uid(),
@@ -1723,7 +1803,6 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       siteIds: [site.id],
       siteId: site.id
     };
-    const oldIds = new Set(oldCustomers.map((c) => c.id));
     const customers = [
       ...db.customers.map((c) => {
         if (!oldIds.has(c.id)) return c;
@@ -1743,14 +1822,47 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
     );
     const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}`);
-    persist({ ...db, customers, sites, activityLog });
+    persist(closeDealForProspect({ ...db, customers, sites, activityLog }, actor));
     onClose();
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), /* @__PURE__ */ React.createElement(Field, { label: "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  const customerOptions = db.customers.filter((c) => !oldIds.has(c.id)).map((c) => {
+    const siteIds = customerSiteIds(c);
+    const siteLabels = siteIds.map((sId) => {
+      const s = db.sites.find((site2) => site2.id === sId);
+      return s ? `Site ${s.number}` : null;
+    }).filter(Boolean);
+    return { value: c.id, label: siteLabels.length ? `${c.name} (${siteLabels.join(", ")})` : c.name, searchText: `${c.name} ${siteLabels.join(" ")}` };
+  });
+  const ownerTypeToggle = /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: requestSwitchToNew,
+      className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${ownerType === "new" ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+    },
+    "New Owner"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setOwnerType("existing"),
+      className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${ownerType === "existing" ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+    },
+    "Existing Customer"
+  ));
+  const switchConfirmModal = switchToNewConfirm ? /* @__PURE__ */ React.createElement(Modal, { title: "Switch to New Owner?", onClose: () => setSwitchToNewConfirm(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This unlinks the selected customer and will instead create a brand-new customer record when you complete the transfer. Name, phone, and email already filled in will stay, and you can edit them."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSwitchToNewConfirm(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep as Existing Customer"), /* @__PURE__ */ React.createElement("button", { onClick: confirmSwitchToNew, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Switch to New Owner"))) : null;
+  const canSubmit = ownerType === "existing" ? !!customerId : !!name.trim();
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, ownerType === "existing" ? "This adds the site to an existing customer\u2019s profile and unlinks" : "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), ownerTypeToggle, switchConfirmModal, ownerType === "existing" ? /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: customerOptions,
+    value: customerId,
+    onChange: pickCustomer,
+    placeholder: "Search customers\u2026",
+    noneLabel: "\u2014 Select a customer \u2014"
+  })) : null, ownerType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Contact details below are managed on the customer's profile \u2014 edit them there if they've changed."), /* @__PURE__ */ React.createElement(Field, { label: ownerType === "existing" ? "Name" : "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, disabled: ownerType === "existing", onChange: (e) => setName(e.target.value), autoFocus: ownerType === "new" })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, disabled: ownerType === "existing", onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, disabled: ownerType === "existing", onChange: (e) => setEmail(e.target.value) })), ownerType === "new" && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: submit,
-      disabled: !name.trim(),
+      disabled: !canSubmit,
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
     },
     "Complete Transfer"
@@ -4433,7 +4545,7 @@ function SalesDashboardView({ db, persist }) {
   }).length;
   const listingsSoldThisYear = listings.filter((l) => l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(currentYear)).length;
   const unitsSoldThisYear = cottageOrdersSoldThisYear + listingsSoldThisYear;
-  const activeProspects = prospects.filter((p) => p.status !== "Not Interested").length;
+  const activeProspects = prospects.filter((p) => p.status !== "Not Interested" && p.status !== "Sold").length;
   const daysToSellSamples = [];
   listings.forEach((l) => {
     if (l.status === "Sold" && l.listedDate && l.soldDate) {
@@ -4479,7 +4591,9 @@ function SalesDashboardView({ db, persist }) {
     onConfirm: () => removeAppointment(confirm.target),
     onCancel: confirm.clear
   }) : null;
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Activity overview \u2014 for dollar figures, see Sales Report")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Units Listed", value: unitsListed }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: `Units Sold (${currentYear})`, value: unitsSoldThisYear, tone: "text-[#28633C]" }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Active Prospects", value: activeProspects }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Avg. Days to Sell", value: avgDaysToSell != null ? avgDaysToSell : "\u2014" })), appointmentsPanel, modalEl, confirmEl);
+  const sourceRows = [...PROSPECT_SOURCES.map((s) => ({ source: s, count: prospects.filter((p) => p.source === s).length })), { source: "Not specified", count: prospects.filter((p) => !p.source).length }].filter((row) => row.count > 0);
+  const sourcePanel = /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] mt-6 p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Leads by Source"), prospects.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic" }, "No prospects yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, sourceRows.map((row) => /* @__PURE__ */ React.createElement("div", { key: row.source, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, row.source), /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, row.count, " (", Math.round(row.count / prospects.length * 100), "%)")))));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Sales Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Activity overview \u2014 for dollar figures, see Sales Report")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4" }, /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Units Listed", value: unitsListed }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: `Units Sold (${currentYear})`, value: unitsSoldThisYear, tone: "text-[#28633C]" }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Active Prospects", value: activeProspects }), /* @__PURE__ */ React.createElement(SalesStatCard, { label: "Avg. Days to Sell", value: avgDaysToSell != null ? avgDaysToSell : "\u2014" })), sourcePanel, appointmentsPanel, modalEl, confirmEl);
 }
 function computeSalesYearStats(db, year, commissionPercent) {
   const cottageOrders = db.cottageOrders || [];
@@ -5244,10 +5358,18 @@ function ConsignmentForm({ initial, cottages, sites, commissionPercent, onSave, 
     "Save Listing"
   )));
 }
-function ProspectTicket({ prospect, db, onEdit, onDelete, onAdvance }) {
+function ProspectTicket({ prospect, db, onEdit, onDelete, onAdvance, onConvert, onCloseDeal, onFellThrough }) {
   const listing = prospect.listingId ? db.consignmentListings.find((l) => l.id === prospect.listingId) : null;
   const cottage = listing ? db.cottages.find((c) => c.id === listing.cottageId) : null;
-  const isFinal = prospect.status === "Toured" || prospect.status === "Not Interested";
+  const linkedCustomer = prospect.customerId ? (db.customers || []).find((c) => c.id === prospect.customerId) : null;
+  const linkedSiteIds = linkedCustomer ? customerSiteIds(linkedCustomer) : [];
+  const linkedSite = linkedSiteIds.length ? db.sites.find((s) => s.id === linkedSiteIds[0]) : null;
+  const isFinal = prospect.status === "Sold" || prospect.status === "Not Interested";
+  const isDeposit = prospect.status === "Deposit";
+  const canConvert = !isFinal && !prospect.saleRefId;
+  const statusIdx = PROSPECT_STATUS.indexOf(prospect.status);
+  const nextStatus = PROSPECT_STATUS[Math.min(statusIdx + 1, PROSPECT_STATUS.length - 2)];
+  const saleTypeLabel = prospect.saleType === "order" ? "New Custom Order" : prospect.saleType === "display" ? "Display Model" : prospect.saleType === "consignment" ? "Consignment Listing" : null;
   return /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -5258,16 +5380,40 @@ function ProspectTicket({ prospect, db, onEdit, onDelete, onAdvance }) {
       },
       className: `relative rounded-lg border p-4 mb-3 shadow-sm cursor-grab active:cursor-grabbing ${isFinal ? "bg-[#F1EEE9] border-[#EEEBE5]" : "bg-[#FFFDFA] border-[#E2DED5]"}`
     },
-    /* @__PURE__ */ React.createElement("h4", { className: "font-serif font-semibold text-[15px] text-[#1E1A13]" }, prospect.name),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("h4", { className: "font-serif font-semibold text-[15px] text-[#1E1A13]" }, prospect.name), linkedCustomer && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, linkedSite ? `Existing \u2014 Site ${linkedSite.number}` : "Existing customer")),
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, prospect.phone && /* @__PURE__ */ React.createElement("span", null, prospect.phone), prospect.email && /* @__PURE__ */ React.createElement("span", null, prospect.email)),
-    /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, cottage ? `Interested in ${cottage.name}` : "General interest"),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(prospect) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(prospect) }, "Delete")), prospect.status !== "Not Interested" && prospect.status !== "Toured" && /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, cottage ? `Interested in ${cottage.name}` : "General interest", prospect.source ? ` \u00B7 via ${prospect.source}` : ""),
+    saleTypeLabel && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A6B1F] mt-1 font-medium" }, "Deal: ", saleTypeLabel),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(prospect) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(prospect) }, "Delete")), !isFinal && !isDeposit && /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onAdvance(prospect),
         className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap"
       },
-      prospect.status === "New" ? "Mark Contacted \u2192" : "Mark Toured \u2192"
+      `Mark ${nextStatus} \u2192`
+    )),
+    canConvert && /* @__PURE__ */ React.createElement("div", { className: "mt-2 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => onConvert(prospect),
+        className: "w-full text-[11px] px-2.5 py-1.5 rounded-md bg-[#C1652F]/10 text-[#C1652F] hover:bg-[#C1652F]/20 font-medium"
+      },
+      "Convert to Sale"
+    )),
+    isDeposit && /* @__PURE__ */ React.createElement("div", { className: "mt-2 pt-2 border-t border-dashed border-[#EEEBE5] flex gap-2" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => onCloseDeal(prospect),
+        className: "flex-1 text-[11px] px-2.5 py-1.5 rounded-md bg-[#28633C] text-white hover:bg-[#1e4c2d] font-medium"
+      },
+      "Close Deal"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => onFellThrough(prospect),
+        className: "flex-1 text-[11px] px-2.5 py-1.5 rounded-md border border-[#a8532a]/40 text-[#a8532a] hover:bg-[#F5E3D9] font-medium"
+      },
+      "Deal Fell Through"
     ))
   );
 }
@@ -5488,6 +5634,84 @@ function SunspaceOrdersView({ db, persist, onGoToWorkOrders }) {
   }) : null;
   return /* @__PURE__ */ React.createElement("div", null, header, board, modalEl, confirmEl);
 }
+function ConvertProspectModal({ prospect, db, onConvertOrder, onConvertDisplay, onConvertConsignment, onClose }) {
+  const [choice, setChoice] = useState(null);
+  const [selectedId, setSelectedId] = useState("");
+  const unsoldDisplays = db.cottageOrders.filter((o) => o.type === "Display Model" && !o.soldDate);
+  const openListings = db.consignmentListings.filter((l) => l.status === "Listed" || l.status === "Pending Offer");
+  const displayOptions = unsoldDisplays.map((o) => ({ value: o.id, label: o.model ? o.model : "Display Model (unnamed)", searchText: o.model || "" }));
+  const listingOptions = openListings.map((l) => {
+    const cottage = db.cottages.find((c) => c.id === l.cottageId);
+    return { value: l.id, label: cottage ? cottage.name : "Unknown cottage" };
+  });
+  const chooser = /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: onConvertOrder, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "New Custom Order"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "A brand-new cottage being built for them.")
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => setChoice("display"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Existing Display Model"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying a display unit already on-site.")
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => setChoice("consignment"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Consignment Listing"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying an existing used cottage that's listed for sale.")
+  ));
+  const displayPicker = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Which display model?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: displayOptions,
+    value: selectedId,
+    onChange: setSelectedId,
+    placeholder: "Search display models\u2026",
+    noneLabel: "\u2014 Select \u2014"
+  })), displayOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No unsold display models on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setChoice(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => onConvertDisplay(selectedId),
+      disabled: !selectedId,
+      className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+    },
+    "Confirm"
+  )));
+  const listingPicker = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Which listing?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: listingOptions,
+    value: selectedId,
+    onChange: setSelectedId,
+    placeholder: "Search listings\u2026",
+    noneLabel: "\u2014 Select \u2014"
+  })), listingOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No active consignment listings on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setChoice(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => onConvertConsignment(selectedId),
+      disabled: !selectedId,
+      className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+    },
+    "Confirm"
+  )));
+  const body = choice === null ? chooser : choice === "display" ? displayPicker : listingPicker;
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Convert ${prospect.name} to a Sale`, onClose }, choice === null && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "What are they buying?"), body);
+}
+function DealFellThroughModal({ prospect, onResolve, onClose }) {
+  const isOrder = prospect.saleType === "order";
+  const label = prospect.saleType === "consignment" ? "the consignment listing" : prospect.saleType === "display" ? "the display model" : "the order";
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Deal Fell Through?", onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, `This moves ${prospect.name} back to Toured and keeps their history \u2014 nothing is deleted.`, isOrder ? " Since this was a new build, choose what happens to the order:" : ` It also reopens ${label} so it's available again.`), isOrder ? /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => onResolve("convert-to-display"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Convert to Display Model"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Keep building it, sell as a display unit instead.")
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => onResolve("cancel-build"), className: "w-full text-left px-4 py-3 rounded-md border border-[#a8532a]/30 hover:bg-[#F5E3D9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, "Cancel Build"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Remove the order entirely.")
+  ), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "w-full text-center px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md mt-1" }, "Cancel")) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => onResolve("reopen"), className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" },
+    "Confirm \u2014 Deal Fell Through"
+  )));
+}
 function ProspectsView({ db, persist }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -5495,6 +5719,9 @@ function ProspectsView({ db, persist }) {
   const [toast, setToast] = useState(null);
   const [dragOverStatus, setDragOverStatus] = useState(null);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState(null);
+  const [closeDealTarget, setCloseDealTarget] = useState(null);
+  const [fellThroughTarget, setFellThroughTarget] = useState(null);
   const formDirtyRef = useRef(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
@@ -5528,9 +5755,124 @@ function ProspectsView({ db, persist }) {
   };
   const advance = (prospect) => {
     const idx = PROSPECT_STATUS.indexOf(prospect.status);
-    const nextStatus = PROSPECT_STATUS[Math.min(idx + 1, 2)];
+    const nextStatus = PROSPECT_STATUS[Math.min(idx + 1, PROSPECT_STATUS.length - 2)];
     const activityLog = addLog(db, actor, `Prospect ${prospect.name} marked ${nextStatus}`);
     persist({ ...db, prospects: db.prospects.map((p) => p.id === prospect.id ? { ...p, status: nextStatus } : p), activityLog });
+  };
+  const convertToOrder = () => {
+    const prospect = convertTarget;
+    let customerId = prospect.customerId;
+    let customers = db.customers;
+    if (!customerId) {
+      const newCustomer = buildCustomerFromContact(prospect.name, prospect.phone, prospect.email);
+      customerId = newCustomer.id;
+      customers = [...db.customers, newCustomer];
+    }
+    const newOrder = {
+      id: uid(),
+      type: "Customer Order",
+      status: "Ordered/Being Built",
+      customerId,
+      siteId: null,
+      model: "",
+      size: "",
+      bedrooms: null,
+      bathrooms: null,
+      deckPorch: "",
+      sunroom: "",
+      features: "",
+      orderedDate: todayISO(),
+      expectedDeliveryDate: "",
+      deliveredDate: null,
+      soldDate: null,
+      totalPrice: 0,
+      depositAmount: 0,
+      depositDate: "",
+      notes: "",
+      commentLog: [],
+      prospectId: prospect.id
+    };
+    const entry = { id: uid(), text: "Converted to a New Custom Order \u2014 moved to Deposit", author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Deposit", saleType: "order", saleRefId: newOrder.id, customerId, commentLog: [entry, ...p.commentLog || []] } : p);
+    const activityLog = addLog(db, actor, `Converted prospect ${prospect.name} to a new Cottage Order`);
+    persist({ ...db, customers, cottageOrders: [...db.cottageOrders, newOrder], prospects, activityLog });
+    setConvertTarget(null);
+    setToast("Converted to Cottage Order");
+  };
+  const convertToDisplay = (orderId) => {
+    if (!orderId) return;
+    const prospect = convertTarget;
+    let customerId = prospect.customerId;
+    let customers = db.customers;
+    if (!customerId) {
+      const newCustomer = buildCustomerFromContact(prospect.name, prospect.phone, prospect.email);
+      customerId = newCustomer.id;
+      customers = [...db.customers, newCustomer];
+    }
+    const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, soldDate: todayISO(), prospectId: prospect.id } : o);
+    const entry = { id: uid(), text: "Converted to an existing Display Model sale \u2014 moved to Deposit", author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Deposit", saleType: "display", saleRefId: orderId, customerId, commentLog: [entry, ...p.commentLog || []] } : p);
+    const activityLog = addLog(db, actor, `Converted prospect ${prospect.name} to a Display Model sale`);
+    persist({ ...db, customers, cottageOrders, prospects, activityLog });
+    setConvertTarget(null);
+    setToast("Converted to Display Model sale");
+  };
+  const convertToConsignment = (listingId) => {
+    if (!listingId) return;
+    const prospect = convertTarget;
+    const consignmentListings = db.consignmentListings.map((l) => l.id === listingId ? { ...l, status: "Sold", soldDate: l.soldDate || todayISO(), soldPrice: l.soldPrice || l.askingPrice || 0, prospectId: prospect.id } : l);
+    const entry = { id: uid(), text: "Converted to a Consignment Listing sale \u2014 moved to Deposit. Ownership transfers when the deal closes.", author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Deposit", saleType: "consignment", saleRefId: listingId, commentLog: [entry, ...p.commentLog || []] } : p);
+    const activityLog = addLog(db, actor, `Converted prospect ${prospect.name} to a Consignment Listing sale`);
+    persist({ ...db, consignmentListings, prospects, activityLog });
+    setConvertTarget(null);
+    setToast("Converted to Consignment sale");
+  };
+  const openCloseDeal = (prospect) => {
+    if (prospect.saleType === "order" || prospect.saleType === "display") {
+      const entry = { id: uid(), text: `Deal closed \u2014 marked Sold on ${todayISO()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+      const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Sold", commentLog: [entry, ...p.commentLog || []] } : p);
+      const activityLog = addLog(db, actor, `Prospect ${prospect.name} marked Sold`);
+      persist({ ...db, prospects, activityLog });
+      setToast("Marked Sold");
+      return;
+    }
+    const listing = db.consignmentListings.find((l) => l.id === prospect.saleRefId);
+    const cottage = listing ? db.cottages.find((c) => c.id === listing.cottageId) : null;
+    const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+    if (!listing || !cottage || !site) {
+      setToast("Couldn't find the linked listing \u2014 check it wasn't removed");
+      return;
+    }
+    const oldCustomers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
+    setCloseDealTarget({ prospect, cottage, site, oldCustomers });
+  };
+  const resolveFellThrough = (action) => {
+    const prospect = fellThroughTarget;
+    let noteText = "Deal fell through";
+    let consignmentListings = db.consignmentListings;
+    let cottageOrders = db.cottageOrders;
+    if (prospect.saleType === "consignment") {
+      consignmentListings = db.consignmentListings.map((l) => l.id === prospect.saleRefId ? { ...l, status: "Listed", soldDate: null, soldPrice: null, prospectId: null } : l);
+      noteText = "Deal fell through \u2014 listing reopened";
+    } else if (prospect.saleType === "display") {
+      cottageOrders = db.cottageOrders.map((o) => o.id === prospect.saleRefId ? { ...o, customerId: null, soldDate: null, prospectId: null } : o);
+      noteText = "Deal fell through \u2014 display model reopened";
+    } else if (prospect.saleType === "order") {
+      if (action === "convert-to-display") {
+        cottageOrders = db.cottageOrders.map((o) => o.id === prospect.saleRefId ? { ...o, type: "Display Model", customerId: null, prospectId: null } : o);
+        noteText = "Deal fell through \u2014 order converted to a display model";
+      } else if (action === "cancel-build") {
+        cottageOrders = db.cottageOrders.filter((o) => o.id !== prospect.saleRefId);
+        noteText = "Deal fell through \u2014 build cancelled";
+      }
+    }
+    const entry = { id: uid(), text: `${noteText} on ${todayISO()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Toured", saleType: null, saleRefId: null, commentLog: [entry, ...p.commentLog || []] } : p);
+    const activityLog = addLog(db, actor, `Prospect ${prospect.name}: ${noteText.toLowerCase()}`);
+    persist({ ...db, consignmentListings, cottageOrders, prospects, activityLog });
+    setFellThroughTarget(null);
+    setToast("Moved back to Toured");
   };
   const handleDropOnStatus = (status) => (e) => {
     e.preventDefault();
@@ -5567,7 +5909,7 @@ function ProspectsView({ db, persist }) {
       text: "No prospects yet.",
       action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a prospect")
     }
-  ) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-4 gap-4" }, PROSPECT_STATUS.map((status) => {
+  ) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3" }, PROSPECT_STATUS.map((status) => {
     const list = filtered.filter((p) => p.status === status);
     return /* @__PURE__ */ React.createElement("div", { key: status }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, status), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] bg-[#F1EEE9] rounded-full px-1.5" }, list.length)), /* @__PURE__ */ React.createElement(
       "div",
@@ -5588,7 +5930,10 @@ function ProspectsView({ db, persist }) {
           db,
           onEdit: (p) => setModal({ mode: "edit", data: p }),
           onDelete: (p) => confirm.ask(p.id),
-          onAdvance: advance
+          onAdvance: advance,
+          onConvert: (p) => setConvertTarget(p),
+          onCloseDeal: openCloseDeal,
+          onFellThrough: (p) => setFellThroughTarget(p)
         }
       ))
     ));
@@ -5598,13 +5943,34 @@ function ProspectsView({ db, persist }) {
       initial: modal.data,
       consignmentListings: db.consignmentListings,
       cottages: db.cottages,
+      customers: db.customers,
+      sites: db.sites,
       onSave: save,
       onCancel: requestCloseModal,
       onDirtyChange: (d) => {
         formDirtyRef.current = d;
       }
     }
-  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this prospect that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), confirm.target && /* @__PURE__ */ React.createElement(
+  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this prospect that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), convertTarget && /* @__PURE__ */ React.createElement(ConvertProspectModal, {
+    prospect: convertTarget,
+    db,
+    onConvertOrder: convertToOrder,
+    onConvertDisplay: convertToDisplay,
+    onConvertConsignment: convertToConsignment,
+    onClose: () => setConvertTarget(null)
+  }), closeDealTarget && /* @__PURE__ */ React.createElement(TransferOwnershipModal, {
+    cottage: closeDealTarget.cottage,
+    site: closeDealTarget.site,
+    oldCustomers: closeDealTarget.oldCustomers,
+    linkedProspect: closeDealTarget.prospect,
+    db,
+    persist,
+    onClose: () => setCloseDealTarget(null)
+  }), fellThroughTarget && /* @__PURE__ */ React.createElement(DealFellThroughModal, {
+    prospect: fellThroughTarget,
+    onResolve: resolveFellThrough,
+    onClose: () => setFellThroughTarget(null)
+  }), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = db.prospects.find((p) => p.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this prospect",
@@ -5613,11 +5979,15 @@ function ProspectsView({ db, persist }) {
     }
   ));
 }
-function ProspectForm({ initial, consignmentListings, cottages, onSave, onCancel, onDirtyChange }) {
+function ProspectForm({ initial, consignmentListings, cottages, customers, sites, onSave, onCancel, onDirtyChange }) {
+  const [leadType, setLeadType] = useState((initial == null ? void 0 : initial.customerId) ? "existing" : "new");
+  const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
+  const [switchToNewConfirm, setSwitchToNewConfirm] = useState(false);
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [phone, setPhone] = useState((initial == null ? void 0 : initial.phone) || "");
   const [email, setEmail] = useState((initial == null ? void 0 : initial.email) || "");
   const [listingId, setListingId] = useState((initial == null ? void 0 : initial.listingId) || "");
+  const [source, setSource] = useState((initial == null ? void 0 : initial.source) || "");
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "New");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [commentLog, setCommentLog] = useState((initial == null ? void 0 : initial.commentLog) || []);
@@ -5630,7 +6000,28 @@ function ProspectForm({ initial, consignmentListings, cottages, onSave, onCancel
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [name, phone, email, listingId, status, notes, commentLog]);
+  }, [name, phone, email, listingId, source, status, notes, commentLog, customerId, leadType]);
+  const pickCustomer = (id) => {
+    setCustomerId(id);
+    const c = (customers || []).find((cust) => cust.id === id);
+    if (c) {
+      setName(c.name || "");
+      setPhone(c.phone || "");
+      setEmail(c.email || "");
+    }
+  };
+  const requestSwitchToNew = () => {
+    if (customerId) {
+      setSwitchToNewConfirm(true);
+    } else {
+      setLeadType("new");
+    }
+  };
+  const confirmSwitchToNew = () => {
+    setCustomerId("");
+    setLeadType("new");
+    setSwitchToNewConfirm(false);
+  };
   const addComment = () => {
     if (!commentText.trim()) return;
     const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
@@ -5645,16 +6036,51 @@ function ProspectForm({ initial, consignmentListings, cottages, onSave, onCancel
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim(),
+      customerId: leadType === "existing" && customerId ? customerId : null,
       listingId: listingId || null,
+      source: source || null,
       status,
       addedDate: (initial == null ? void 0 : initial.addedDate) || todayISO(),
       notes: notes.trim(),
       commentLog
     });
   };
+  const customerOptions = (customers || []).map((c) => {
+    const siteIds = customerSiteIds(c);
+    const siteLabels = siteIds.map((sId) => {
+      const s = (sites || []).find((site) => site.id === sId);
+      return s ? `Site ${s.number}` : null;
+    }).filter(Boolean);
+    return { value: c.id, label: siteLabels.length ? `${c.name} (${siteLabels.join(", ")})` : c.name, searchText: `${c.name} ${siteLabels.join(" ")}` };
+  });
+  const leadTypeToggle = /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-3 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: requestSwitchToNew,
+      className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${leadType === "new" ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+    },
+    "New Lead"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setLeadType("existing"),
+      className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${leadType === "existing" ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+    },
+    "Existing Customer"
+  ));
+  const existingCustomerField = leadType === "existing" ? /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: customerOptions,
+    value: customerId,
+    onChange: pickCustomer,
+    placeholder: "Search customers\u2026",
+    noneLabel: "\u2014 Select a customer \u2014"
+  })) : null;
+  const switchConfirmModal = switchToNewConfirm ? /* @__PURE__ */ React.createElement(Modal, { title: "Switch to New Lead?", onClose: () => setSwitchToNewConfirm(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This unlinks this prospect from the selected customer record. The name, phone, and email already filled in will stay, and you can edit them freely."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSwitchToNewConfirm(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep as Existing Customer"), /* @__PURE__ */ React.createElement("button", { onClick: confirmSwitchToNew, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Switch to New Lead"))) : null;
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Interested In" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: listingId, onChange: (e) => setListingId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "General interest (no specific listing)"), activeListings.map((l) => {
+  } }, leadTypeToggle, existingCustomerField, leadType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Linked to an existing customer \u2014 fields below are pre-filled from their profile and can be edited for this prospect only."), switchConfirmModal, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Lead Source" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: source, onChange: (e) => setSource(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not specified"), PROSPECT_SOURCES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Interested In" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: listingId, onChange: (e) => setListingId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "General interest (no specific listing)"), activeListings.map((l) => {
     const cottage = (cottages || []).find((c) => c.id === l.cottageId);
     return /* @__PURE__ */ React.createElement("option", { key: l.id, value: l.id }, cottage ? cottage.name : "Unknown cottage");
   }))), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, PROSPECT_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "What they're looking for, when they'd like to visit, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5] mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Comments"), commentLog.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, commentLog.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement(
