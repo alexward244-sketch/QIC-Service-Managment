@@ -8439,7 +8439,7 @@ function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
   };
   const parsed = text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
     const [siteNumber, amountRaw, monthsRaw] = parseLine(line);
-    const amount = Number(amountRaw);
+    const amount = amountRaw === "" || amountRaw == null ? NaN : Number(amountRaw);
     const months = Number(monthsRaw) === 9 ? 9 : 12;
     const matchedSite = siteNumber ? sites.find((s) => s.number.toLowerCase() === siteNumber.toLowerCase()) : null;
     return {
