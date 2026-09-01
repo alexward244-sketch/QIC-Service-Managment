@@ -8451,7 +8451,8 @@ function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
     };
   }).filter((r) => r.siteNumber);
   const validRows = parsed.filter((r) => r.matched && r.amount != null);
-  const unmatchedCount = parsed.filter((r) => !r.matched).length;
+  const unmatchedRows = parsed.filter((r) => !r.matched);
+  const unmatchedCount = unmatchedRows.length;
   const invalidAmountCount = parsed.filter((r) => r.matched && r.amount == null).length;
   const yearValid = /^\d{4}$/.test(year);
   const submit = () => {
@@ -8477,7 +8478,7 @@ function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
       placeholder: "e.g.\n400,389.45,12\n409,450,9",
       autoFocus: true
     }
-  )), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-1" }, validRows.length, " site", validRows.length === 1 ? "" : "s", " ready to import"), unmatchedCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-1" }, unmatchedCount, " row", unmatchedCount === 1 ? "" : "s", " had a site number that didn't match an existing site \u2014 those will be skipped."), invalidAmountCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, invalidAmountCount, " row", invalidAmountCount === 1 ? "" : "s", " had a missing or invalid lot fee amount \u2014 those will be skipped."), !yearValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, "Enter a valid 4-digit season year."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-1" }, validRows.length, " site", validRows.length === 1 ? "" : "s", " ready to import"), unmatchedCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-1" }, unmatchedCount, " row", unmatchedCount === 1 ? "" : "s", " had a site number that didn't match an existing site \u2014 those will be skipped: ", unmatchedRows.map((r) => r.siteNumber).join(", ")), invalidAmountCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, invalidAmountCount, " row", invalidAmountCount === 1 ? "" : "s", " had a missing or invalid lot fee amount \u2014 those will be skipped."), !yearValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, "Enter a valid 4-digit season year."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
