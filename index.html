@@ -73,8 +73,17 @@ try {
 const DOC_REF = db_.collection("campground").doc("data");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
-const EMAILJS_SERVICE_ID = "service_wxg8sr8";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
+// One EmailJS "service" per sending identity. Each must be added under
+// EmailJS \u2192 Email Services \u2192 Add New, connected to that department's actual
+// inbox, before its Service ID goes here. "service" is already live; swap the
+// PASTE_ placeholders for "sales" and "accounting" once those are connected.
+const EMAILJS_SERVICES = {
+  service: "service_wxg8sr8",
+  sales: "PASTE_SALES_SERVICE_ID",
+  accounting: "PASTE_ACCOUNTING_SERVICE_ID"
+};
+const EMAILJS_SERVICE_ID = EMAILJS_SERVICES.service;
 const EMAIL_ENABLED = !EMAILJS_PUBLIC_KEY.startsWith("PASTE_");
 if (EMAIL_ENABLED && window.emailjs) {
   window.emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
@@ -84,11 +93,16 @@ function currentMonthKey() {
   const d = /* @__PURE__ */ new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
-function sendEmail({ toEmail, toName, subject, message }) {
+function sendEmail({ toEmail, toName, subject, message, department }) {
   if (!EMAIL_ENABLED || !window.emailjs) {
     return Promise.reject(new Error("Email isn't set up yet \u2014 add your EmailJS config near the top of this file."));
   }
-  return window.emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+  const dept = department && EMAILJS_SERVICES[department] ? department : "service";
+  const serviceId = EMAILJS_SERVICES[dept];
+  if (!serviceId || serviceId.startsWith("PASTE_")) {
+    return Promise.reject(new Error(`The "${dept}" email address isn't connected in EmailJS yet \u2014 add its Service ID near the top of this file.`));
+  }
+  return window.emailjs.send(serviceId, EMAILJS_TEMPLATE_ID, {
     to_email: toEmail,
     to_name: toName || "",
     subject,
@@ -112,7 +126,7 @@ function sendText({ phone, message }) {
   if (!address) {
     return Promise.reject(new Error("No valid phone number to text."));
   }
-  return sendEmail({ toEmail: address, toName: "", subject: "", message: message });
+  return sendEmail({ toEmail: address, toName: "", subject: "", message: message, department: "service" });
 }
 
 const emptyDb = () => ({
@@ -382,7 +396,7 @@ const CONSIGNMENT_STATUS_STYLES = {
   Sold: "bg-[#DDF1E1] text-[#28633C]",
   Withdrawn: "bg-[#F5E3D9] text-[#a8532a]"
 };
-const PROSPECT_STATUS = ["New", "Contacted", "Toured", "Quoted", "Deposit", "Sold", "Not Interested"];
+const PROSPECT_STATUS = ["New", "Contacted", "Toured", "Deposit", "Sold", "Not Interested"];
 const PROSPECT_SOURCES = ["Referral", "Website", "Walk-in", "Repeat Customer", "Radio", "TV", "Social Media", "Other"];
 const FREQUENCY_OPTIONS = [
   { label: "Weekly", days: 7 },
@@ -2630,13 +2644,18 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
   const pickSite = (val) => {
     setSiteId(val);
-    if (val && cottageId) {
-      const currentCottage = cottages.find((c) => c.id === cottageId);
-      if (currentCottage && currentCottage.siteId !== val) setCottageId("");
-    }
-    if (!customerId && val) {
-      const owner = customers.find((c) => customerSiteIds(c).includes(val));
-      if (owner) setCustomerId(owner.id);
+    if (val) {
+      const cottagesOnSite = cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
     }
   };
   const pickCottage = (val) => {
@@ -2654,7 +2673,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   };
   const pickCustomer = (val) => {
     setCustomerId(val);
-    if (val && !siteId) {
+    if (val) {
       const customer = customers.find((c) => c.id === val);
       const custSiteIds = customer ? customerSiteIds(customer) : [];
       if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
@@ -2872,14 +2891,16 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
       toEmail: customer.email,
       toName: customer.name,
       subject: `Invoice ${invoice.invoiceNumber}`,
-      message: buildInvoiceEmailText(invoice, db, taxRate)
+      message: buildInvoiceEmailText(invoice, db, taxRate),
+      department: "service"
     })];
     if (accountingEmail) {
       sends.push(sendEmail({
         toEmail: accountingEmail,
         toName: "Accounting",
         subject: `Invoice ${invoice.invoiceNumber} \u2014 ${customer.name}`,
-        message: buildInvoiceEmailText(invoice, db, taxRate)
+        message: buildInvoiceEmailText(invoice, db, taxRate),
+        department: "service"
       }));
     }
     Promise.all(sends).then(() => {
@@ -3411,7 +3432,8 @@ function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPref
       toEmail: customer.email,
       toName: customer.name,
       subject: `Quote: ${quote.title}`,
-      message: buildQuoteEmailText(quote, db, taxRate)
+      message: buildQuoteEmailText(quote, db, taxRate),
+      department: "service"
     }).then(() => {
       setEmailStatus((s) => ({ ...s, [quote.id]: "sent" }));
       const activityLog = addLog(db, actor, `Emailed quote "${quote.title}" to ${customer.name}`);
@@ -3591,6 +3613,15 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const laborRate = (_h = (_g = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : RATE_OPTIONS[1].rate;
   const handleSiteChange = (val) => {
     setSiteId(val);
+    if (val) {
+      const cottagesOnSite = (cottages || []).filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = (cottages || []).find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+    }
     const cust = (customers || []).find((c) => customerSiteIds(c).includes(val));
     if (cust) setCustomerId(cust.id);
   };
@@ -4069,22 +4100,24 @@ function buildPrintDocument(bodyHtml) {
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="color-scheme" content="light">
 <title>Print</title>
 <style>
-  body { font-family: Georgia, serif; color: #111; margin: 0; }
-  .wo { padding: 32px; page-break-after: always; }
+  html { background: #fff; color-scheme: light; }
+  body { font-family: Georgia, serif; color: #111; background: #fff; margin: 0; }
+  .wo { padding: 32px; page-break-after: always; background: #fff; }
   .wo:last-child { page-break-after: auto; }
   .wo-head { border-bottom: 2px solid #377249; padding-bottom: 10px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
   .label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: #555; margin-bottom: 4px; }
-  h1 { font-size: 22px; margin: 2px 0 0; font-weight: 700; }
+  h1 { font-size: 22px; margin: 2px 0 0; font-weight: 700; color: #111; }
   .meta { font-size: 12px; text-align: right; color: #444; }
   .wo-table { width: 100%; font-size: 13px; margin-bottom: 18px; border-collapse: collapse; }
-  .wo-table td { padding: 4px 8px 4px 0; }
+  .wo-table td { padding: 4px 8px 4px 0; color: #111; }
   .wo-table td.k { color: #555; width: 120px; }
-  .desc { font-size: 14px; line-height: 1.6; min-height: 60px; border-bottom: 1px solid #ccc; padding-bottom: 12px; white-space: pre-wrap; }
+  .desc { font-size: 14px; line-height: 1.6; min-height: 60px; border-bottom: 1px solid #ccc; padding-bottom: 12px; white-space: pre-wrap; color: #111; }
   .sign { margin-top: 40px; display: flex; justify-content: space-between; font-size: 12px; }
-  .sign-line { width: 45%; border-top: 1px solid #333; padding-top: 4px; }
-  .print-hint { padding: 12px 32px; font-family: Georgia, serif; font-size: 12px; color: #666; }
+  .sign-line { width: 45%; border-top: 1px solid #333; padding-top: 4px; color: #111; }
+  .print-hint { padding: 12px 32px; font-family: Georgia, serif; font-size: 12px; color: #666; background: #fff; }
   @media print { .print-hint { display: none; } }
 </style>
 </head>
@@ -4153,10 +4186,6 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </table>` : ""}
       ${infoSheet && laborHours ? `<div class="label" style="margin-top:16px;">Labor</div><p class="desc" style="min-height:0;border:none;">${laborHours} hr \u2014 ${escapeHtml(invoice.laborRateType || "Rate")}</p>` : ""}
       ${summaryTable}
-      <div class="sign">
-        <div class="sign-line">${infoSheet ? "Reviewed by" : "Approved by (signature)"}</div>
-        <div class="sign-line">Date</div>
-      </div>
     </div>`;
 }
 function buildInvoiceEmailText(invoice, db, taxRate) {
@@ -5439,13 +5468,18 @@ function SunspaceOrderForm({ initial, db, onSave, onCancel }) {
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const pickSite = (val) => {
     setSiteId(val);
-    if (val && cottageId) {
-      const currentCottage = db.cottages.find((c) => c.id === cottageId);
-      if (currentCottage && currentCottage.siteId !== val) setCottageId("");
-    }
-    if (!customerId && val) {
-      const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
-      if (owner) setCustomerId(owner.id);
+    if (val) {
+      const cottagesOnSite = db.cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = db.cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
     }
   };
   const pickCottage = (val) => {
@@ -5463,7 +5497,7 @@ function SunspaceOrderForm({ initial, db, onSave, onCancel }) {
   };
   const pickCustomer = (val) => {
     setCustomerId(val);
-    if (val && !siteId) {
+    if (val) {
       const customer = db.customers.find((c) => c.id === val);
       const custSiteIds = customer ? customerSiteIds(customer) : [];
       if (custSiteIds.length === 1) setSiteId(custSiteIds[0]);
@@ -5725,6 +5759,12 @@ function ProspectsView({ db, persist }) {
   const formDirtyRef = useRef(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
+  useEffect(() => {
+    const hasOrphaned = db.prospects.some((p) => p.status === "Quoted");
+    if (hasOrphaned) {
+      persist({ ...db, prospects: db.prospects.map((p) => p.status === "Quoted" ? { ...p, status: "Toured" } : p) });
+    }
+  }, [db.prospects]);
   const requestCloseModal = () => {
     if (formDirtyRef.current) {
       setDiscardConfirmOpen(true);
@@ -6216,7 +6256,8 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
           toEmail: staffMember.email,
           toName: staffMember.name,
           subject: `Work order assigned: ${wo.title}`,
-          message: buildWorkOrderEmailText(wo, db)
+          message: buildWorkOrderEmailText(wo, db),
+          department: "service"
         }).catch(() => {
           logSystemError(db, persist, "Work order assignment email", `Failed to notify ${staffMember.name} about "${wo.title}"`);
         });
@@ -6777,6 +6818,15 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   const handleSiteChange = (val) => {
     setSiteId(val);
+    if (val) {
+      const cottagesOnSite = (cottages || []).filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = (cottages || []).find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+    }
     const cust = (customers || []).find((c) => customerSiteIds(c).includes(val));
     if (cust) setCustomerId(cust.id);
   };
@@ -7151,7 +7201,7 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   };
   const pickCustomer = (val) => {
     setCustomerId(val);
-    if (val && !siteId) {
+    if (val) {
       const customer = db.customers.find((c) => c.id === val);
       const custSiteIds = customer ? customerSiteIds(customer) : [];
       if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
@@ -7304,7 +7354,7 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   };
   const pickCustomer = (val) => {
     setCustomerId(val);
-    if (val && !siteId) {
+    if (val) {
       const customer = db.customers.find((c) => c.id === val);
       const custSiteIds = customer ? customerSiteIds(customer) : [];
       if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
@@ -7412,7 +7462,7 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   };
   const pickCustomer = (val) => {
     setCustomerId(val);
-    if (val && !siteId) {
+    if (val) {
       const customer = db.customers.find((c) => c.id === val);
       const custSiteIds = customer ? customerSiteIds(customer) : [];
       if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
@@ -7513,7 +7563,7 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
   };
   const pickCustomer = (val) => {
     setCustomerId(val);
-    if (val && !siteId) {
+    if (val) {
       const customer = db.customers.find((c) => c.id === val);
       const custSiteIds = customer ? customerSiteIds(customer) : [];
       if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
@@ -7652,7 +7702,8 @@ function WinterizingView({ db, persist, readOnly }) {
           toEmail: customer.email,
           toName: customer.name,
           subject: `Your Cottage Has Been Winterized \u2014 ${cottageName(request.cottageId)}`,
-          message: buildWinterizingEmailText(updated, db)
+          message: buildWinterizingEmailText(updated, db),
+          department: "service"
         }).then(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "sent" }));
           const emailedLog = addLog({ ...db, winterizingRequests: next }, actor, `Emailed winterizing completion to ${customer.name}`);

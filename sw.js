@@ -1,5 +1,5 @@
 // Bump this whenever you deploy changes to index.html so devices pick up the new version.
-const CACHE_NAME = "qic-app-shell-v25";
+const CACHE_NAME = "qic-app-shell-v30";
 
 // Firebase Messaging needs its own SDK loaded inside the service worker context,
 // since this file runs separately from index.html and can't reuse its Firebase instance.
