@@ -8407,7 +8407,7 @@ function SeasonalFeesView({ db, persist }) {
     const nextSites = db.sites.map((s) => {
       const row = rows.find((r) => r.siteId === s.id);
       if (!row) return s;
-      let history = s.seasonalFeeHistory || [];
+      let history = (s.seasonalFeeHistory || []).filter((h) => h.date < `${year}-01-01` || h.date > `${year}-12-31`);
       if (row.months === 9) {
         history = upsertRateHistory({ ...s, seasonalFeeHistory: history }, `${year}-01-01`, 0);
         history = upsertRateHistory({ ...s, seasonalFeeHistory: history }, `${year}-04-01`, row.amount);
