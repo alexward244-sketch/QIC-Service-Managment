@@ -8439,19 +8439,25 @@ function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
 }
-function buildHydroInvoiceEmailText(site, usage, subtotal, taxAmount, total, taxRate) {
+function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmount, total, taxRate, db) {
   return `
   <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
     <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
       <h1 style="margin:0;font-size:20px;font-weight:600;">Hydro Bill \u2014 Site ${escapeHtml(site.number)}</h1>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
-      <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:4px 0;color:#75716A;">Usage</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${usage} kWh</td></tr>
-        <tr><td style="padding:4px 0;color:#75716A;">Subtotal</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(subtotal)}</td></tr>
-        <tr><td style="padding:4px 0;color:#75716A;">Tax (${taxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(taxAmount)}</td></tr>
-        <tr><td style="padding:4px 0;color:#75716A;font-weight:600;">Total Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
+      <table style="width:100%;font-size:14px;margin-bottom:14px;">
+        <tr><td style="padding:2px 0;color:#75716A;">Customer</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml((owner == null ? void 0 : owner.name) || "\u2014")}</td></tr>
+        <tr><td style="padding:2px 0;color:#75716A;">Site</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml(site.number)}</td></tr>
       </table>
+      <table style="width:100%;font-size:14px;border-top:1px solid #E2DED5;padding-top:4px;">
+        <tr><td style="padding:4px 0;color:#75716A;">Usage</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${usage} kWh</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;">Rate</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${rate}\u00A2/kWh</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;border-top:1px solid #E2DED5;">Subtotal (${usage} kWh \u00D7 ${rate}\u00A2)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;border-top:1px solid #E2DED5;">${formatPrice(subtotal)}</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;">Tax (${taxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(taxAmount)}</td></tr>
+        <tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Total Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
+      </table>
+      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
     </div>
   </div>`;
@@ -8690,7 +8696,7 @@ function HydroReviewView({ db, persist }) {
         toEmail: owner.email,
         toName: owner.name,
         subject: `Hydro Bill \u2014 Site ${site.number}`,
-        message: buildHydroInvoiceEmailText(site, final.usage, subtotal, taxAmount, total, taxRate),
+        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
         department: "accounting"
       }).catch(() => {
         logSystemError(db, persist, "Hydro invoice email", `Failed to send hydro invoice to ${owner.name} for site ${site.number}`);
@@ -8703,7 +8709,7 @@ function HydroReviewView({ db, persist }) {
         toEmail: copyEmail,
         toName: "Accounting",
         subject: `Copy: Hydro Bill \u2014 Site ${site.number}${(owner == null ? void 0 : owner.name) ? ` (${owner.name})` : ""}`,
-        message: buildHydroInvoiceEmailText(site, final.usage, subtotal, taxAmount, total, taxRate),
+        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
         department: "accounting"
       }).catch(() => {
         logSystemError(db, persist, "Hydro invoice copy email", `Failed to send accounting copy for site ${site.number}`);
@@ -9085,6 +9091,7 @@ const TABS = [
   { key: "systemhealth", label: "System Health", group: "admin" },
   { key: "staff", label: "Staff", group: "admin" },
   { key: "hydroreview", label: "Hydro Meter Review", group: "accounting" },
+  { key: "hydro", label: "Hydro Readings", group: "accounting" },
   { key: "thepark", label: "The Park", group: "accounting" },
   { key: "customers", label: "Customers", group: "accounting", hidden: true },
   { key: "cottages", label: "Cottages", group: "accounting", hidden: true },
@@ -9094,10 +9101,10 @@ function AppContent() {
   const { db, pendingSignups, loading, error, persist, removePendingSignup, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
-  useEffect(() => {
-    setMoneyVisible(false);
-  }, [tab]);
   const [mode, setMode] = useState("service");
+  useEffect(() => {
+    setMoneyVisible(mode === "accounting");
+  }, [tab, mode]);
   const [invoicePrefill, setInvoicePrefill] = useState(null);
   const [workOrderPrefill, setWorkOrderPrefill] = useState(null);
   const [importPending, setImportPending] = useState(null);
