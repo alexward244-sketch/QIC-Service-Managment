@@ -739,6 +739,35 @@ function ConfirmDeleteModal({ label, onConfirm, onCancel, message }) {
     "Yes, delete"
   )));
 }
+function SalePriceModal({ title, priceLabel, initialPrice, onConfirm, onCancel }) {
+  const [price, setPrice] = useState(initialPrice != null && initialPrice !== 0 ? String(initialPrice) : "");
+  const priceNum = Number(price);
+  const valid = price !== "" && Number.isFinite(priceNum) && priceNum >= 0;
+  const submit = () => {
+    if (!valid) return;
+    onConfirm(priceNum);
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
+    if (e.key === "Enter") submit();
+  } }, /* @__PURE__ */ React.createElement(Field, { label: priceLabel || "Final Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Confirm"))));
+}
+function DepositDetailsModal({ title, priceLabel, initialPrice, onConfirm, onCancel }) {
+  const [price, setPrice] = useState(initialPrice != null && initialPrice !== 0 ? String(initialPrice) : "");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositDate, setDepositDate] = useState(todayISO());
+  const priceNum = Number(price);
+  const depositNum = Number(depositAmount);
+  const priceValid = price !== "" && Number.isFinite(priceNum) && priceNum >= 0;
+  const depositValid = depositAmount !== "" && Number.isFinite(depositNum) && depositNum >= 0;
+  const valid = priceValid && depositValid && !!depositDate;
+  const submit = () => {
+    if (!valid) return;
+    onConfirm({ price: priceNum, depositAmount: depositNum, depositDate });
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
+  } }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "A deposit locks this in as a real deal \u2014 fill in the details to move it to Deposit."), /* @__PURE__ */ React.createElement(Field, { label: priceLabel || "Total Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: depositAmount, onChange: (e) => setDepositAmount(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Confirm \u2014 Move to Deposit"))));
+}
 function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
   return /* @__PURE__ */ React.createElement(Modal, { title: "Send invoice?", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Email invoice ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, invoice.invoiceNumber), " to:"), /* @__PURE__ */ React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-5 space-y-0.5" }, /* @__PURE__ */ React.createElement("li", null, "\u2022 ", customer.name, " \u2014 ", customer.email), accountingEmail && /* @__PURE__ */ React.createElement("li", null, "\u2022 Accounting \u2014 ", accountingEmail)), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
@@ -1745,13 +1774,14 @@ function CottagesView({ db, persist, readOnly, filterPrefill }) {
     }
   ));
 }
-function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose, linkedProspect }) {
+function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose, linkedProspect, listing }) {
   const [ownerType, setOwnerType] = useState((linkedProspect == null ? void 0 : linkedProspect.customerId) ? "existing" : "new");
   const [customerId, setCustomerId] = useState((linkedProspect == null ? void 0 : linkedProspect.customerId) || "");
   const [switchToNewConfirm, setSwitchToNewConfirm] = useState(false);
   const [name, setName] = useState((linkedProspect == null ? void 0 : linkedProspect.name) || "");
   const [phone, setPhone] = useState((linkedProspect == null ? void 0 : linkedProspect.phone) || "");
   const [email, setEmail] = useState((linkedProspect == null ? void 0 : linkedProspect.email) || "");
+  const [soldPrice, setSoldPrice] = useState(listing ? String(listing.soldPrice || listing.askingPrice || "") : "");
   const actor = useCurrentActor();
   const closeDealForProspect = (db2, actorName) => {
     if (!linkedProspect) return db2;
@@ -1786,7 +1816,15 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
     setSwitchToNewConfirm(false);
   };
   const oldIds = new Set(oldCustomers.map((c) => c.id));
+  const soldPriceNum = Number(soldPrice);
+  const soldPriceValid = !listing || soldPrice !== "" && Number.isFinite(soldPriceNum) && soldPriceNum >= 0;
+  const applyListingPrice = (dbObj) => {
+    if (!listing) return dbObj;
+    const consignmentListings = (dbObj.consignmentListings || []).map((l) => l.id === listing.id ? { ...l, soldPrice: soldPriceNum } : l);
+    return { ...dbObj, consignmentListings };
+  };
   const submit = () => {
+    if (listing && !soldPriceValid) return;
     if (ownerType === "existing") {
       if (!customerId) return;
       const target = db.customers.find((c) => c.id === customerId);
@@ -1811,8 +1849,8 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       const sites = db.sites.map(
         (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
       );
-      const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}`);
-      persist(closeDealForProspect({ ...db, customers, sites, activityLog }, actor));
+      const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
+      persist(applyListingPrice(closeDealForProspect({ ...db, customers, sites, activityLog }, actor)));
       onClose();
       return;
     }
@@ -1847,8 +1885,8 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
     const sites = db.sites.map(
       (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
     );
-    const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}`);
-    persist(closeDealForProspect({ ...db, customers, sites, activityLog }, actor));
+    const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
+    persist(applyListingPrice(closeDealForProspect({ ...db, customers, sites, activityLog }, actor)));
     onClose();
   };
   const customerOptions = db.customers.filter((c) => !oldIds.has(c.id)).map((c) => {
@@ -1877,8 +1915,8 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
     "Existing Customer"
   ));
   const switchConfirmModal = switchToNewConfirm ? /* @__PURE__ */ React.createElement(Modal, { title: "Switch to New Owner?", onClose: () => setSwitchToNewConfirm(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This unlinks the selected customer and will instead create a brand-new customer record when you complete the transfer. Name, phone, and email already filled in will stay, and you can edit them."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSwitchToNewConfirm(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep as Existing Customer"), /* @__PURE__ */ React.createElement("button", { onClick: confirmSwitchToNew, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Switch to New Owner"))) : null;
-  const canSubmit = ownerType === "existing" ? !!customerId : !!name.trim();
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, ownerType === "existing" ? "This adds the site to an existing customer\u2019s profile and unlinks" : "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), ownerTypeToggle, switchConfirmModal, ownerType === "existing" ? /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  const canSubmit = (ownerType === "existing" ? !!customerId : !!name.trim()) && soldPriceValid;
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, ownerType === "existing" ? "This adds the site to an existing customer\u2019s profile and unlinks" : "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), listing && /* @__PURE__ */ React.createElement(Field, { label: "Final Sold Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: soldPrice, onChange: (e) => setSoldPrice(e.target.value), placeholder: "0.00" })), ownerTypeToggle, switchConfirmModal, ownerType === "existing" ? /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: customerOptions,
     value: customerId,
     onChange: pickCustomer,
@@ -4799,6 +4837,7 @@ function CottageOrdersView({ db, persist }) {
   const [dragOverStatus, setDragOverStatus] = useState(null);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [createCottageFor, setCreateCottageFor] = useState(null);
+  const [salePriceTarget, setSalePriceTarget] = useState(null);
   const formDirtyRef = useRef(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
@@ -4844,14 +4883,14 @@ function CottageOrdersView({ db, persist }) {
     if (nextStatus === "Delivered/Onsite") setCreateCottageFor(updated);
   };
   const markSold = (order) => {
-    const suggested = Number(order.totalPrice) > 0 ? order.totalPrice : "";
-    const entered = window.prompt("Final sold price:", suggested);
-    if (entered === null) return;
-    const parsed = Number(entered);
-    const totalPrice = Number.isFinite(parsed) && parsed >= 0 ? parsed : Number(order.totalPrice) || 0;
-    const updated = { ...order, totalPrice, soldDate: todayISO() };
-    const activityLog = addLog(db, actor, `Cottage order "${order.model || "Unnamed"}" marked Sold`);
+    setSalePriceTarget(order);
+  };
+  const confirmMarkSold = (price) => {
+    const order = salePriceTarget;
+    const updated = { ...order, totalPrice: price, depositAmount: price, paidInFullDate: todayISO(), soldDate: todayISO() };
+    const activityLog = addLog(db, actor, `Cottage order "${order.model || "Unnamed"}" marked Sold and Paid in Full (${formatPrice(price)})`);
     persist({ ...db, cottageOrders: db.cottageOrders.map((o) => o.id === order.id ? updated : o), activityLog });
+    setSalePriceTarget(null);
   };
   const markPaidInFull = (order) => {
     const updated = { ...order, depositAmount: Number(order.totalPrice) || 0, paidInFullDate: todayISO() };
@@ -4982,7 +5021,13 @@ function CottageOrdersView({ db, persist }) {
       onCreate: (name) => createLinkedCottage(createCottageFor, name),
       onSkip: () => setCreateCottageFor(null)
     }
-  ), confirm.target && /* @__PURE__ */ React.createElement(
+  ), salePriceTarget && /* @__PURE__ */ React.createElement(SalePriceModal, {
+    title: `Mark "${salePriceTarget.model || "Unnamed"}" Sold`,
+    priceLabel: "Final Sale Price",
+    initialPrice: salePriceTarget.totalPrice,
+    onConfirm: confirmMarkSold,
+    onCancel: () => setSalePriceTarget(null)
+  }), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = db.cottageOrders.find((o) => o.id === confirm.target)) == null ? void 0 : _a.model) != null ? _b : "this order",
@@ -5165,6 +5210,7 @@ function ConsignmentListingsView({ db, persist }) {
   const formDirtyRef = useRef(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
+  const [soldPriceTarget, setSoldPriceTarget] = useState(null);
   const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
   const requestCloseModal = () => {
     if (formDirtyRef.current) {
@@ -5198,21 +5244,24 @@ function ConsignmentListingsView({ db, persist }) {
     confirm.clear();
   };
   const advance = (listing) => {
-    var _a2;
     const idx = CONSIGNMENT_STATUS.indexOf(listing.status);
     const nextStatus = CONSIGNMENT_STATUS[Math.min(idx + 1, 2)];
-    let soldPrice = listing.soldPrice;
     if (nextStatus === "Sold") {
-      const suggested = Number(listing.askingPrice) > 0 ? listing.askingPrice : "";
-      const entered = window.prompt("Final sold price:", suggested);
-      if (entered === null) return;
-      const parsed = Number(entered);
-      soldPrice = Number.isFinite(parsed) && parsed >= 0 ? parsed : Number(listing.askingPrice) || 0;
+      setSoldPriceTarget(listing);
+      return;
     }
     const cottage = db.cottages.find((c) => c.id === listing.cottageId);
-    const updated = { ...listing, status: nextStatus, soldPrice, soldDate: nextStatus === "Sold" ? todayISO() : listing.soldDate };
-    const activityLog = addLog(db, actor, `Listing for ${(_a2 = cottage == null ? void 0 : cottage.name) != null ? _a2 : "cottage"} marked ${nextStatus}`);
+    const updated = { ...listing, status: nextStatus };
+    const activityLog = addLog(db, actor, `Listing for ${(cottage == null ? void 0 : cottage.name) || "cottage"} marked ${nextStatus}`);
     persist({ ...db, consignmentListings: db.consignmentListings.map((l) => l.id === listing.id ? updated : l), activityLog });
+  };
+  const confirmSold = (price) => {
+    const listing = soldPriceTarget;
+    const cottage = db.cottages.find((c) => c.id === listing.cottageId);
+    const updated = { ...listing, status: "Sold", soldPrice: price, soldDate: todayISO() };
+    const activityLog = addLog(db, actor, `Listing for ${(cottage == null ? void 0 : cottage.name) || "cottage"} marked Sold (${formatPrice(price)})`);
+    persist({ ...db, consignmentListings: db.consignmentListings.map((l) => l.id === listing.id ? updated : l), activityLog });
+    setSoldPriceTarget(null);
   };
   const handleDropOnStatus = (status) => (e) => {
     var _a2;
@@ -5221,8 +5270,12 @@ function ConsignmentListingsView({ db, persist }) {
     const id = e.dataTransfer.getData("text/plain");
     const listing = db.consignmentListings.find((l) => l.id === id);
     if (!listing || listing.status === status) return;
+    if (status === "Sold") {
+      setSoldPriceTarget(listing);
+      return;
+    }
     const cottage = db.cottages.find((c) => c.id === listing.cottageId);
-    const updated = { ...listing, status, soldDate: status === "Sold" ? todayISO() : listing.soldDate };
+    const updated = { ...listing, status };
     const activityLog = addLog(db, actor, `Listing for ${(_a2 = cottage == null ? void 0 : cottage.name) != null ? _a2 : "cottage"} marked ${status}`);
     persist({ ...db, consignmentListings: db.consignmentListings.map((l) => l.id === listing.id ? updated : l), activityLog });
   };
@@ -5297,7 +5350,17 @@ function ConsignmentListingsView({ db, persist }) {
         formDirtyRef.current = d;
       }
     }
-  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this listing that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), confirm.target && /* @__PURE__ */ React.createElement(
+  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this listing that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), soldPriceTarget && /* @__PURE__ */ React.createElement(SalePriceModal, {
+    title: `Mark "${(() => {
+      var _a3;
+      const cottage = db.cottages.find((c) => c.id === soldPriceTarget.cottageId);
+      return (_a3 = cottage == null ? void 0 : cottage.name) != null ? _a3 : "cottage";
+    })()}" Sold`,
+    priceLabel: "Final Sold Price",
+    initialPrice: soldPriceTarget.soldPrice || soldPriceTarget.askingPrice,
+    onConfirm: confirmSold,
+    onCancel: () => setSoldPriceTarget(null)
+  }), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (() => {
@@ -5739,7 +5802,7 @@ function SunspaceOrdersView({ db, persist, onGoToWorkOrders }) {
   return /* @__PURE__ */ React.createElement("div", null, header, board, modalEl, confirmEl);
 }
 function ConvertProspectModal({ prospect, db, onConvertOrder, onConvertDisplay, onConvertConsignment, onClose }) {
-  const [choice, setChoice] = useState(null);
+  const [step, setStep] = useState("choose");
   const [selectedId, setSelectedId] = useState("");
   const unsoldDisplays = db.cottageOrders.filter((o) => o.type === "Display Model" && !o.soldDate);
   const openListings = db.consignmentListings.filter((l) => l.status === "Listed" || l.status === "Pending Offer");
@@ -5750,17 +5813,17 @@ function ConvertProspectModal({ prospect, db, onConvertOrder, onConvertDisplay, 
   });
   const chooser = /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
     "button",
-    { onClick: onConvertOrder, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    { onClick: () => setStep("details-order"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
     /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "New Custom Order"),
     /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "A brand-new cottage being built for them.")
   ), /* @__PURE__ */ React.createElement(
     "button",
-    { onClick: () => setChoice("display"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    { onClick: () => setStep("pick-display"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
     /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Existing Display Model"),
     /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying a display unit already on-site.")
   ), /* @__PURE__ */ React.createElement(
     "button",
-    { onClick: () => setChoice("consignment"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    { onClick: () => setStep("pick-consignment"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
     /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Consignment Listing"),
     /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying an existing used cottage that's listed for sale.")
   ));
@@ -5770,14 +5833,14 @@ function ConvertProspectModal({ prospect, db, onConvertOrder, onConvertDisplay, 
     onChange: setSelectedId,
     placeholder: "Search display models\u2026",
     noneLabel: "\u2014 Select \u2014"
-  })), displayOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No unsold display models on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setChoice(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+  })), displayOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No unsold display models on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("choose"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: () => onConvertDisplay(selectedId),
+      onClick: () => setStep("details-display"),
       disabled: !selectedId,
       className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
     },
-    "Confirm"
+    "Next"
   )));
   const listingPicker = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Which listing?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: listingOptions,
@@ -5785,17 +5848,46 @@ function ConvertProspectModal({ prospect, db, onConvertOrder, onConvertDisplay, 
     onChange: setSelectedId,
     placeholder: "Search listings\u2026",
     noneLabel: "\u2014 Select \u2014"
-  })), listingOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No active consignment listings on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setChoice(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+  })), listingOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No active consignment listings on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("choose"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: () => onConvertConsignment(selectedId),
+      onClick: () => setStep("details-consignment"),
       disabled: !selectedId,
       className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
     },
-    "Confirm"
+    "Next"
   )));
-  const body = choice === null ? chooser : choice === "display" ? displayPicker : listingPicker;
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Convert ${prospect.name} to a Sale`, onClose }, choice === null && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "What are they buying?"), body);
+  if (step === "details-order") {
+    return /* @__PURE__ */ React.createElement(DepositDetailsModal, {
+      title: `Convert ${prospect.name} to a Sale`,
+      priceLabel: "Total Price",
+      initialPrice: null,
+      onConfirm: (details) => onConvertOrder(details),
+      onCancel: () => setStep("choose")
+    });
+  }
+  if (step === "details-display") {
+    const order = db.cottageOrders.find((o) => o.id === selectedId);
+    return /* @__PURE__ */ React.createElement(DepositDetailsModal, {
+      title: `Convert ${prospect.name} to a Sale`,
+      priceLabel: "Total Price",
+      initialPrice: order == null ? void 0 : order.totalPrice,
+      onConfirm: (details) => onConvertDisplay(selectedId, details),
+      onCancel: () => setStep("pick-display")
+    });
+  }
+  if (step === "details-consignment") {
+    const listing = db.consignmentListings.find((l) => l.id === selectedId);
+    return /* @__PURE__ */ React.createElement(DepositDetailsModal, {
+      title: `Convert ${prospect.name} to a Sale`,
+      priceLabel: "Agreed Price",
+      initialPrice: listing == null ? void 0 : listing.askingPrice,
+      onConfirm: (details) => onConvertConsignment(selectedId, details),
+      onCancel: () => setStep("pick-consignment")
+    });
+  }
+  const body = step === "pick-display" ? displayPicker : step === "pick-consignment" ? listingPicker : chooser;
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Convert ${prospect.name} to a Sale`, onClose }, step === "choose" && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "What are they buying?"), body);
 }
 function DealFellThroughModal({ prospect, onResolve, onClose }) {
   const isOrder = prospect.saleType === "order";
@@ -5825,6 +5917,7 @@ function ProspectsView({ db, persist }) {
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [convertTarget, setConvertTarget] = useState(null);
   const [closeDealTarget, setCloseDealTarget] = useState(null);
+  const [closeDealPriceTarget, setCloseDealPriceTarget] = useState(null);
   const [fellThroughTarget, setFellThroughTarget] = useState(null);
   const formDirtyRef = useRef(false);
   const confirm = useConfirm();
@@ -5869,7 +5962,7 @@ function ProspectsView({ db, persist }) {
     const activityLog = addLog(db, actor, `Prospect ${prospect.name} marked ${nextStatus}`);
     persist({ ...db, prospects: db.prospects.map((p) => p.id === prospect.id ? { ...p, status: nextStatus } : p), activityLog });
   };
-  const convertToOrder = () => {
+  const convertToOrder = (details) => {
     const prospect = convertTarget;
     let customerId = prospect.customerId;
     let customers = db.customers;
@@ -5895,21 +5988,21 @@ function ProspectsView({ db, persist }) {
       expectedDeliveryDate: "",
       deliveredDate: null,
       soldDate: null,
-      totalPrice: 0,
-      depositAmount: 0,
-      depositDate: "",
+      totalPrice: details.price,
+      depositAmount: details.depositAmount,
+      depositDate: details.depositDate,
       notes: "",
       commentLog: [],
       prospectId: prospect.id
     };
-    const entry = { id: uid(), text: "Converted to a New Custom Order \u2014 moved to Deposit", author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const entry = { id: uid(), text: `Converted to a New Custom Order \u2014 moved to Deposit (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Deposit", saleType: "order", saleRefId: newOrder.id, customerId, commentLog: [entry, ...p.commentLog || []] } : p);
     const activityLog = addLog(db, actor, `Converted prospect ${prospect.name} to a new Cottage Order`);
     persist({ ...db, customers, cottageOrders: [...db.cottageOrders, newOrder], prospects, activityLog });
     setConvertTarget(null);
     setToast("Converted to Cottage Order");
   };
-  const convertToDisplay = (orderId) => {
+  const convertToDisplay = (orderId, details) => {
     if (!orderId) return;
     const prospect = convertTarget;
     let customerId = prospect.customerId;
@@ -5919,19 +6012,19 @@ function ProspectsView({ db, persist }) {
       customerId = newCustomer.id;
       customers = [...db.customers, newCustomer];
     }
-    const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, soldDate: todayISO(), prospectId: prospect.id } : o);
-    const entry = { id: uid(), text: "Converted to an existing Display Model sale \u2014 moved to Deposit", author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, totalPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, soldDate: todayISO(), prospectId: prospect.id } : o);
+    const entry = { id: uid(), text: `Converted to an existing Display Model sale \u2014 moved to Deposit (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Deposit", saleType: "display", saleRefId: orderId, customerId, commentLog: [entry, ...p.commentLog || []] } : p);
     const activityLog = addLog(db, actor, `Converted prospect ${prospect.name} to a Display Model sale`);
     persist({ ...db, customers, cottageOrders, prospects, activityLog });
     setConvertTarget(null);
     setToast("Converted to Display Model sale");
   };
-  const convertToConsignment = (listingId) => {
+  const convertToConsignment = (listingId, details) => {
     if (!listingId) return;
     const prospect = convertTarget;
-    const consignmentListings = db.consignmentListings.map((l) => l.id === listingId ? { ...l, status: "Sold", soldDate: l.soldDate || todayISO(), soldPrice: l.soldPrice || l.askingPrice || 0, prospectId: prospect.id } : l);
-    const entry = { id: uid(), text: "Converted to a Consignment Listing sale \u2014 moved to Deposit. Ownership transfers when the deal closes.", author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const consignmentListings = db.consignmentListings.map((l) => l.id === listingId ? { ...l, status: "Sold", soldDate: l.soldDate || todayISO(), soldPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, prospectId: prospect.id } : l);
+    const entry = { id: uid(), text: `Converted to a Consignment Listing sale \u2014 moved to Deposit (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, agreed price ${formatPrice(details.price)}). Ownership transfers when the deal closes.`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Deposit", saleType: "consignment", saleRefId: listingId, commentLog: [entry, ...p.commentLog || []] } : p);
     const activityLog = addLog(db, actor, `Converted prospect ${prospect.name} to a Consignment Listing sale`);
     persist({ ...db, consignmentListings, prospects, activityLog });
@@ -5940,11 +6033,8 @@ function ProspectsView({ db, persist }) {
   };
   const openCloseDeal = (prospect) => {
     if (prospect.saleType === "order" || prospect.saleType === "display") {
-      const entry = { id: uid(), text: `Deal closed \u2014 marked Sold on ${todayISO()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
-      const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Sold", commentLog: [entry, ...p.commentLog || []] } : p);
-      const activityLog = addLog(db, actor, `Prospect ${prospect.name} marked Sold`);
-      persist({ ...db, prospects, activityLog });
-      setToast("Marked Sold");
+      const order = db.cottageOrders.find((o) => o.id === prospect.saleRefId);
+      setCloseDealPriceTarget({ prospect, order });
       return;
     }
     const listing = db.consignmentListings.find((l) => l.id === prospect.saleRefId);
@@ -5955,7 +6045,20 @@ function ProspectsView({ db, persist }) {
       return;
     }
     const oldCustomers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
-    setCloseDealTarget({ prospect, cottage, site, oldCustomers });
+    setCloseDealTarget({ prospect, cottage, site, listing, oldCustomers });
+  };
+  const confirmCloseDealPrice = (price) => {
+    const { prospect, order } = closeDealPriceTarget;
+    let cottageOrders = db.cottageOrders;
+    if (order) {
+      cottageOrders = db.cottageOrders.map((o) => o.id === order.id ? { ...o, totalPrice: price, depositAmount: price, paidInFullDate: todayISO(), soldDate: o.soldDate || todayISO() } : o);
+    }
+    const entry = { id: uid(), text: `Deal closed \u2014 marked Sold and Paid in Full on ${todayISO()} (${formatPrice(price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const prospects = db.prospects.map((p) => p.id === prospect.id ? { ...p, status: "Sold", commentLog: [entry, ...p.commentLog || []] } : p);
+    const activityLog = addLog(db, actor, `Prospect ${prospect.name} marked Sold (${formatPrice(price)})`);
+    persist({ ...db, cottageOrders, prospects, activityLog });
+    setCloseDealPriceTarget(null);
+    setToast("Marked Sold");
   };
   const resolveFellThrough = (action) => {
     const prospect = fellThroughTarget;
@@ -5990,6 +6093,16 @@ function ProspectsView({ db, persist }) {
     const id = e.dataTransfer.getData("text/plain");
     const prospect = db.prospects.find((p) => p.id === id);
     if (!prospect || prospect.status === status) return;
+    if (status === "Deposit") {
+      if (prospect.saleRefId) return;
+      setConvertTarget(prospect);
+      return;
+    }
+    if (status === "Sold") {
+      if (prospect.status !== "Deposit" || !prospect.saleRefId) return;
+      openCloseDeal(prospect);
+      return;
+    }
     const activityLog = addLog(db, actor, `Prospect ${prospect.name} marked ${status}`);
     persist({ ...db, prospects: db.prospects.map((p) => p.id === prospect.id ? { ...p, status } : p), activityLog });
   };
@@ -6073,9 +6186,16 @@ function ProspectsView({ db, persist }) {
     site: closeDealTarget.site,
     oldCustomers: closeDealTarget.oldCustomers,
     linkedProspect: closeDealTarget.prospect,
+    listing: closeDealTarget.listing,
     db,
     persist,
     onClose: () => setCloseDealTarget(null)
+  }), closeDealPriceTarget && /* @__PURE__ */ React.createElement(SalePriceModal, {
+    title: `Close Deal \u2014 ${closeDealPriceTarget.prospect.name}`,
+    priceLabel: "Final Sale Price",
+    initialPrice: closeDealPriceTarget.order ? closeDealPriceTarget.order.totalPrice : null,
+    onConfirm: confirmCloseDealPrice,
+    onCancel: () => setCloseDealPriceTarget(null)
   }), fellThroughTarget && /* @__PURE__ */ React.createElement(DealFellThroughModal, {
     prospect: fellThroughTarget,
     onResolve: resolveFellThrough,
