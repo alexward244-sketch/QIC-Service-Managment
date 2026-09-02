@@ -4446,6 +4446,8 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
     </div>`;
 }
 function buildInvoiceEmailText(invoice, db, taxRate) {
+  const site = db.sites.find((s) => s.id === invoice.siteId);
+  const customer = db.customers.find((c) => c.id === invoice.customerId);
   const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(invoice, effectiveTaxRate);
   const laborHours = Number(invoice.laborHours) || 0;
@@ -4476,6 +4478,10 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">${escapeHtml(invoice.date)}${invoice.title ? ` \u00B7 ${escapeHtml(invoice.title)}` : ""}</p>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+      ${customer || site ? `<table style="width:100%;font-size:13px;margin:0 0 16px;">
+        ${customer ? `<tr><td style="padding:1px 0;color:#75716A;width:70px;">Customer</td><td style="padding:1px 0;color:#1E1A13;font-weight:600;">${escapeHtml(customer.name)}</td></tr>` : ""}
+        ${site ? `<tr><td style="padding:1px 0;color:#75716A;">Site</td><td style="padding:1px 0;color:#1E1A13;font-weight:600;">${escapeHtml(site.number)}</td></tr>` : ""}
+      </table>` : ""}
       ${itemsTable}
       <table style="width:100%;font-size:14px;">
         ${lineItemsSubtotal ? `<tr><td style="padding:2px 0;color:#75716A;">Parts / line items</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
