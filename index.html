@@ -71,6 +71,7 @@ try {
   console.warn("Offline persistence not supported in this browser:", e);
 }
 const DOC_REF = db_.collection("campground").doc("data");
+const PENDING_SIGNUPS_REF = db_.collection("pendingSignups");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
@@ -595,17 +596,36 @@ class ErrorBoundary extends React.Component {
 }
 function useDb() {
   const [db, setDb] = useState(null);
+  const [pendingSignups, setPendingSignups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const lastAttempt = useRef(null);
+  const migratedRef = useRef(false);
   useEffect(() => {
     const unsub = DOC_REF.onSnapshot(
       (snap) => {
         const data = snap.exists ? snap.data() : null;
-        setDb(migrateCottageOrderStatuses(purgeExpiredTrash({ ...emptyDb(), ...data && typeof data === "object" ? data : {} })));
+        const merged = migrateCottageOrderStatuses(purgeExpiredTrash({ ...emptyDb(), ...data && typeof data === "object" ? data : {} }));
+        setDb(merged);
         setLoading(false);
         setConnectionError(null);
+        if (!migratedRef.current) {
+          migratedRef.current = true;
+          const legacyWinter = merged.pendingWinterizingSignups || [];
+          const legacyPropane = merged.pendingPropaneSignups || [];
+          if (legacyWinter.length > 0 || legacyPropane.length > 0) {
+            const batch = db_.batch();
+            legacyWinter.forEach((entry) => {
+              batch.set(PENDING_SIGNUPS_REF.doc(entry.id || uid()), { ...entry, type: "winterizing" });
+            });
+            legacyPropane.forEach((entry) => {
+              batch.set(PENDING_SIGNUPS_REF.doc(entry.id || uid()), { ...entry, type: "propane" });
+            });
+            batch.commit().then(() => DOC_REF.update({ pendingWinterizingSignups: [], pendingPropaneSignups: [] })).catch(() => {
+            });
+          }
+        }
       },
       (err) => {
         setConnectionError(`Couldn't connect to the shared database${(err == null ? void 0 : err.message) ? `: ${err.message}` : ""}.`);
@@ -613,7 +633,19 @@ function useDb() {
         setLoading(false);
       }
     );
-    return () => unsub();
+    const unsubPending = PENDING_SIGNUPS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setPendingSignups(list);
+      },
+      () => {
+      }
+    );
+    return () => {
+      unsub();
+      unsubPending();
+    };
   }, []);
   const persist = useCallback(async (next) => {
     setDb(next);
@@ -625,11 +657,17 @@ function useDb() {
       setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
+  const removePendingSignup = useCallback(async (id) => {
+    try {
+      await PENDING_SIGNUPS_REF.doc(id).delete();
+    } catch (e) {
+    }
+  }, []);
   const error = saveError || connectionError;
   const retry = useCallback(() => {
     if (lastAttempt.current) persist(lastAttempt.current);
   }, [persist]);
-  return { db, loading, error, persist, retry };
+  return { db, pendingSignups, loading, error, persist, removePendingSignup, retry };
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
@@ -7845,7 +7883,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(request) }, "Delete")))
   );
 }
-function WinterizingView({ db, persist, readOnly }) {
+function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
@@ -7858,7 +7896,7 @@ function WinterizingView({ db, persist, readOnly }) {
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
-  const pendingSignups = db.pendingWinterizingSignups || [];
+  const pendingSignups = pendingSignupsProp || [];
   const cottageName = (id) => {
     const c = db.cottages.find((x) => x.id === id);
     return c ? c.name : "Unknown cottage";
@@ -7917,16 +7955,16 @@ function WinterizingView({ db, persist, readOnly }) {
   const confirmSignup = (request) => {
     if (!reviewingEntry) return;
     const nextRequests = [...(db.winterizingRequests || []), request];
-    const nextPending = pendingSignups.filter((p) => p.id !== reviewingEntry.id);
     const activityLog = addLog(db, actor, `Confirmed winterizing sign-up for ${cottageName(request.cottageId)} from online submission`);
-    persist({ ...db, winterizingRequests: nextRequests, pendingWinterizingSignups: nextPending, activityLog });
+    persist({ ...db, winterizingRequests: nextRequests, activityLog });
+    removePendingSignup(reviewingEntry.id);
     setReviewingEntry(null);
   };
   const discardSignup = (entry) => {
     if (!window.confirm("Discard this submission? This can't be undone.")) return;
-    const nextPending = pendingSignups.filter((p) => p.id !== entry.id);
     const activityLog = addLog(db, actor, `Discarded winterizing submission from ${entry.submittedName || "unknown"}`);
-    persist({ ...db, pendingWinterizingSignups: nextPending, activityLog });
+    persist({ ...db, activityLog });
+    removePendingSignup(entry.id);
     setReviewingEntry(null);
   };
   const toggleSelect = (id) => {
@@ -8082,13 +8120,13 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRu
   }).filter(Boolean).join(", ");
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
 }
-function PropaneView({ db, persist }) {
+function PropaneView({ db, persist, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [modal, setModal] = useState(null);
   const [reviewingEntry, setReviewingEntry] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = db.propaneRequests || [];
-  const pending = db.pendingPropaneSignups || [];
+  const pending = pendingSignupsProp || [];
   const today = todayISO();
   const active = requests.filter((r) => !r.completed);
   const overdue = active.filter((r) => r.requestedDate < today);
@@ -8148,15 +8186,15 @@ function PropaneView({ db, persist }) {
   };
   const confirmSignup = (request) => {
     const nextRequests = [...requests, request];
-    const nextPending = pending.filter((p) => p.id !== reviewingEntry.id);
     const activityLog = addLog(db, actor, `Confirmed propane request from online sign-up`);
-    persist({ ...db, propaneRequests: nextRequests, pendingPropaneSignups: nextPending, activityLog });
+    persist({ ...db, propaneRequests: nextRequests, activityLog });
+    removePendingSignup(reviewingEntry.id);
     setReviewingEntry(null);
   };
   const discardSignup = (entry) => {
-    const nextPending = pending.filter((p) => p.id !== entry.id);
     const activityLog = addLog(db, actor, `Discarded propane sign-up submission`);
-    persist({ ...db, pendingPropaneSignups: nextPending, activityLog });
+    persist({ ...db, activityLog });
+    removePendingSignup(entry.id);
     setReviewingEntry(null);
   };
   const section = (title, list, tone) => /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h3", { className: `text-sm font-semibold mb-2 ${tone || "text-[#1E1A13]"}` }, title, " (", list.length, ")"), list.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic px-1" }, "Nothing here.") : /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] overflow-hidden" }, list.map((r) => /* @__PURE__ */ React.createElement(PropaneRequestRow, {
@@ -9122,7 +9160,7 @@ const TABS = [
   { key: "hydroreview", label: "Hydro Meter Review", group: "accounting" }
 ];
 function AppContent() {
-  const { db, loading, error, persist, retry } = useDb();
+  const { db, pendingSignups, loading, error, persist, removePendingSignup, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
   useEffect(() => {
@@ -9395,7 +9433,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
