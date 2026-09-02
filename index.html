@@ -163,9 +163,9 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
-const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "customers"]);
+const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "hydro", "customers"]);
 const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "servicereports"]);
-const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "consignments", "sunspace", "prospects"]);
+const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "consignments", "sunspace", "prospects", "salestransactions"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
   const hasAnyAdmin = Object.values(roles).some((r) => r === "admin");
@@ -1596,15 +1596,23 @@ function SiteForm({ initial, sites, onSave, onCancel }) {
   const [hookups, setHookups] = useState((initial == null ? void 0 : initial.hookups) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [tagsInput, setTagsInput] = useState(((initial == null ? void 0 : initial.tags) || []).join(", "));
+  const [meterDigits, setMeterDigits] = useState((initial == null ? void 0 : initial.meterDigits) ? String(initial.meterDigits) : "");
   const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && s.number.trim().toLowerCase() === number.trim().toLowerCase());
   const submit = () => {
     if (!number.trim()) return;
     const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
-    onSave({ id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags });
+    onSave({ id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Tags" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: tagsInput, onChange: (e) => setTagsInput(e.target.value), placeholder: "e.g. Pebble Beach, Waterfront, Premium" }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Comma-separated. Used for filtering, e.g. in Seasonal Fees.")), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Access notes, terrain, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Site")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Tags" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: tagsInput, onChange: (e) => setTagsInput(e.target.value), placeholder: "e.g. Pebble Beach, Waterfront, Premium" }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Comma-separated. Used for filtering, e.g. in Seasonal Fees.")), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Hydro Meter Digits" }, /* @__PURE__ */ React.createElement(
+    "select",
+    { className: inputCls, value: meterDigits, onChange: (e) => setMeterDigits(e.target.value) },
+    /* @__PURE__ */ React.createElement("option", { value: "" }, "No meter / not set"),
+    /* @__PURE__ */ React.createElement("option", { value: "4" }, "4 digits (rolls over at 9999)"),
+    /* @__PURE__ */ React.createElement("option", { value: "5" }, "5 digits (rolls over at 99999)"),
+    /* @__PURE__ */ React.createElement("option", { value: "6" }, "6 digits (rolls over at 999999)")
+  ), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Only changes if the physical meter is replaced. Used to calculate usage correctly when a reading rolls over back to 0.")), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Access notes, terrain, etc." })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Site")));
 }
 const COLOR_SWATCH = {
   Red: "#B5432E",
@@ -2627,6 +2635,37 @@ function AccountingEmailControl({ db, persist }) {
     }
   ));
 }
+const DEFAULT_PAYMENT_INSTRUCTIONS = "Please make payment by e-transfer to krista@qicampark.com or in person at the front desk.";
+function getPaymentInstructions(db) {
+  var _a, _b;
+  return (_b = (_a = db.settings) == null ? void 0 : _a.paymentInstructions) != null ? _b : DEFAULT_PAYMENT_INSTRUCTIONS;
+}
+function PaymentInstructionsControl({ db, persist }) {
+  const [value, setValue] = useState(getPaymentInstructions(db));
+  useEffect(() => {
+    setValue(getPaymentInstructions(db));
+  }, [getPaymentInstructions(db)]);
+  const commit = () => {
+    persist({ ...db, settings: { ...db.settings || {}, paymentInstructions: value.trim() } });
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap" }, "Payment instructions"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "text",
+      value,
+      onChange: (e) => setValue(e.target.value),
+      onBlur: commit,
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          commit();
+          e.currentTarget.blur();
+        }
+      },
+      placeholder: "e.g. Please make payment by e-transfer to\u2026",
+      className: "w-72 rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-sm text-[#1E1A13] focus:outline-none focus:ring-2 focus:ring-[#C1652F]/50 focus:border-[#C1652F]"
+    }
+  ));
+}
 
 function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber, taxRate, onSave, onCancel }) {
   var _a, _b, _c, _d;
@@ -2928,7 +2967,7 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
   const totalInvoiced = invoices.reduce((sum, inv) => sum + computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total, 0);
   const totalCollected = invoices.reduce((sum, inv) => sum + (Number(inv.depositAmount) || 0), 0);
   const totalOutstanding = totalInvoiced - totalCollected;
-  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Invoices"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, invoices.length, " invoice", invoices.length === 1 ? "" : "s")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(AccountingEmailControl, { db, persist }), /* @__PURE__ */ React.createElement("input", {
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Invoices"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, invoices.length, " invoice", invoices.length === 1 ? "" : "s")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(AccountingEmailControl, { db, persist }), /* @__PURE__ */ React.createElement(PaymentInstructionsControl, { db, persist }), /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " w-52",
     placeholder: "Search invoices\u2026",
     value: filter,
@@ -4194,8 +4233,28 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
 }
 function buildInvoiceEmailText(invoice, db, taxRate) {
   const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
-  const { total } = computeQuoteTotals(invoice, effectiveTaxRate);
+  const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(invoice, effectiveTaxRate);
+  const laborHours = Number(invoice.laborHours) || 0;
+  const laborRate = Number(invoice.laborRate) || 0;
   const balance = total - (Number(invoice.depositAmount) || 0);
+  const lineRows = (invoice.lineItems || []).map(
+    (li) => `<tr>
+        <td style="padding:5px 0;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(li.description)}</td>
+        <td style="padding:5px 0;text-align:right;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(String(li.quantity))}</td>
+        <td style="padding:5px 0;text-align:right;color:#4B4740;border-bottom:1px solid #F1EEE9;">${formatPrice(li.unitPrice)}</td>
+        <td style="padding:5px 0;text-align:right;color:#1E1A13;border-bottom:1px solid #F1EEE9;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
+      </tr>`
+  ).join("");
+  const itemsTable = (invoice.lineItems || []).length > 0 ? `
+      <table style="width:100%;font-size:13px;border-collapse:collapse;margin:0 0 16px;">
+        <tr>
+          <td style="padding:0 0 5px;color:#75716A;font-weight:600;border-bottom:2px solid #E2DED5;">Description</td>
+          <td style="padding:0 0 5px;text-align:right;color:#75716A;font-weight:600;border-bottom:2px solid #E2DED5;">Qty</td>
+          <td style="padding:0 0 5px;text-align:right;color:#75716A;font-weight:600;border-bottom:2px solid #E2DED5;">Unit</td>
+          <td style="padding:0 0 5px;text-align:right;color:#75716A;font-weight:600;border-bottom:2px solid #E2DED5;">Line Total</td>
+        </tr>
+        ${lineRows}
+      </table>` : "";
   return `
   <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
     <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
@@ -4203,12 +4262,19 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">${escapeHtml(invoice.date)}${invoice.title ? ` \u00B7 ${escapeHtml(invoice.title)}` : ""}</p>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
-      <p style="font-size:14px;color:#4B4740;margin:0 0 16px;line-height:1.6;">Please find your invoice total below. A detailed breakdown is attached/printed separately if needed.</p>
+      ${itemsTable}
       <table style="width:100%;font-size:14px;">
-        <tr><td style="padding:4px 0;color:#75716A;">Total</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
-        ${Number(invoice.depositAmount) > 0 ? `<tr><td style="padding:4px 0;color:#75716A;">Deposit Received</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(invoice.depositAmount)}</td></tr><tr><td style="padding:4px 0;color:#75716A;font-weight:600;">Balance Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(balance)}</td></tr>` : ""}
+        ${lineItemsSubtotal ? `<tr><td style="padding:2px 0;color:#75716A;">Parts / line items</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
+        ${laborHours ? `<tr><td style="padding:2px 0;color:#75716A;">Labor (${laborHours} hr \u00D7 ${escapeHtml(invoice.laborRateType || "Rate")} @ ${formatPrice(laborRate)})</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(laborCost)}</td></tr>` : ""}
+        ${invoice.shopSuppliesPercent ? `<tr><td style="padding:2px 0;color:#75716A;">Shop supplies (${invoice.shopSuppliesPercent}%)</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(shopSupplies)}</td></tr>` : ""}
+        ${serviceCall ? `<tr><td style="padding:2px 0;color:#75716A;">Service call</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(serviceCall)}</td></tr>` : ""}
+        <tr><td style="padding:4px 0;color:#75716A;border-top:1px solid #E2DED5;">Subtotal</td><td style="padding:4px 0;text-align:right;color:#1E1A13;border-top:1px solid #E2DED5;">${formatPrice(subtotal)}</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;">Tax (${effectiveTaxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(tax)}</td></tr>
+        <tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Total</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
+        ${Number(invoice.depositAmount) > 0 ? `<tr><td style="padding:4px 0;color:#75716A;">Deposit Received</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(invoice.depositAmount)}</td></tr><tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Balance Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(balance)}</td></tr>` : ""}
       </table>
       ${invoice.notes ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Notes:</strong> ${escapeHtml(invoice.notes).replace(/\n/g, "<br>")}</p>` : ""}
+      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
     </div>
   </div>`;
@@ -8307,6 +8373,353 @@ function seasonalMonthlyTotalForDate(db, dateStr) {
 function getSiteOwner(db, siteId) {
   return (db.customers || []).find((c) => customerSiteIds(c).includes(siteId)) || null;
 }
+function computeHydroUsage(previousReading, currentReading, meterDigits) {
+  if (previousReading == null) return { usage: null, rolledOver: false };
+  if (currentReading >= previousReading) return { usage: currentReading - previousReading, rolledOver: false };
+  if (meterDigits) {
+    const rolloverPoint = Math.pow(10, meterDigits);
+    return { usage: rolloverPoint - previousReading + currentReading, rolledOver: true };
+  }
+  return { usage: null, rolledOver: true };
+}
+function getSiteHydroHistory(db, siteId) {
+  return (db.hydroReadings || []).filter((r) => r.siteId === siteId).slice().sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1);
+}
+function getLastHydroReading(db, siteId) {
+  const history = getSiteHydroHistory(db, siteId);
+  return history.length > 0 ? history[0] : null;
+}
+function getHydroRate(db) {
+  var _a, _b;
+  return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
+}
+function buildHydroInvoiceEmailText(site, usage, subtotal, taxAmount, total, taxRate) {
+  return `
+  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
+    <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
+      <h1 style="margin:0;font-size:20px;font-weight:600;">Hydro Bill \u2014 Site ${escapeHtml(site.number)}</h1>
+    </div>
+    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+      <table style="width:100%;font-size:14px;">
+        <tr><td style="padding:4px 0;color:#75716A;">Usage</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${usage} kWh</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;">Subtotal</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(subtotal)}</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;">Tax (${taxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(taxAmount)}</td></tr>
+        <tr><td style="padding:4px 0;color:#75716A;font-weight:600;">Total Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
+      </table>
+      <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
+    </div>
+  </div>`;
+}
+function HydroRateControl({ db, persist }) {
+  var _a, _b, _c;
+  const rate = (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
+  const [value, setValue] = useState(String(rate));
+  useEffect(() => {
+    var _a2, _b2;
+    setValue(String((_b2 = (_a2 = db.settings) == null ? void 0 : _a2.hydroRatePerKwh) != null ? _b2 : 18.5));
+  }, [(_c = db.settings) == null ? void 0 : _c.hydroRatePerKwh]);
+  const commit = () => {
+    const n = Number(value);
+    const rateVal = Number.isFinite(n) && n >= 0 ? n : 0;
+    persist({ ...db, settings: { ...db.settings || {}, hydroRatePerKwh: rateVal } });
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap" }, "Hydro rate"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "number",
+      min: "0",
+      step: "0.001",
+      value,
+      onChange: (e) => setValue(e.target.value),
+      onBlur: commit,
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          commit();
+          e.currentTarget.blur();
+        }
+      },
+      className: "w-20 rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-sm text-[#1E1A13] focus:outline-none focus:ring-2 focus:ring-[#C1652F]/50 focus:border-[#C1652F]"
+    }
+  ), /* @__PURE__ */ React.createElement("span", null, "\u00A2/kWh"));
+}
+function HydroReadingForm({ db, siteId, onSave, onCancel }) {
+  const site = db.sites.find((s) => s.id === siteId);
+  const last = getLastHydroReading(db, siteId);
+  const [reading, setReading] = useState("");
+  const [date, setDate] = useState(todayISO());
+  const readingNum = Number(reading);
+  const valid = reading !== "" && Number.isFinite(readingNum) && readingNum >= 0;
+  const preview = valid ? computeHydroUsage(last ? last.reading : null, readingNum, site == null ? void 0 : site.meterDigits) : null;
+  const willFlag = last && valid && readingNum < last.reading;
+  const submit = () => {
+    if (!valid) return;
+    onSave(siteId, readingNum, date);
+  };
+  return /* @__PURE__ */ React.createElement("div", null, last ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Last reading: ", /* @__PURE__ */ React.createElement("strong", null, last.reading), " on ", last.date) : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "No previous reading on file for this site \u2014 this will be saved as the baseline reading."), /* @__PURE__ */ React.createElement(Field, { label: "Reading Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Current Meter Reading" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: reading, onChange: (e) => setReading(e.target.value), placeholder: "e.g. 4213", autoFocus: true })), willFlag && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, (site == null ? void 0 : site.meterDigits) ? `This is lower than the last reading \u2014 looks like the meter rolled over. Estimated usage: ${preview.usage} kWh. This will be flagged for accounting to double check.` : "This is lower than the last reading and this site has no meter digit count set, so usage can't be calculated automatically. This will be flagged for accounting to review manually."), !willFlag && preview && preview.usage != null && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Usage since last reading: ", preview.usage, " kWh"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Save Reading")));
+}
+function HydroHistoryRow({ r }) {
+  const usageDisplay = r.isBaseline ? "\u2014 (baseline)" : r.usage == null && r.confirmedUsage == null ? "Unknown" : r.confirmedUsage != null ? r.confirmedUsage : r.usage;
+  const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? "Invoiced" : "Confirmed";
+  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.reading), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"));
+}
+function HydroHistoryTable({ db, siteId }) {
+  const history = getSiteHydroHistory(db, siteId);
+  if (history.length === 0) {
+    return /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "No hydro readings recorded yet for this site.");
+  }
+  const headerRow = /* @__PURE__ */ React.createElement("tr", { className: "text-left text-xs text-[#75716A] border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Reading"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Usage (kWh)"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Amount"));
+  const rows = history.map((r) => /* @__PURE__ */ React.createElement(HydroHistoryRow, { key: r.id, r }));
+  return /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, headerRow), /* @__PURE__ */ React.createElement("tbody", null, rows)));
+}
+function HydroMeterView({ db, persist }) {
+  const actor = useCurrentActor();
+  const [filter, setFilter] = useState("");
+  const [entrySiteId, setEntrySiteId] = useState(null);
+  const [historySiteId, setHistorySiteId] = useState(null);
+  const [toast, setToast] = useState(null);
+  const sites = (db.sites || []).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const filteredSites = sites.filter((s) => {
+    if (!filter) return true;
+    const owner = getSiteOwner(db, s.id);
+    const hay = `${s.number} ${s.section || ""} ${(owner == null ? void 0 : owner.name) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const submitReading = (siteId, readingValue, dateValue) => {
+    const site = db.sites.find((s) => s.id === siteId);
+    if (!site) return;
+    const last = getLastHydroReading(db, siteId);
+    const previousReading = last ? last.reading : null;
+    const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits);
+    const isBaseline = previousReading == null;
+    const flagged = !isBaseline && readingValue < previousReading;
+    const record = {
+      id: uid(),
+      siteId,
+      date: dateValue,
+      reading: readingValue,
+      previousReading,
+      usage,
+      rolledOver,
+      flagged,
+      isBaseline,
+      status: isBaseline ? "confirmed" : "pending",
+      confirmedUsage: null,
+      rate: null,
+      taxAmount: null,
+      amount: null,
+      enteredBy: actor,
+      confirmedBy: null,
+      confirmedAt: null,
+      invoicedAt: null
+    };
+    const hydroReadings = [...(db.hydroReadings || []), record];
+    const activityLog = addLog(db, actor, `Logged hydro reading for site ${site.number}: ${readingValue}${flagged ? " (flagged for review)" : isBaseline ? " (baseline)" : ""}`);
+    persist({ ...db, hydroReadings, activityLog });
+    setEntrySiteId(null);
+    setToast(isBaseline ? `Baseline reading saved for site ${site.number}` : `Reading saved for site ${site.number} \u2014 sent for accounting review${flagged ? " (flagged)" : ""}`);
+  };
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Hydro Readings"), /* @__PURE__ */ React.createElement("input", { type: "text", value: filter, onChange: (e) => setFilter(e.target.value), placeholder: "Search by site #, section, or customer name\u2026", className: "w-full mb-3 border border-[#E2DED5] rounded-lg px-3 py-2 text-sm bg-white" }), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Last Reading"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-44" }))), /* @__PURE__ */ React.createElement("tbody", null, filteredSites.map((s) => {
+    const owner = getSiteOwner(db, s.id);
+    const last = getLastHydroReading(db, s.id);
+    return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 font-semibold text-[#1E1A13]" }, s.number), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, last ? last.reading : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, last ? last.date : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-right whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setEntrySiteId(s.id), className: "text-xs font-semibold text-[#377249] hover:underline mr-3" }, "Enter Reading"), last && /* @__PURE__ */ React.createElement("button", { onClick: () => setHistorySiteId(s.id), className: "text-xs font-medium text-[#75716A] hover:underline" }, "History")));
+  })))), entrySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Enter Hydro Reading \u2014 Site ${(db.sites.find((s) => s.id === entrySiteId) || {}).number || ""}`, onClose: () => setEntrySiteId(null) }, /* @__PURE__ */ React.createElement(HydroReadingForm, { db, siteId: entrySiteId, onSave: submitReading, onCancel: () => setEntrySiteId(null) })), historySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Hydro History \u2014 Site ${(db.sites.find((s) => s.id === historySiteId) || {}).number || ""}`, onClose: () => setHistorySiteId(null), wide: true }, /* @__PURE__ */ React.createElement(HydroHistoryTable, { db, siteId: historySiteId })));
+}
+function getAccountingCopyEmail(db) {
+  var _a;
+  return ((_a = db.settings) == null ? void 0 : _a.accountingCopyEmail) || "";
+}
+function AccountingCopyEmailControl({ db, persist }) {
+  const [value, setValue] = useState(getAccountingCopyEmail(db));
+  useEffect(() => {
+    setValue(getAccountingCopyEmail(db));
+  }, [getAccountingCopyEmail(db)]);
+  const commit = () => {
+    persist({ ...db, settings: { ...db.settings || {}, accountingCopyEmail: value.trim() } });
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap" }, "Send invoice copies to"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "email",
+      value,
+      onChange: (e) => setValue(e.target.value),
+      onBlur: commit,
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          commit();
+          e.currentTarget.blur();
+        }
+      },
+      placeholder: "e.g. accounting@qicampark.com",
+      className: "w-52 rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-sm text-[#1E1A13] focus:outline-none focus:ring-2 focus:ring-[#C1652F]/50 focus:border-[#C1652F]"
+    }
+  ));
+}
+function HydroReviewRow({ r, site, owner, rate, taxRate, edits, setEditField, onConfirm }) {
+  const e = edits[r.id] || {};
+  const readingStr = e.reading !== void 0 ? e.reading : String(r.reading);
+  const dateStr = e.date !== void 0 ? e.date : r.date;
+  const readingNum = Number(readingStr);
+  const readingValid = readingStr !== "" && Number.isFinite(readingNum);
+  const computed = readingValid ? computeHydroUsage(r.previousReading, readingNum, site == null ? void 0 : site.meterDigits) : { usage: null, rolledOver: false };
+  const readingWasEdited = readingValid && readingNum !== r.reading;
+  const usageStr = e.usage !== void 0 ? e.usage : computed.usage != null ? String(computed.usage) : r.usage != null ? String(r.usage) : "";
+  const usageNum = Number(usageStr);
+  const usageValid = usageStr !== "" && Number.isFinite(usageNum) && usageNum >= 0;
+  const previewSubtotal = usageValid ? Math.round(usageNum * rate) / 100 : null;
+  const previewTax = previewSubtotal != null ? Math.round(previewSubtotal * taxRate) / 100 : null;
+  const previewTotal = previewSubtotal != null ? Math.round((previewSubtotal + previewTax) * 100) / 100 : null;
+  const confirm = () => {
+    if (!readingValid || !usageValid) return;
+    onConfirm(r, { reading: readingNum, date: dateStr, usage: usageNum, rolledOver: computed.rolledOver });
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: `rounded-xl border p-4 bg-[#FFFDFA] ${r.flagged ? "border-[#e0bfa6]" : "border-[#E2DED5]"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, "Site ", site ? site.number : "?"), " \u2014 ", (owner == null ? void 0 : owner.name) || "No customer on file", r.flagged && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-xs font-semibold text-[#a8532a]" }, "\u26A0 Flagged for review")), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Read ", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateStr, onChange: (ev) => setEditField(r.id, "date", ev.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" }))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-xs text-[#75716A] mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Previous: ", r.previousReading != null ? r.previousReading : "\u2014"), /* @__PURE__ */ React.createElement("span", null, "\u2192"), /* @__PURE__ */ React.createElement("label", null, "Reading: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: readingStr, onChange: (ev) => setEditField(r.id, "reading", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" })), readingWasEdited && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "(corrected from ", r.reading, ")"), computed.rolledOver && /* @__PURE__ */ React.createElement("span", null, "(meter appears to have rolled over)")), !usageValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, "Usage couldn't be calculated automatically \u2014 enter the correct usage manually below."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Usage (kWh): ", /* @__PURE__ */ React.createElement("input", { type: "number", value: usageStr, onChange: (ev) => setEditField(r.id, "usage", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), previewTotal != null && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\u2192 ", React.createElement(Money, { value: previewSubtotal }), " + tax = ", React.createElement(Money, { value: previewTotal }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
+}
+function HydroReviewView({ db, persist }) {
+  const actor = useCurrentActor();
+  const [toast, setToast] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [pendingConfirm, setPendingConfirm] = useState(null);
+  const taxRate = (db.settings && db.settings.taxRate != null) ? db.settings.taxRate : 13;
+  const rate = getHydroRate(db);
+  const pending = (db.hydroReadings || []).filter((r) => r.status === "pending").slice().sort((a, b) => (a.flagged === b.flagged ? 0 : a.flagged ? -1 : 1) || (a.date < b.date ? -1 : 1));
+  const setEditField = (id, field, value) => setEdits((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+  const requestConfirm = (reading, final) => {
+    const site = db.sites.find((s) => s.id === reading.siteId);
+    if (!site) return;
+    setPendingConfirm({ reading, final, site });
+  };
+  const confirmAndInvoice = () => {
+    if (!pendingConfirm) return;
+    const { reading, final, site } = pendingConfirm;
+    const subtotal = Math.round(final.usage * rate) / 100;
+    const taxAmount = Math.round(subtotal * taxRate) / 100;
+    const total = Math.round((subtotal + taxAmount) * 100) / 100;
+    const readingChanged = final.reading !== reading.reading;
+    const hydroReadings = (db.hydroReadings || []).map((r) => r.id === reading.id ? { ...r, reading: final.reading, date: final.date, rolledOver: final.rolledOver, status: "invoiced", confirmedUsage: final.usage, rate, taxAmount, amount: total, confirmedBy: actor, confirmedAt: todayISO(), invoicedAt: todayISO() } : r);
+    let activityLog = addLog(db, actor, `Confirmed hydro reading and sent invoice for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`);
+    persist({ ...db, hydroReadings, activityLog });
+    const owner = getSiteOwner(db, site.id);
+    const copyEmail = getAccountingCopyEmail(db);
+    if (EMAIL_ENABLED && owner && owner.email) {
+      sendEmail({
+        toEmail: owner.email,
+        toName: owner.name,
+        subject: `Hydro Bill \u2014 Site ${site.number}`,
+        message: buildHydroInvoiceEmailText(site, final.usage, subtotal, taxAmount, total, taxRate),
+        department: "accounting"
+      }).catch(() => {
+        logSystemError(db, persist, "Hydro invoice email", `Failed to send hydro invoice to ${owner.name} for site ${site.number}`);
+      });
+    } else if (!owner || !owner.email) {
+      logSystemError(db, persist, "Hydro invoice email", `No customer email on file for site ${site.number} \u2014 invoice recorded but not emailed`);
+    }
+    if (EMAIL_ENABLED && copyEmail) {
+      sendEmail({
+        toEmail: copyEmail,
+        toName: "Accounting",
+        subject: `Copy: Hydro Bill \u2014 Site ${site.number}${(owner == null ? void 0 : owner.name) ? ` (${owner.name})` : ""}`,
+        message: buildHydroInvoiceEmailText(site, final.usage, subtotal, taxAmount, total, taxRate),
+        department: "accounting"
+      }).catch(() => {
+        logSystemError(db, persist, "Hydro invoice copy email", `Failed to send accounting copy for site ${site.number}`);
+      });
+    }
+    setEdits((prev) => {
+      const next = { ...prev };
+      delete next[reading.id];
+      return next;
+    });
+    setPendingConfirm(null);
+    setToast(`Confirmed and invoiced site ${site.number}`);
+  };
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13]" }, "Hydro Meter Review"), /* @__PURE__ */ React.createElement(HydroRateControl, { db, persist })), /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement(AccountingCopyEmailControl, { db, persist })), pending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "No hydro readings waiting for review.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
+    const site = db.sites.find((s) => s.id === r.siteId);
+    const owner = getSiteOwner(db, r.siteId);
+    return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm });
+  })), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro \u2014 Site ${pendingConfirm.site.number}` }, customer: getSiteOwner(db, pendingConfirm.site.id) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
+}
+function getConsignmentTransferInfo(db, cottage, site) {
+  if (!cottage || !site) return { buyer: null, seller: null };
+  const entries = (site.transferHistory || []).filter((t) => t.cottageName === cottage.name).slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  if (entries.length > 0) {
+    return { buyer: entries[0].toCustomerName, seller: entries[0].fromCustomerName };
+  }
+  const owner = getSiteOwner(db, site.id);
+  return { buyer: null, seller: (owner == null ? void 0 : owner.name) || null };
+}
+function buildSalesTransactions(db) {
+  const rows = [];
+  (db.cottageOrders || []).forEach((order) => {
+    const hasCommitment = Number(order.depositAmount) > 0 || !!order.paidInFullDate;
+    if (!order.customerId || !hasCommitment) return;
+    const customer = db.customers.find((c) => c.id === order.customerId);
+    const closed = !!order.paidInFullDate;
+    rows.push({
+      id: `order-${order.id}`,
+      kind: "New Cottage",
+      cottageName: order.model || "Unnamed model",
+      buyer: (customer == null ? void 0 : customer.name) || "\u2014",
+      seller: null,
+      price: Number(order.totalPrice) || 0,
+      closed,
+      dateClosed: order.paidInFullDate || null,
+      sortDate: order.paidInFullDate || order.depositDate || order.orderedDate || ""
+    });
+  });
+  (db.consignmentListings || []).forEach((listing) => {
+    if (listing.status !== "Pending Offer" && listing.status !== "Sold") return;
+    const cottage = db.cottages.find((c) => c.id === listing.cottageId);
+    const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+    const { buyer, seller } = getConsignmentTransferInfo(db, cottage, site);
+    const closed = listing.status === "Sold";
+    rows.push({
+      id: `listing-${listing.id}`,
+      kind: "Consignment",
+      cottageName: (cottage == null ? void 0 : cottage.name) || "Unnamed cottage",
+      buyer: closed ? buyer || "\u2014 (not yet transferred)" : "\u2014 (pending)",
+      seller: seller || "\u2014",
+      price: closed ? Number(listing.soldPrice) || 0 : Number(listing.askingPrice) || 0,
+      closed,
+      dateClosed: listing.soldDate || null,
+      sortDate: listing.soldDate || listing.listedDate || ""
+    });
+  });
+  return rows.sort((a, b) => (b.sortDate || "").localeCompare(a.sortDate || ""));
+}
+function SalesTransactionRow({ t }) {
+  const statusBadge = /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${t.closed ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, t.closed ? "Closed Deal" : "Pending Deal");
+  const sellerDisplay = t.kind === "Consignment" ? t.seller || "\u2014" : "\u2014";
+  return /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, statusBadge), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, t.dateClosed || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, t.kind), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, t.cottageName), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, t.buyer || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, sellerDisplay), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(t.price)));
+}
+function SalesTransactionsTable({ rows }) {
+  const headerRow = /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Type"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Cottage"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Buyer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Seller"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Price"));
+  const bodyRows = rows.map((t) => /* @__PURE__ */ React.createElement(SalesTransactionRow, { key: t.id, t }));
+  return /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, headerRow), /* @__PURE__ */ React.createElement("tbody", null, bodyRows)));
+}
+function SalesTransactionsView({ db }) {
+  const [filter, setFilter] = useState("");
+  const transactions = buildSalesTransactions(db);
+  const filtered = transactions.filter((t) => {
+    if (!filter) return true;
+    const hay = `${t.cottageName} ${t.buyer || ""} ${t.seller || ""} ${t.kind}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Sales Transactions"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, transactions.length, " transaction", transactions.length === 1 ? "" : "s")), /* @__PURE__ */ React.createElement("input", {
+    className: inputCls + " w-56",
+    placeholder: "Search buyer, seller, cottage\u2026",
+    value: filter,
+    onChange: (e) => setFilter(e.target.value)
+  }));
+  let body;
+  if (transactions.length === 0) {
+    body = /* @__PURE__ */ React.createElement(EmptyState, { text: "No sales transactions yet." });
+  } else if (filtered.length === 0) {
+    body = /* @__PURE__ */ React.createElement(EmptyState, { text: "No transactions match your search." });
+  } else {
+    body = /* @__PURE__ */ React.createElement(SalesTransactionsTable, { rows: filtered });
+  }
+  return /* @__PURE__ */ React.createElement("div", null, header, body);
+}
 function SeasonalFeeInput({ value, onCommit }) {
   const [text, setText] = useState(value ? String(value) : "");
   useEffect(() => {
@@ -8516,6 +8929,7 @@ function SystemHealthView({ db, persist }) {
     { label: "Consignment Listings", count: (db.consignmentListings || []).length },
     { label: "Sunspace Orders", count: (db.sunspaceOrders || []).length },
     { label: "Winterizing Requests", count: (db.winterizingRequests || []).length },
+    { label: "Hydro Readings", count: (db.hydroReadings || []).length },
     { label: "Activity Log Entries", count: (db.activityLog || []).length }
   ];
   const estimatedBytes = JSON.stringify(db).length;
@@ -8556,7 +8970,7 @@ function ParkSubNav({ active, onSelect, allowedTabKeys }) {
     it.label
   )));
 }
-const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders", "consignments", "sunspace", "admindashboard", "adminreports", "seasonalfees"]);
+const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders", "consignments", "sunspace", "admindashboard", "adminreports", "seasonalfees", "hydroreview", "salestransactions"]);
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
@@ -8570,6 +8984,7 @@ const TABS = [
   { key: "sites", label: "Sites", group: "service", hidden: true },
   { key: "map", label: "Site Map", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
+  { key: "hydro", label: "Hydro Readings", group: "service" },
   { key: "calendar", label: "Calendar", group: "service" },
   { key: "servicereports", label: "Service Reports", group: "service" },
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
@@ -8578,11 +8993,13 @@ const TABS = [
   { key: "consignments", label: "Consignment Listings", group: "sales" },
   { key: "sunspace", label: "Sunspace Accessories", group: "sales" },
   { key: "prospects", label: "Prospects / Waitlist", group: "sales" },
+  { key: "salestransactions", label: "Sales Transactions", group: "sales" },
   { key: "admindashboard", label: "Admin Dashboard", group: "admin" },
   { key: "adminreports", label: "Reports", group: "admin" },
   { key: "seasonalfees", label: "Seasonal Fees", group: "admin" },
   { key: "systemhealth", label: "System Health", group: "admin" },
-  { key: "staff", label: "Staff", group: "admin" }
+  { key: "staff", label: "Staff", group: "admin" },
+  { key: "hydroreview", label: "Hydro Meter Review", group: "accounting" }
 ];
 function AppContent() {
   const { db, loading, error, persist, retry } = useDb();
@@ -8719,7 +9136,7 @@ function AppContent() {
   const isAdminOrManager = isAdmin || isManager;
   const allowedTabKeys = isAdmin ? null : isSalesManager ? /* @__PURE__ */ new Set([...OFFICE_TAB_KEYS, ...SALES_TAB_KEYS]) : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
   const visibleGroup = isAdmin || isSalesManager ? mode : "service";
-  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : "dashboard";
+  const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : visibleGroup === "accounting" ? "hydroreview" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
   const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
@@ -8810,6 +9227,13 @@ function AppContent() {
         className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "admin" ? "bg-[#5B4B8A] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
       },
       "Admin"
+    ), isAdmin && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => switchMode("accounting"),
+        className: `flex-1 py-2 rounded-[8px] text-[13px] font-bold text-center transition ${mode === "accounting" ? "bg-[#B5432E] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+      },
+      "Accounting"
     )),
     /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !t.hidden).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key === "thepark" ? parkTab : t.key)).map((t) => {
       const isActive = t.key === "thepark" ? PARK_KEYS.includes(effectiveTab) : effectiveTab === t.key;
@@ -8821,7 +9245,8 @@ function AppContent() {
           className: `flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${isActive ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
         },
         /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${isActive ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
-        t.label
+        t.label,
+        t.key === "hydroreview" && (db.hydroReadings || []).filter((r) => r.status === "pending").length > 0 && /* @__PURE__ */ React.createElement("span", { className: "ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#a8532a] text-white" }, (db.hydroReadings || []).filter((r) => r.status === "pending").length)
       );
     })),
     /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, notifStatus !== "unsupported" && /* @__PURE__ */ React.createElement(
@@ -8850,7 +9275,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "prospects" && /* @__PURE__ */ React.createElement(ProspectsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), isAdmin && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
