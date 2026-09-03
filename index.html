@@ -167,7 +167,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
 const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "hydro", "customers"]);
 const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "servicereports"]);
-const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "consignments", "sunspace", "deals", "salestransactions"]);
+const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "inventory", "consignments", "sunspace", "deals", "salestransactions"]);
 function getUserRole(db, email) {
   const roles = (db && db.userRoles) || {};
   const hasAnyAdmin = Object.values(roles).some((r) => r === "admin");
@@ -487,6 +487,13 @@ function todayISO() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+function isThisMonth(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return false;
+  const now = /* @__PURE__ */ new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 function isOverdue(wo) {
   return wo.status !== "Completed" && wo.date && wo.date < todayISO();
@@ -1835,7 +1842,7 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
-function CottagesView({ db, persist, readOnly, filterPrefill }) {
+function CottagesView({ db, persist, readOnly, canTransfer, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -1933,6 +1940,7 @@ function CottagesView({ db, persist, readOnly, filterPrefill }) {
       db,
       persist,
       readOnly,
+      canTransfer: canTransfer != null ? canTransfer : !readOnly,
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -1949,6 +1957,7 @@ function CottagesView({ db, persist, readOnly, filterPrefill }) {
   ));
 }
 function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose, linkedProspect, listing }) {
+  const [takingOffSite, setTakingOffSite] = useState(false);
   const [ownerType, setOwnerType] = useState((linkedProspect == null ? void 0 : linkedProspect.customerId) ? "existing" : "new");
   const [customerId, setCustomerId] = useState((linkedProspect == null ? void 0 : linkedProspect.customerId) || "");
   const [switchToNewConfirm, setSwitchToNewConfirm] = useState(false);
@@ -1997,7 +2006,33 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
     const consignmentListings = (dbObj.consignmentListings || []).map((l) => l.id === listing.id ? { ...l, soldPrice: soldPriceNum } : l);
     return { ...dbObj, consignmentListings };
   };
+  const submitOffSite = () => {
+    if (listing && !soldPriceValid) return;
+    const customers = db.customers.map((c) => {
+      if (!oldIds.has(c.id)) return c;
+      const remainingSites = customerSiteIds(c).filter((sId) => sId !== site.id);
+      return { ...c, siteIds: remainingSites, siteId: remainingSites[0] || null };
+    });
+    const transferEntry = {
+      id: uid(),
+      date: todayISO(),
+      fromCustomerName: oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "Unknown",
+      toCustomerName: "Taken off-site",
+      cottageName: cottage.name
+    };
+    const sites = db.sites.map(
+      (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
+    );
+    const activityLog = addLog(db, actor, `${cottage.name} (Site ${site.number}) sold and taken off-site${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
+    const withTrash = trashItem({ ...db, customers, sites, activityLog }, "cottage", cottage, cottage.name);
+    persist(applyListingPrice(closeDealForProspect(withTrash, actor)));
+    onClose();
+  };
   const submit = () => {
+    if (takingOffSite) {
+      submitOffSite();
+      return;
+    }
     if (listing && !soldPriceValid) return;
     if (ownerType === "existing") {
       if (!customerId) return;
@@ -2089,21 +2124,38 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
     "Existing Customer"
   ));
   const switchConfirmModal = switchToNewConfirm ? /* @__PURE__ */ React.createElement(Modal, { title: "Switch to New Owner?", onClose: () => setSwitchToNewConfirm(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This unlinks the selected customer and will instead create a brand-new customer record when you complete the transfer. Name, phone, and email already filled in will stay, and you can edit them."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setSwitchToNewConfirm(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep as Existing Customer"), /* @__PURE__ */ React.createElement("button", { onClick: confirmSwitchToNew, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Switch to New Owner"))) : null;
-  const canSubmit = (ownerType === "existing" ? !!customerId : !!name.trim()) && soldPriceValid;
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, ownerType === "existing" ? "This adds the site to an existing customer\u2019s profile and unlinks" : "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), listing && /* @__PURE__ */ React.createElement(Field, { label: "Final Sold Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: soldPrice, onChange: (e) => setSoldPrice(e.target.value), placeholder: "0.00" })), ownerTypeToggle, switchConfirmModal, ownerType === "existing" ? /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  const canSubmit = takingOffSite ? soldPriceValid : (ownerType === "existing" ? !!customerId : !!name.trim()) && soldPriceValid;
+  const locationToggle = /* @__PURE__ */ React.createElement("div", { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTakingOffSite(false),
+      className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${!takingOffSite ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+    },
+    "Staying On A Site Here"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTakingOffSite(true),
+      className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${takingOffSite ? "bg-[#377249] text-[#F9F5EC] shadow-sm" : "text-[#75716A] hover:bg-white/60"}`
+    },
+    "Taking It Off-Site"
+  ));
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${cottage.name}`, onClose }, locationToggle, takingOffSite ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This marks the sale complete, removes ", cottage.name, " from Site ", site.number, ", and leaves the site vacant \u2014 nothing is assigned to a new owner here. A dated record is kept on the site.") : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, ownerType === "existing" ? "This adds the site to an existing customer\u2019s profile and unlinks" : "This creates a new customer record for the new owner and unlinks", " ", oldCustomers.length ? oldCustomers.map((c) => c.name).join(", ") : "the previous owner", " from Site", " ", site.number, " \u2014 keeping all past work order history correctly attributed to whoever owned the cottage at the time. A dated record of this transfer is kept on the site."), listing && /* @__PURE__ */ React.createElement(Field, { label: "Final Sold Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: soldPrice, onChange: (e) => setSoldPrice(e.target.value), placeholder: "0.00" })), !takingOffSite && ownerTypeToggle, !takingOffSite && switchConfirmModal, !takingOffSite && ownerType === "existing" ? /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: customerOptions,
     value: customerId,
     onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "\u2014 Select a customer \u2014"
-  })) : null, ownerType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Contact details below are managed on the customer's profile \u2014 edit them there if they've changed."), /* @__PURE__ */ React.createElement(Field, { label: ownerType === "existing" ? "Name" : "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, disabled: ownerType === "existing", onChange: (e) => setName(e.target.value), autoFocus: ownerType === "new" })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, disabled: ownerType === "existing", onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, disabled: ownerType === "existing", onChange: (e) => setEmail(e.target.value) })), ownerType === "new" && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  })) : null, !takingOffSite && ownerType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Contact details below are managed on the customer's profile \u2014 edit them there if they've changed."), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: ownerType === "existing" ? "Name" : "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, disabled: ownerType === "existing", onChange: (e) => setName(e.target.value), autoFocus: ownerType === "new" })), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, disabled: ownerType === "existing", onChange: (e) => setPhone(e.target.value) })), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, disabled: ownerType === "existing", onChange: (e) => setEmail(e.target.value) })), !takingOffSite && ownerType === "new" && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: submit,
       disabled: !canSubmit,
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
     },
-    "Complete Transfer"
+    takingOffSite ? "Complete Sale" : "Complete Transfer"
   )));
 }
 function ApplianceTransferModal({ appliance, cottage, cottages, db, persist, onClose, onTransferred }) {
@@ -2215,7 +2267,7 @@ function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onT
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
 }
-function CottageDetailModal({ cottage, db, persist, readOnly, nested, onClose, onEdit }) {
+function CottageDetailModal({ cottage, db, persist, readOnly, canTransfer, nested, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -2304,7 +2356,7 @@ function CottageDetailModal({ cottage, db, persist, readOnly, nested, onClose, o
       /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, a.type, a.serialNumber ? ` \u2014 ${a.serialNumber}` : ""),
       status !== "none" && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${statusTone}` }, status === "expired" ? "Warranty Expired" : status === "expiring" ? "Expiring Soon" : "Under Warranty")
     );
-  }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !readOnly && site && /* @__PURE__ */ React.createElement(
+  }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), (canTransfer != null ? canTransfer : !readOnly) && site && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setTransferOpen(true),
@@ -2864,13 +2916,17 @@ function getPaymentInstructions(db) {
 const DEFAULT_COMPANY_NAME = "Quinte's Isle Campark";
 const DEFAULT_COMPANY_ADDRESS = "237 Salmon Point Road, Cherry Valley, ON K0K 1P0";
 const DEFAULT_COMPANY_LOGO_URL = "https://www.qicampark.com/images/QuinteIsleCampark-300x142.png";
+const DEFAULT_COMPANY_PHONE = "613-476-6310";
+const DEFAULT_COMPANY_WEBSITE = "qicampark.com";
 function getCompanyProfile(db) {
   var _a;
   const c = ((_a = db.settings) == null ? void 0 : _a.company) || {};
   return {
     name: c.name != null ? c.name : DEFAULT_COMPANY_NAME,
     address: c.address != null ? c.address : DEFAULT_COMPANY_ADDRESS,
-    logoUrl: c.logoUrl != null ? c.logoUrl : DEFAULT_COMPANY_LOGO_URL
+    logoUrl: c.logoUrl != null ? c.logoUrl : DEFAULT_COMPANY_LOGO_URL,
+    phone: c.phone != null ? c.phone : DEFAULT_COMPANY_PHONE,
+    website: c.website != null ? c.website : DEFAULT_COMPANY_WEBSITE
   };
 }
 function CompanyProfileControl({ db, persist }) {
@@ -2878,11 +2934,15 @@ function CompanyProfileControl({ db, persist }) {
   const [name, setName] = useState(current.name);
   const [address, setAddress] = useState(current.address);
   const [logoUrl, setLogoUrl] = useState(current.logoUrl);
+  const [phone, setPhone] = useState(current.phone);
+  const [website, setWebsite] = useState(current.website);
   useEffect(() => {
     const c = getCompanyProfile(db);
     setName(c.name);
     setAddress(c.address);
     setLogoUrl(c.logoUrl);
+    setPhone(c.phone);
+    setWebsite(c.website);
   }, [JSON.stringify(db.settings && db.settings.company)]);
   const commit = (patch) => {
     persist({ ...db, settings: { ...db.settings || {}, company: { ...getCompanyProfile(db), ...patch } } });
@@ -2896,6 +2956,16 @@ function CompanyProfileControl({ db, persist }) {
   }, className: fieldCls })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Company address"), /* @__PURE__ */ React.createElement("input", { type: "text", value: address, onChange: (e) => setAddress(e.target.value), onBlur: () => commit({ address: address.trim() }), onKeyDown: (e) => {
     if (e.key === "Enter") {
       commit({ address: address.trim() });
+      e.currentTarget.blur();
+    }
+  }, className: fieldCls })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Phone"), /* @__PURE__ */ React.createElement("input", { type: "text", value: phone, onChange: (e) => setPhone(e.target.value), onBlur: () => commit({ phone: phone.trim() }), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      commit({ phone: phone.trim() });
+      e.currentTarget.blur();
+    }
+  }, className: fieldCls })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Website"), /* @__PURE__ */ React.createElement("input", { type: "text", value: website, onChange: (e) => setWebsite(e.target.value), onBlur: () => commit({ website: website.trim() }), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      commit({ website: website.trim() });
       e.currentTarget.blur();
     }
   }, className: fieldCls })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Logo URL"), /* @__PURE__ */ React.createElement("input", { type: "text", value: logoUrl, onChange: (e) => setLogoUrl(e.target.value), onBlur: () => commit({ logoUrl: logoUrl.trim() }), onKeyDown: (e) => {
@@ -3543,14 +3613,17 @@ function DashboardSearch({ db, onJump }) {
     r.sub && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, r.sub)
   ))));
 }
-function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys }) {
+function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, pendingSignups }) {
   var _a, _b;
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const overdueCount = db.workOrders.filter(isOverdue).length;
-  const sitesNeedingService = new Set(openWorkOrders.map((w) => w.siteId).filter(Boolean)).size;
+  const signupsList = pendingSignups || [];
+  const signupsNeedingReview = signupsList.length;
+  const winterizingSignups = signupsList.filter((p) => p.type === "winterizing").length;
+  const propaneSignups = signupsList.filter((p) => p.type === "propane").length;
   const pendingQuoteValue = db.quotes.filter((q) => q.status === "Draft" || q.status === "Sent").reduce((sum, q) => sum + computeQuoteTotals(q, taxRate).total, 0);
   const recentWorkOrders = db.workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
   const upcomingAppointments = (db.serviceAppointments || []).filter((a) => !a.completedDate).sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
@@ -3596,7 +3669,11 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys })
       tone: urgentCount > 0 ? "text-[#a8532a]" : void 0,
       onClick: () => onGoToTab("workorders")
     }
-  ), /* @__PURE__ */ React.createElement(StatCard, { label: "Sites Needing Service", value: sitesNeedingService, onClick: () => onGoToTab("sites") }), (!allowedTabKeys || allowedTabKeys.has("quotes")) && /* @__PURE__ */ React.createElement(StatCard, { label: "Pending Quote Value", value: formatPrice(pendingQuoteValue), onClick: () => onGoToTab("quotes") })), /* @__PURE__ */ React.createElement("div", { className: "grid lg:grid-cols-3 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Work Orders"), recentWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No work orders yet.") : /* @__PURE__ */ React.createElement("div", null, recentWorkOrders.map((w) => {
+  ), /* @__PURE__ */ React.createElement(StatCard, {
+    label: "Sign-Ups Needing Review",
+    value: signupsNeedingReview,
+    onClick: () => onGoToTab(winterizingSignups > 0 || propaneSignups === 0 ? "winterizing" : "propane")
+  }), (!allowedTabKeys || allowedTabKeys.has("quotes")) && /* @__PURE__ */ React.createElement(StatCard, { label: "Pending Quote Value", value: formatPrice(pendingQuoteValue), onClick: () => onGoToTab("quotes") })), /* @__PURE__ */ React.createElement("div", { className: "grid lg:grid-cols-3 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Work Orders"), recentWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No work orders yet.") : /* @__PURE__ */ React.createElement("div", null, recentWorkOrders.map((w) => {
     const site = db.sites.find((s) => s.id === w.siteId);
     const cottage = db.cottages.find((c) => c.id === w.cottageId);
     const where = site ? `Site ${site.number}` : cottage ? cottage.name : "\u2014";
@@ -4147,8 +4224,17 @@ function buildWorkOrderHtml(wo, db) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => customerSiteIds(c).includes(site.id)) : null;
+  const company = getCompanyProfile(db);
   return `
     <div class="wo">
+      ${company.name || company.logoUrl ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #ddd;">
+        ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="height:48px;max-width:180px;object-fit:contain;" />` : ""}
+        <div>
+          ${company.name ? `<div style="font-weight:700;font-size:16px;color:#1E1A13;">${escapeHtml(company.name)}</div>` : ""}
+          ${company.address ? `<div style="font-size:12px;color:#75716A;">${escapeHtml(company.address)}</div>` : ""}
+          ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
+        </div>
+      </div>` : ""}
       <div class="wo-head">
         <div>
           <div class="label">Work Order</div>
@@ -4176,6 +4262,7 @@ function buildWorkOrderHtml(wo, db) {
         <div class="sign-line">Completed by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
+      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 
@@ -4192,6 +4279,7 @@ function buildQuoteHtml(quote, db, taxRate) {
   const site = db.sites.find((s) => s.id === quote.siteId);
   const cottage = db.cottages.find((c) => c.id === quote.cottageId);
   const customer = db.customers.find((c) => c.id === quote.customerId);
+  const company = getCompanyProfile(db);
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
   const rows = quote.lineItems.map(
     (li) => `<tr>
@@ -4205,6 +4293,14 @@ function buildQuoteHtml(quote, db, taxRate) {
   const laborRate = Number(quote.laborRate) || 0;
   return `
     <div class="wo">
+      ${company.name || company.logoUrl ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #ddd;">
+        ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="height:48px;max-width:180px;object-fit:contain;" />` : ""}
+        <div>
+          ${company.name ? `<div style="font-weight:700;font-size:16px;color:#1E1A13;">${escapeHtml(company.name)}</div>` : ""}
+          ${company.address ? `<div style="font-size:12px;color:#75716A;">${escapeHtml(company.address)}</div>` : ""}
+          ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
+        </div>
+      </div>` : ""}
       <div class="wo-head">
         <div>
           <div class="label">Quote</div>
@@ -4244,6 +4340,7 @@ function buildQuoteHtml(quote, db, taxRate) {
         <div class="sign-line">Approved by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
+      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildQuoteEmailText(quote, db, taxRate) {
@@ -4286,6 +4383,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
       ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;margin:0 0 6px;" />` : ""}
       ${company.name ? `<div style="font-size:16px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>` : ""}
       ${company.address ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml(company.address)}</div>` : ""}
+      ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
     </div>` : ""}
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;">${escapeHtml(quote.title)}</h1>
@@ -4316,6 +4414,8 @@ function buildQuoteEmailText(quote, db, taxRate) {
           <td style="padding:10px 0 0;color:#377249;font-size:16px;font-weight:700;text-align:right;border-top:2px solid #377249;">${formatPrice(total)}</td>
         </tr>
       </table>
+      <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
+      <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
   </div>`;
 }
@@ -4339,6 +4439,7 @@ function buildWinterizingEmailText(request, db) {
       ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;margin:0 0 6px;" />` : ""}
       ${company.name ? `<div style="font-size:16px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>` : ""}
       ${company.address ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml(company.address)}</div>` : ""}
+      ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
     </div>` : ""}
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;">Your Cottage Has Been Winterized</h1>
@@ -4353,6 +4454,7 @@ function buildWinterizingEmailText(request, db) {
       ${servicedList}
       ${request.notes ? `<p style="font-size:14px;color:#4B4740;margin:0 0 16px;line-height:1.6;"><strong>Notes:</strong> ${escapeHtml(request.notes).replace(/\n/g, "<br>")}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:0;">If you have any questions, please don't hesitate to reach out.</p>
+      <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
   </div>`;
 }
@@ -4360,10 +4462,19 @@ function buildWinterizingHtml(request, db) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
+  const company = getCompanyProfile(db);
   const checkedOptions = WINTERIZING_OPTIONS.filter((opt) => opt.key !== "keyAtReception" && request.options && request.options[opt.key]);
   const keyAtReception = Boolean(request.options && request.options.keyAtReception);
   return `
     <div class="wo">
+      ${company.name || company.logoUrl ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #ddd;">
+        ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="height:48px;max-width:180px;object-fit:contain;" />` : ""}
+        <div>
+          ${company.name ? `<div style="font-weight:700;font-size:16px;color:#1E1A13;">${escapeHtml(company.name)}</div>` : ""}
+          ${company.address ? `<div style="font-size:12px;color:#75716A;">${escapeHtml(company.address)}</div>` : ""}
+          ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
+        </div>
+      </div>` : ""}
       <div class="wo-head">
         <div>
           <div class="label">Winterizing Sign-Up</div>
@@ -4386,6 +4497,7 @@ function buildWinterizingHtml(request, db) {
         <div class="sign-line">Completed by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
+      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildWorkOrderEmailText(wo, db) {
@@ -4490,6 +4602,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
         <div>
           ${company.name ? `<div style="font-weight:700;font-size:16px;color:#1E1A13;">${escapeHtml(company.name)}</div>` : ""}
           ${company.address ? `<div style="font-size:12px;color:#75716A;">${escapeHtml(company.address)}</div>` : ""}
+          ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
         </div>
       </div>` : ""}
       <div class="wo-head">
@@ -4518,6 +4631,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </table>` : ""}
       ${infoSheet && laborHours ? `<div class="label" style="margin-top:16px;">Labor</div><p class="desc" style="min-height:0;border:none;">${laborHours} hr \u2014 ${escapeHtml(invoice.laborRateType || "Rate")}</p>` : ""}
       ${summaryTable}
+      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildInvoiceEmailText(invoice, db, taxRate) {
@@ -4555,6 +4669,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
       ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;margin:0 0 6px;" />` : ""}
       ${company.name ? `<div style="font-size:16px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>` : ""}
       ${company.address ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml(company.address)}</div>` : ""}
+      ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
     </div>` : ""}
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;color:#F9F5EC !important;">Invoice ${escapeHtml(invoice.invoiceNumber)}</h1>
@@ -4579,6 +4694,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
       ${invoice.notes ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Notes:</strong> ${escapeHtml(invoice.notes).replace(/\n/g, "<br>")}</p>` : ""}
       ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
+      <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
   </div>`;
 }
@@ -4803,13 +4919,13 @@ function exportExcel(db, persist) {
   XLSX.writeFile(wb, `campground-export-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.xlsx`);
   if (persist) persist({ ...db, lastBackupAt: new Date().toISOString() });
 }
-function CottageOrderTicket({ order, db, onEdit, onDelete, onAdvance, onMarkSold, onMarkPaidInFull }) {
+function CottageOrderTicket({ order, db, onEdit, onDelete, onAdvance, onMarkSold, onMarkPaidInFull, hideMarkSold }) {
   const site = db.sites.find((s) => s.id === order.siteId);
   const customer = db.customers.find((c) => c.id === order.customerId);
   const isDelivered = order.status === "Delivered/Onsite";
   const sold = isOrderSold(order);
   const paidInFull = isOrderPaidInFull(order);
-  const canMarkSold = isDelivered && order.type === "Display Model" && !order.soldDate;
+  const canMarkSold = !hideMarkSold && isDelivered && order.type === "Display Model" && !order.soldDate;
   const canMarkPaidInFull = isDelivered && sold && !paidInFull;
   const balance = (Number(order.totalPrice) || 0) - (Number(order.depositAmount) || 0);
   return /* @__PURE__ */ React.createElement(
@@ -4823,7 +4939,13 @@ function CottageOrderTicket({ order, db, onEdit, onDelete, onAdvance, onMarkSold
       className: `relative rounded-lg border p-4 mb-3 shadow-sm cursor-grab active:cursor-grabbing ${isDelivered ? "bg-[#F1EEE9] border-[#EEEBE5]" : "bg-[#FFFDFA] border-[#E2DED5]"}`
     },
     /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2" }, /* @__PURE__ */ React.createElement("h4", { className: "font-serif font-semibold text-[15px] text-[#1E1A13]" }, order.model || "Unnamed cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F1EEE9] text-[#75716A] whitespace-nowrap" }, order.type)),
-    /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mt-1.5" }, isDelivered && order.type === "Display Model" && /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mt-1.5" }, order.type === "Display Model" && order.condition && /* @__PURE__ */ React.createElement(
+      "span",
+      {
+        className: `inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${order.condition === "New" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#F1EEE9] text-[#75716A]"}`
+      },
+      order.condition
+    ), isDelivered && order.type === "Display Model" && /* @__PURE__ */ React.createElement(
       "span",
       {
         className: `inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${order.soldDate ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}`
@@ -4846,6 +4968,7 @@ function CottageOrderTicket({ order, db, onEdit, onDelete, onAdvance, onMarkSold
     (Number(order.totalPrice) > 0 || Number(order.depositAmount) > 0) && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#4B4740] mt-1.5" }, Number(order.totalPrice) > 0 && /* @__PURE__ */ React.createElement("span", null, React.createElement(Money, { value: order.totalPrice }), " total"), Number(order.depositAmount) > 0 && /* @__PURE__ */ React.createElement("span", null, " \xB7 ", React.createElement(Money, { value: order.depositAmount }), " deposit"), Number(order.totalPrice) > 0 && !paidInFull && /* @__PURE__ */ React.createElement("span", null, " \xB7 ", React.createElement(Money, { value: balance }), " owing")),
     order.expectedDeliveryDate && !isDelivered && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, "Expected: ", order.expectedDeliveryDate),
     isDelivered && order.deliveredDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5 italic" }, "Delivered ", order.deliveredDate),
+    hideMarkSold && order.soldDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A6B1F] mt-1.5" }, "Set from the Deals tab"),
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(order) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(order) }, "Delete")), !isDelivered && /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -5096,6 +5219,7 @@ function SalesReportView({ db }) {
 }
 function CottageOrdersView({ db, persist }) {
   var _a, _b;
+  const customerOrders = db.cottageOrders.filter((o) => o.type === "Customer Order");
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [toast, setToast] = useState(null);
@@ -5204,29 +5328,24 @@ function CottageOrdersView({ db, persist }) {
     persist({ ...db, cottages: [...db.cottages, newCottage], customers, activityLog });
     setCreateCottageFor(null);
   };
-  const filtered = db.cottageOrders.filter((o) => {
+  const filtered = customerOrders.filter((o) => {
     if (!filter) return true;
     const site = db.sites.find((s) => s.id === o.siteId);
     const customer = db.customers.find((c) => c.id === o.customerId);
     const hay = `${o.model || ""} ${(site == null ? void 0 : site.number) || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
-  const soldOrders = db.cottageOrders.filter(isOrderSold);
+  const soldOrders = customerOrders.filter(isOrderSold);
   const deliveredTotal = soldOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
   const collectedTotal = soldOrders.reduce((sum, o) => sum + (isOrderPaidInFull(o) ? Number(o.totalPrice) || 0 : Number(o.depositAmount) || 0), 0);
-  const unsoldOnSiteCount = db.cottageOrders.filter(
-    (o) => o.status === "Delivered/Onsite" && o.type === "Display Model" && !o.soldDate
-  ).length;
-  const soldConsignmentTotal = (db.consignmentListings || []).filter((l) => l.status === "Sold").reduce((sum, l) => sum + (Number(l.soldPrice) || 0), 0);
-  const combinedSalesTotal = deliveredTotal + soldConsignmentTotal;
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "New Cottage Orders"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "From factory order through delivery.")), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "New Cottage Orders"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Custom builds for a known buyer, from factory order through delivery.")), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
       className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
     },
     "+ New Order"
-  )), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "In Progress"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, db.cottageOrders.filter((o) => o.status !== "Delivered/Onsite").length)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Delivered"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, db.cottageOrders.filter((o) => o.status === "Delivered/Onsite").length)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Unsold On-Site"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#9A6B1F]" }, unsoldOnSiteCount)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Value Sold"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, React.createElement(Money, { value: deliveredTotal }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Collected vs Sold"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, React.createElement(Money, { value: collectedTotal }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#75716A]" }, " / ", React.createElement(Money, { value: deliveredTotal })))), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Total Sales Value (all units)"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, React.createElement(Money, { value: combinedSalesTotal })))), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "In Progress"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, customerOrders.filter((o) => o.status !== "Delivered/Onsite").length)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Delivered"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, customerOrders.filter((o) => o.status === "Delivered/Onsite").length)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Value Sold"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, React.createElement(Money, { value: deliveredTotal }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Collected vs Sold"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, React.createElement(Money, { value: collectedTotal }), /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#75716A]" }, " / ", React.createElement(Money, { value: deliveredTotal }))))), /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls + " w-full sm:w-72",
@@ -5234,7 +5353,7 @@ function CottageOrdersView({ db, persist }) {
       value: filter,
       onChange: (e) => setFilter(e.target.value)
     }
-  )), db.cottageOrders.length === 0 ? /* @__PURE__ */ React.createElement(
+  )), customerOrders.length === 0 ? /* @__PURE__ */ React.createElement(
     EmptyState,
     {
       text: "No cottage orders yet.",
@@ -5273,6 +5392,7 @@ function CottageOrdersView({ db, persist }) {
       initial: modal.data,
       sites: db.sites,
       customers: db.customers,
+      lockedType: "Customer Order",
       onSave: save,
       onCancel: requestCloseModal,
       onDirtyChange: (d) => {
@@ -5301,6 +5421,206 @@ function CottageOrdersView({ db, persist }) {
     }
   ));
 }
+function InventoryConditionPickModal({ onPick, onClose }) {
+  const [step, setStep] = useState("condition");
+  if (step === "new-status") {
+    return /* @__PURE__ */ React.createElement(Modal, { title: "Add a Unit", onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Is it still being built, or already on-site?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => onPick("New", "Ordered/Being Built"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Still Being Built"),
+      /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "On order from the factory, not delivered yet.")
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => onPick("New", "Delivered/Onsite"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Already On-Site"),
+      /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "A new unit that's already delivered and ready to sell.")
+    )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-start mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("condition"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back")));
+  }
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Add a Unit", onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Is this a new factory order, or a used unit (trade-in, rental conversion, or one already on hand)?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => setStep("new-status"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "New Unit"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "A brand-new factory order, not yet delivered.")
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    { onClick: () => onPick("Used", "Delivered/Onsite"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Used Unit"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "A trade-in, former rental, or unit already on hand.")
+  )));
+}
+function InventoryView({ db, persist }) {
+  var _a, _b;
+  const displayUnits = db.cottageOrders.filter((o) => o.type === "Display Model");
+  const [modal, setModal] = useState(null);
+  const [conditionPickOpen, setConditionPickOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [toast, setToast] = useState(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [createCottageFor, setCreateCottageFor] = useState(null);
+  const formDirtyRef = useRef(false);
+  const confirm = useConfirm();
+  const actor = useCurrentActor();
+  const requestCloseModal = () => {
+    if (formDirtyRef.current) {
+      setDiscardConfirmOpen(true);
+    } else {
+      setModal(null);
+    }
+  };
+  const confirmDiscard = () => {
+    formDirtyRef.current = false;
+    setDiscardConfirmOpen(false);
+    setModal(null);
+  };
+  const save = (order) => {
+    var _a2;
+    const exists = db.cottageOrders.some((o) => o.id === order.id);
+    const wasDelivered = exists && ((_a2 = db.cottageOrders.find((o) => o.id === order.id)) == null ? void 0 : _a2.status) === "Delivered/Onsite";
+    const cottageOrders = exists ? db.cottageOrders.map((o) => o.id === order.id ? order : o) : [...db.cottageOrders, order];
+    const activityLog = addLog(db, actor, exists ? `Updated display unit "${order.model || "Unnamed"}"` : `Added display unit "${order.model || "Unnamed"}"`);
+    persist({ ...db, cottageOrders, activityLog });
+    formDirtyRef.current = false;
+    setModal(null);
+    setToast(exists ? "Unit updated" : "Unit added");
+    if (!wasDelivered && order.status === "Delivered/Onsite") {
+      setCreateCottageFor(order);
+    }
+  };
+  const remove = (id) => {
+    var _a2;
+    const order = db.cottageOrders.find((o) => o.id === id);
+    const activityLog = addLog(db, actor, `Removed display unit "${(_a2 = order == null ? void 0 : order.model) != null ? _a2 : ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "cottageOrder", order, (order == null ? void 0 : order.model) || "Display Unit"), activityLog });
+    confirm.clear();
+  };
+  const advance = (order) => {
+    if (order.status === "Delivered/Onsite") return;
+    const updated = { ...order, status: "Delivered/Onsite", deliveredDate: todayISO() };
+    const activityLog = addLog(db, actor, `Display unit "${order.model || "Unnamed"}" marked Delivered/Onsite`);
+    persist({ ...db, cottageOrders: db.cottageOrders.map((o) => o.id === order.id ? updated : o), activityLog });
+    setCreateCottageFor(updated);
+  };
+  const createLinkedCottage = (order, cottageName) => {
+    var _a2, _b2;
+    if (!cottageName.trim()) return;
+    const newCottage = {
+      id: uid(),
+      name: cottageName.trim(),
+      color: "",
+      siteId: order.siteId || null,
+      features: order.features || "",
+      serialNumber: "",
+      year: (/* @__PURE__ */ new Date()).getFullYear().toString(),
+      modelNumber: order.model || "",
+      bedrooms: (_a2 = order.bedrooms) != null ? _a2 : null,
+      bathrooms: (_b2 = order.bathrooms) != null ? _b2 : null,
+      deckPorch: order.deckPorch || "",
+      sunroom: order.sunroom || ""
+    };
+    const activityLog = addLog(db, actor, `Created cottage record "${newCottage.name}" from display unit`);
+    persist({ ...db, cottages: [...db.cottages, newCottage], activityLog });
+    setCreateCottageFor(null);
+  };
+  const filtered = displayUnits.filter((o) => {
+    if (!filter) return true;
+    const site = db.sites.find((s) => s.id === o.siteId);
+    const hay = `${o.model || ""} ${(site == null ? void 0 : site.number) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const soldTotal = displayUnits.filter((o) => o.soldDate).reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0);
+  const unsoldCount = displayUnits.filter((o) => o.status === "Delivered/Onsite" && !o.soldDate).length;
+  const incomingCount = displayUnits.filter((o) => o.status !== "Delivered/Onsite").length;
+  const columns = ["Ordered/Being Built", "Delivered/Onsite (Unsold)", "Sold"];
+  const columnList = (col) => {
+    if (col === "Sold") return filtered.filter((o) => o.soldDate && isThisMonth(o.soldDate));
+    if (col === "Delivered/Onsite (Unsold)") return filtered.filter((o) => o.status === "Delivered/Onsite" && !o.soldDate);
+    return filtered.filter((o) => o.status === "Ordered/Being Built");
+  };
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "QIC Inventory"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Display models we own \u2014 incoming and on-park. Sales close from the Deals tab.")), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setConditionPickOpen(true),
+      className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
+    },
+    "+ Add Unit"
+  )), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Incoming"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, incomingCount)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Unsold On-Site"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#9A6B1F]" }, unsoldCount)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Total Value Sold"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, React.createElement(Money, { value: soldTotal }))), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold" }, "New / Used"), /* @__PURE__ */ React.createElement("div", { className: "text-lg font-semibold text-[#1E1A13]" }, displayUnits.filter((o) => o.condition === "New").length, " / ", displayUnits.filter((o) => o.condition === "Used").length))), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      className: inputCls + " w-full sm:w-72",
+      placeholder: "Search units\u2026",
+      value: filter,
+      onChange: (e) => setFilter(e.target.value)
+    }
+  )), displayUnits.length === 0 ? /* @__PURE__ */ React.createElement(
+    EmptyState,
+    {
+      text: "No display units yet.",
+      action: /* @__PURE__ */ React.createElement("button", { onClick: () => setConditionPickOpen(true), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a unit")
+    }
+  ) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4" }, columns.map((col) => {
+    const list = columnList(col);
+    return /* @__PURE__ */ React.createElement("div", { key: col }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, col), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] bg-[#F1EEE9] rounded-full px-1.5" }, list.length)), /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "min-h-[60px] rounded-lg transition" },
+      list.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, "Nothing here") : list.map((order) => /* @__PURE__ */ React.createElement(
+        CottageOrderTicket,
+        {
+          key: order.id,
+          order,
+          db,
+          hideMarkSold: true,
+          onEdit: (o) => setModal({ mode: "edit", data: o }),
+          onDelete: (o) => confirm.ask(o.id),
+          onAdvance: advance,
+          onMarkSold: () => {
+          },
+          onMarkPaidInFull: () => {
+          }
+        }
+      ))
+    ));
+  })), conditionPickOpen && /* @__PURE__ */ React.createElement(InventoryConditionPickModal, {
+    onPick: (chosenCondition, chosenStatus) => {
+      setConditionPickOpen(false);
+      setModal({
+        mode: "new",
+        data: {
+          condition: chosenCondition,
+          status: chosenStatus,
+          deliveredDate: chosenStatus === "Delivered/Onsite" ? todayISO() : ""
+        }
+      });
+    },
+    onClose: () => setConditionPickOpen(false)
+  }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Display Unit" : "Edit Display Unit", onClose: requestCloseModal, wide: true }, /* @__PURE__ */ React.createElement(
+    CottageOrderForm,
+    {
+      initial: modal.data,
+      sites: db.sites,
+      customers: db.customers,
+      lockedType: "Display Model",
+      onSave: save,
+      onCancel: requestCloseModal,
+      onDirtyChange: (d) => {
+        formDirtyRef.current = d;
+      }
+    }
+  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this unit that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), createCottageFor && /* @__PURE__ */ React.createElement(
+    CreateCottageFromOrderModal,
+    {
+      order: createCottageFor,
+      onCreate: (name) => createLinkedCottage(createCottageFor, name),
+      onSkip: () => setCreateCottageFor(null)
+    }
+  ), confirm.target && /* @__PURE__ */ React.createElement(
+    ConfirmDeleteModal,
+    {
+      label: (_b = (_a = db.cottageOrders.find((o) => o.id === confirm.target)) == null ? void 0 : _a.model) != null ? _b : "this unit",
+      onConfirm: () => remove(confirm.target),
+      onCancel: confirm.clear
+    }
+  ));
+}
 function CreateCottageFromOrderModal({ order, onCreate, onSkip }) {
   const [name, setName] = useState(order.model || "");
   return /* @__PURE__ */ React.createElement(Modal, { title: "Add this to Cottages?", onClose: onSkip }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This order is now marked Delivered. Want to create a real Cottage record for it \u2014 so it shows up for work orders, winterizing, and everything else going forward?"), /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onSkip, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not Yet"), /* @__PURE__ */ React.createElement(
@@ -5313,9 +5633,10 @@ function CreateCottageFromOrderModal({ order, onCreate, onSkip }) {
     "Create Cottage"
   )));
 }
-function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirtyChange }) {
+function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirtyChange, lockedType }) {
   var _a, _b, _c, _d;
-  const [type, setType] = useState((initial == null ? void 0 : initial.type) || "Customer Order");
+  const [type, setType] = useState((initial == null ? void 0 : initial.type) || lockedType || "Customer Order");
+  const [condition, setCondition] = useState((initial == null ? void 0 : initial.condition) || "New");
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "Ordered/Being Built");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
@@ -5344,7 +5665,7 @@ function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirty
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [type, status, customerId, siteId, model, size, bedrooms, bathrooms, deckPorch, sunroom, features, orderedDate, expectedDeliveryDate, deliveredDate, soldDate, totalPrice, depositAmount, depositDate, notes, commentLog]);
+  }, [type, condition, status, customerId, siteId, model, size, bedrooms, bathrooms, deckPorch, sunroom, features, orderedDate, expectedDeliveryDate, deliveredDate, soldDate, totalPrice, depositAmount, depositDate, notes, commentLog]);
   const addComment = () => {
     if (!commentText.trim()) return;
     const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
@@ -5355,7 +5676,8 @@ function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirty
   const submit = () => {
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
-      type,
+      type: lockedType || type,
+      condition: (lockedType || type) === "Display Model" ? condition : null,
       status,
       customerId: customerId || null,
       siteId: siteId || null,
@@ -5369,7 +5691,7 @@ function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirty
       orderedDate,
       expectedDeliveryDate,
       deliveredDate: status === "Delivered/Onsite" ? deliveredDate || todayISO() : deliveredDate || null,
-      soldDate: type === "Display Model" ? soldDate || null : null,
+      soldDate: (lockedType || type) === "Display Model" ? soldDate || null : null,
       totalPrice: Number(totalPrice) || 0,
       depositAmount: Number(depositAmount) || 0,
       depositDate,
@@ -5379,7 +5701,7 @@ function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirty
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Order Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value) }, COTTAGE_ORDER_TYPE.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, COTTAGE_ORDER_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, !lockedType && /* @__PURE__ */ React.createElement(Field, { label: "Order Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value) }, COTTAGE_ORDER_TYPE.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), (lockedType || type) === "Display Model" && /* @__PURE__ */ React.createElement(Field, { label: "Condition" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: condition, onChange: (e) => setCondition(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "New" }, "New"), /* @__PURE__ */ React.createElement("option", { value: "Used" }, "Used"))), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, COTTAGE_ORDER_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: (customers || []).map((c) => ({
@@ -5444,24 +5766,20 @@ function ConsignmentTicket({ listing, db, commissionPercent, onEdit, onDelete, o
   return /* @__PURE__ */ React.createElement(
     "div",
     {
-      draggable: true,
-      onDragStart: (e) => {
-        e.dataTransfer.setData("text/plain", listing.id);
-        e.dataTransfer.effectAllowed = "move";
-      },
-      className: `relative rounded-lg border p-4 mb-3 shadow-sm cursor-grab active:cursor-grabbing ${isFinal ? "bg-[#F1EEE9] border-[#EEEBE5]" : "bg-[#FFFDFA] border-[#E2DED5]"}`
+      className: `relative rounded-lg border p-4 mb-3 shadow-sm ${isFinal ? "bg-[#F1EEE9] border-[#EEEBE5]" : "bg-[#FFFDFA] border-[#E2DED5]"}`
     },
     /* @__PURE__ */ React.createElement("h4", { className: "font-serif font-semibold text-[15px] text-[#1E1A13]" }, cottage ? cottage.name : "Unknown cottage"),
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), Number(listing.askingPrice) > 0 && /* @__PURE__ */ React.createElement("span", null, formatPrice(listing.askingPrice), " asking")),
     listing.showings && listing.showings.length > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, listing.showings.length, " showing", listing.showings.length === 1 ? "" : "s", " logged"),
     isSold && Number(listing.soldPrice) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#28633C] mt-1.5 font-medium" }, "Sold for ", React.createElement(Money, { value: listing.soldPrice }), " \xB7 Commission (", listingRate, "%): ", React.createElement(Money, { value: commission })),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(listing) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(listing) }, "Delete")), !isFinal && /* @__PURE__ */ React.createElement(
+    isSold && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A6B1F] mt-1.5" }, "Set from the Deals tab"),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(listing) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(listing) }, "Delete")), listing.status === "Listed" && /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onAdvance(listing),
         className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap"
       },
-      listing.status === "Listed" ? "Mark Pending Offer \u2192" : "Mark Sold \u2192"
+      "Mark Pending Offer \u2192"
     ))
   );
 }
@@ -5470,12 +5788,10 @@ function ConsignmentListingsView({ db, persist }) {
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
   const [toast, setToast] = useState(null);
-  const [dragOverStatus, setDragOverStatus] = useState(null);
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const formDirtyRef = useRef(false);
   const confirm = useConfirm();
   const actor = useCurrentActor();
-  const [soldPriceTarget, setSoldPriceTarget] = useState(null);
   const commissionPercent = (_b = (_a = db.settings) == null ? void 0 : _a.commissionPercent) != null ? _b : 8;
   const requestCloseModal = () => {
     if (formDirtyRef.current) {
@@ -5509,39 +5825,10 @@ function ConsignmentListingsView({ db, persist }) {
     confirm.clear();
   };
   const advance = (listing) => {
-    const idx = CONSIGNMENT_STATUS.indexOf(listing.status);
-    const nextStatus = CONSIGNMENT_STATUS[Math.min(idx + 1, 2)];
-    if (nextStatus === "Sold") {
-      setSoldPriceTarget(listing);
-      return;
-    }
+    if (listing.status !== "Listed") return;
     const cottage = db.cottages.find((c) => c.id === listing.cottageId);
-    const updated = { ...listing, status: nextStatus };
-    const activityLog = addLog(db, actor, `Listing for ${(cottage == null ? void 0 : cottage.name) || "cottage"} marked ${nextStatus}`);
-    persist({ ...db, consignmentListings: db.consignmentListings.map((l) => l.id === listing.id ? updated : l), activityLog });
-  };
-  const confirmSold = (price) => {
-    const listing = soldPriceTarget;
-    const cottage = db.cottages.find((c) => c.id === listing.cottageId);
-    const updated = { ...listing, status: "Sold", soldPrice: price, soldDate: todayISO() };
-    const activityLog = addLog(db, actor, `Listing for ${(cottage == null ? void 0 : cottage.name) || "cottage"} marked Sold (${formatPrice(price)})`);
-    persist({ ...db, consignmentListings: db.consignmentListings.map((l) => l.id === listing.id ? updated : l), activityLog });
-    setSoldPriceTarget(null);
-  };
-  const handleDropOnStatus = (status) => (e) => {
-    var _a2;
-    e.preventDefault();
-    setDragOverStatus(null);
-    const id = e.dataTransfer.getData("text/plain");
-    const listing = db.consignmentListings.find((l) => l.id === id);
-    if (!listing || listing.status === status) return;
-    if (status === "Sold") {
-      setSoldPriceTarget(listing);
-      return;
-    }
-    const cottage = db.cottages.find((c) => c.id === listing.cottageId);
-    const updated = { ...listing, status };
-    const activityLog = addLog(db, actor, `Listing for ${(_a2 = cottage == null ? void 0 : cottage.name) != null ? _a2 : "cottage"} marked ${status}`);
+    const updated = { ...listing, status: "Pending Offer" };
+    const activityLog = addLog(db, actor, `Listing for ${(cottage == null ? void 0 : cottage.name) || "cottage"} marked Pending Offer`);
     persist({ ...db, consignmentListings: db.consignmentListings.map((l) => l.id === listing.id ? updated : l), activityLog });
   };
   const filtered = db.consignmentListings.filter((l) => {
@@ -5577,17 +5864,11 @@ function ConsignmentListingsView({ db, persist }) {
       action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a listing")
     }
   ) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-4 gap-4" }, CONSIGNMENT_STATUS.map((status) => {
-    const list = filtered.filter((l) => l.status === status);
+    const list = filtered.filter((l) => l.status === status && (status !== "Sold" || isThisMonth(l.soldDate)));
     return /* @__PURE__ */ React.createElement("div", { key: status }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, status), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] bg-[#F1EEE9] rounded-full px-1.5" }, list.length)), /* @__PURE__ */ React.createElement(
       "div",
       {
-        onDragOver: (e) => {
-          e.preventDefault();
-          if (dragOverStatus !== status) setDragOverStatus(status);
-        },
-        onDragLeave: () => setDragOverStatus((s) => s === status ? null : s),
-        onDrop: handleDropOnStatus(status),
-        className: `min-h-[60px] rounded-lg transition ${dragOverStatus === status ? "bg-[#DDF1E1]/50 ring-2 ring-[#377249]/30" : ""}`
+        className: "min-h-[60px] rounded-lg transition"
       },
       list.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, "Nothing here") : list.map((listing) => /* @__PURE__ */ React.createElement(
         ConsignmentTicket,
@@ -5615,17 +5896,7 @@ function ConsignmentListingsView({ db, persist }) {
         formDirtyRef.current = d;
       }
     }
-  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this listing that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), soldPriceTarget && /* @__PURE__ */ React.createElement(SalePriceModal, {
-    title: `Mark "${(() => {
-      var _a3;
-      const cottage = db.cottages.find((c) => c.id === soldPriceTarget.cottageId);
-      return (_a3 = cottage == null ? void 0 : cottage.name) != null ? _a3 : "cottage";
-    })()}" Sold`,
-    priceLabel: "Final Sold Price",
-    initialPrice: soldPriceTarget.soldPrice || soldPriceTarget.askingPrice,
-    onConfirm: confirmSold,
-    onCancel: () => setSoldPriceTarget(null)
-  }), confirm.target && /* @__PURE__ */ React.createElement(
+  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this listing that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (() => {
@@ -5794,7 +6065,7 @@ function DealTicket({ deal, db, onEdit, onDelete, onMoveToDeposit, onCloseDeal, 
   const isFinal = deal.stage === "Sold" || deal.stage === "Not Interested";
   const isDeposit = deal.stage === "Deposit";
   const canMoveToDeposit = deal.stage === "Interested" && !deal.saleRefId;
-  const saleTypeLabel = deal.saleType === "order" ? "New Custom Order" : deal.saleType === "display" ? "Display Model" : deal.saleType === "consignment" ? "Consignment Listing" : null;
+  const saleTypeLabel = deal.saleType === "order" ? "New Custom Order" : deal.saleType === "display" ? "QIC Inventory" : deal.saleType === "consignment" ? "Consignment Listing" : null;
   return /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -5838,6 +6109,7 @@ function DealTicket({ deal, db, onEdit, onDelete, onMoveToDeposit, onCloseDeal, 
 function MoveToDepositModal({ deal, db, onConvertOrder, onConvertDisplay, onConvertConsignment, onClose }) {
   const [step, setStep] = useState("choose");
   const [selectedId, setSelectedId] = useState("");
+  const [depositLocationChoice, setDepositLocationChoice] = useState("");
   const unsoldDisplays = db.cottageOrders.filter((o) => o.type === "Display Model" && !o.soldDate);
   const openListings = db.consignmentListings.filter((l) => l.status === "Listed" || l.status === "Pending Offer");
   const displayOptions = unsoldDisplays.map((o) => ({ value: o.id, label: o.model ? o.model : "Display Model (unnamed)", searchText: o.model || "" }));
@@ -5853,24 +6125,24 @@ function MoveToDepositModal({ deal, db, onConvertOrder, onConvertDisplay, onConv
   ), /* @__PURE__ */ React.createElement(
     "button",
     { onClick: () => setStep("pick-display"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
-    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Existing Display Model"),
-    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying a display unit already on-site.")
+    /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "QIC Inventory"),
+    /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying a unit already in our inventory.")
   ), /* @__PURE__ */ React.createElement(
     "button",
     { onClick: () => setStep("pick-consignment"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
     /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Consignment Listing"),
     /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Buying an existing used cottage that's listed for sale.")
   ));
-  const displayPicker = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Which display model?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  const displayPicker = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Which unit?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: displayOptions,
     value: selectedId,
     onChange: setSelectedId,
-    placeholder: "Search display models\u2026",
+    placeholder: "Search inventory\u2026",
     noneLabel: "\u2014 Select \u2014"
-  })), displayOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No unsold display models on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("choose"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+  })), displayOptions.length === 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No unsold units on file."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("choose"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: () => setStep("details-display"),
+      onClick: () => setStep("location-display"),
       disabled: !selectedId,
       className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
     },
@@ -5900,14 +6172,31 @@ function MoveToDepositModal({ deal, db, onConvertOrder, onConvertDisplay, onConv
       onCancel: () => setStep("choose")
     });
   }
+  if (step === "location-display") {
+    return /* @__PURE__ */ React.createElement(Modal, { title: `Move ${deal.name} to Deposit`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Is the buyer keeping this on a site here, or taking it off-site?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => {
+        setDepositLocationChoice("onsite");
+        setStep("details-display");
+      }, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Staying On A Site Here")
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => {
+        setDepositLocationChoice("offsite");
+        setStep("details-display");
+      }, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Buyer Is Taking It Off-Site")
+    )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-start mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("pick-display"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back")));
+  }
   if (step === "details-display") {
     const order = db.cottageOrders.find((o) => o.id === selectedId);
     return /* @__PURE__ */ React.createElement(DepositDetailsModal, {
       title: `Move ${deal.name} to Deposit`,
       priceLabel: "Total Price",
       initialPrice: order == null ? void 0 : order.totalPrice,
-      onConfirm: (details) => onConvertDisplay(selectedId, details),
-      onCancel: () => setStep("pick-display")
+      onConfirm: (details) => onConvertDisplay(selectedId, { ...details, locationChoice: depositLocationChoice }),
+      onCancel: () => setStep("location-display")
     });
   }
   if (step === "details-consignment") {
@@ -5923,9 +6212,186 @@ function MoveToDepositModal({ deal, db, onConvertOrder, onConvertDisplay, onConv
   const body = step === "pick-display" ? displayPicker : step === "pick-consignment" ? listingPicker : chooser;
   return /* @__PURE__ */ React.createElement(Modal, { title: `Move ${deal.name} to Deposit`, onClose }, step === "choose" && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "What are they buying?"), body);
 }
+function CloseDisplaySaleModal({ deal, order, db, persist, onClose }) {
+  const initialStep = order.locationChoice === "offsite" ? "details" : order.locationChoice === "onsite" ? "trade-question" : order.siteId ? "trade-question" : "location";
+  const [step, setStep] = useState(initialStep);
+  const [takingOffSite, setTakingOffSite] = useState(order.locationChoice === "offsite");
+  const [siteId, setSiteId] = useState(order.siteId || "");
+  const [hasTradeIn, setHasTradeIn] = useState(false);
+  const [tradeInCottageId, setTradeInCottageId] = useState("");
+  const [tradeInValue, setTradeInValue] = useState("");
+  const [price, setPrice] = useState(order.totalPrice ? String(order.totalPrice) : "");
+  const actor = useCurrentActor();
+  const buyer = db.customers.find((c) => c.id === (deal.customerId || order.customerId));
+  const siteCottage = siteId ? db.cottages.find((c) => c.siteId === siteId) : null;
+  useEffect(() => {
+    if (step === "details" && hasTradeIn && siteCottage && !tradeInCottageId) {
+      setTradeInCottageId(siteCottage.id);
+    }
+  }, [step, hasTradeIn, siteId]);
+  const siteOptions = db.sites.map((s) => {
+    const occupied = db.cottages.some((c) => c.siteId === s.id);
+    return { value: s.id, label: `Site ${s.number}${occupied ? " (currently occupied)" : ""}`, searchText: s.number };
+  });
+  const cottageOptions = db.cottages.map((c) => {
+    const s = db.sites.find((s2) => s2.id === c.siteId);
+    return { value: c.id, label: `${c.name}${s ? " \u2014 Site " + s.number : ""}`, searchText: `${c.name} ${s ? s.number : ""}` };
+  });
+  const priceNum = Number(price) || 0;
+  const tradeInNum = Number(tradeInValue) || 0;
+  const taxRate = (db.settings && db.settings.taxRate) != null ? db.settings.taxRate : 13;
+  const netBeforeTax = priceNum - tradeInNum;
+  const taxAmount = netBeforeTax * (taxRate / 100);
+  const totalOwing = netBeforeTax + taxAmount;
+  const canSubmitDetails = takingOffSite ? price !== "" : siteId && (!hasTradeIn || tradeInCottageId) && price !== "";
+  const submit = () => {
+    if (!canSubmitDetails) return;
+    let cottages = db.cottages;
+    let cottageOrders = db.cottageOrders;
+    let sites = db.sites;
+    let customers = db.customers;
+    let dbNext = db;
+    let noteExtra = "";
+    if (!takingOffSite) {
+      if (hasTradeIn && tradeInCottageId) {
+        const oldCottage = db.cottages.find((c) => c.id === tradeInCottageId);
+        if (oldCottage) {
+          const oldSite = db.sites.find((s) => s.id === oldCottage.siteId);
+          const usedEntry = {
+            id: uid(),
+            type: "Display Model",
+            condition: "Used",
+            status: "Delivered/Onsite",
+            model: oldCottage.modelNumber || oldCottage.name || "Trade-In Unit",
+            size: "",
+            bedrooms: oldCottage.bedrooms != null ? oldCottage.bedrooms : null,
+            bathrooms: oldCottage.bathrooms != null ? oldCottage.bathrooms : null,
+            deckPorch: oldCottage.deckPorch || "",
+            sunroom: oldCottage.sunroom || "",
+            features: oldCottage.features || "",
+            orderedDate: todayISO(),
+            expectedDeliveryDate: "",
+            deliveredDate: todayISO(),
+            soldDate: null,
+            totalPrice: 0,
+            depositAmount: 0,
+            depositDate: "",
+            notes: `Traded in${oldSite ? ` from Site ${oldSite.number}` : ""} on ${todayISO()}${tradeInNum ? ` (credited ${formatPrice(tradeInNum)})` : ""}`,
+            commentLog: []
+          };
+          cottageOrders = [...db.cottageOrders, usedEntry];
+          dbNext = trashItem({ ...db, cottageOrders }, "cottage", oldCottage, oldCottage.name);
+          cottages = dbNext.cottages;
+          cottageOrders = dbNext.cottageOrders;
+          noteExtra = ` \u2014 traded in ${oldCottage.name} (${formatPrice(tradeInNum)} credit)`;
+        }
+      }
+      const targetSite = db.sites.find((s) => s.id === siteId);
+      const newCottage = {
+        id: uid(),
+        name: order.model || "New Unit",
+        color: "",
+        siteId,
+        features: order.features || "",
+        serialNumber: "",
+        year: (/* @__PURE__ */ new Date()).getFullYear().toString(),
+        modelNumber: order.model || "",
+        bedrooms: order.bedrooms != null ? order.bedrooms : null,
+        bathrooms: order.bathrooms != null ? order.bathrooms : null,
+        deckPorch: order.deckPorch || "",
+        sunroom: order.sunroom || ""
+      };
+      cottages = [...cottages, newCottage];
+      if (buyer) {
+        customers = (dbNext.customers || db.customers).map((c) => {
+          if (c.id !== buyer.id) return c;
+          const ids = customerSiteIds(c);
+          if (ids.includes(siteId)) return c;
+          const nextIds = [...ids, siteId];
+          return { ...c, siteIds: nextIds, siteId: nextIds[0] };
+        });
+      } else {
+        customers = dbNext.customers || db.customers;
+      }
+      const transferEntry = {
+        id: uid(),
+        date: todayISO(),
+        fromCustomerName: hasTradeIn && tradeInCottageId ? "Trade-in" : "\u2014",
+        toCustomerName: (buyer == null ? void 0 : buyer.name) || deal.name,
+        cottageName: newCottage.name
+      };
+      sites = (dbNext.sites || db.sites).map(
+        (s) => s.id === siteId ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
+      );
+    }
+    cottageOrders = (takingOffSite ? cottageOrders : cottageOrders).map(
+      (o) => o.id === order.id ? { ...o, totalPrice: priceNum, depositAmount: priceNum, paidInFullDate: todayISO(), soldDate: o.soldDate || todayISO() } : o
+    );
+    const entry = { id: uid(), text: `Deal closed \u2014 marked Sold and Paid in Full on ${todayISO()} (${formatPrice(priceNum)})${noteExtra}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Sold", commentLog: [entry, ...d.commentLog || []] } : d);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold (${formatPrice(priceNum)})${takingOffSite ? " \u2014 taken off-site" : ` \u2014 Site ${(db.sites.find((s) => s.id === siteId) || {}).number || ""}`}${noteExtra}`);
+    persist({ ...dbNext, cottages, cottageOrders, sites, customers, deals, activityLog });
+    onClose();
+  };
+  if (step === "location") {
+    return /* @__PURE__ */ React.createElement(Modal, { title: `Close Deal \u2014 ${deal.name}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Where is this unit going?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => {
+        setTakingOffSite(false);
+        setStep("trade-question");
+      }, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Staying On A Site Here")
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => {
+        setTakingOffSite(true);
+        setStep("details");
+      }, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Buyer Is Taking It Off-Site")
+    )));
+  }
+  if (step === "trade-question") {
+    return /* @__PURE__ */ React.createElement(Modal, { title: `Close Deal \u2014 ${deal.name}`, onClose }, !order.siteId && /* @__PURE__ */ React.createElement(Field, { label: "Which site?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+      options: siteOptions,
+      value: siteId,
+      onChange: setSiteId,
+      placeholder: "Search sites\u2026",
+      noneLabel: "\u2014 Select a site \u2014"
+    })), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mt-3 mb-2" }, "Is this replacing a trade-in unit?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => {
+        setHasTradeIn(true);
+        setStep("details");
+      }, disabled: !siteId, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] disabled:opacity-40" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Yes, trading in a unit")
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      { onClick: () => {
+        setHasTradeIn(false);
+        setStep("details");
+      }, disabled: !siteId, className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9] disabled:opacity-40" },
+      /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "No trade-in")
+    )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-start mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep("location"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back")));
+  }
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Close Deal \u2014 ${deal.name}`, onClose }, !takingOffSite && hasTradeIn && /* @__PURE__ */ React.createElement(Field, { label: "Which cottage is being traded in?" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: cottageOptions,
+    value: tradeInCottageId,
+    onChange: setTradeInCottageId,
+    placeholder: "Search cottages\u2026",
+    noneLabel: "\u2014 Select a cottage \u2014"
+  })), !takingOffSite && hasTradeIn && /* @__PURE__ */ React.createElement(Field, { label: "Trade-In Value ($)" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: tradeInValue, onChange: (e) => setTradeInValue(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Sale Price ($)" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: true })), !takingOffSite && price !== "" && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-3 space-y-0.5" }, hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Sale price: ", formatPrice(priceNum)), hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Less trade-in credit: -", formatPrice(tradeInNum)), hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Net before tax: ", formatPrice(netBeforeTax)), /* @__PURE__ */ React.createElement("p", null, "Tax (", taxRate, "%): ", formatPrice(taxAmount)), /* @__PURE__ */ React.createElement("p", { className: "font-medium text-[#1E1A13]" }, "Total owing: ", formatPrice(totalOwing))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep(takingOffSite ? "location" : "trade-question"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: submit,
+      disabled: !canSubmitDetails,
+      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40"
+    },
+    "Complete Sale"
+  )));
+}
 function DealFellThroughModal({ deal, onResolve, onClose }) {
   const isOrder = deal.saleType === "order";
-  const label = deal.saleType === "consignment" ? "the consignment listing" : deal.saleType === "display" ? "the display model" : "the order";
+  const label = deal.saleType === "consignment" ? "the consignment listing" : deal.saleType === "display" ? "the QIC Inventory unit" : "the order";
   return /* @__PURE__ */ React.createElement(Modal, { title: "Deal Fell Through?", onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, `This moves ${deal.name} back to Interested and keeps their history \u2014 nothing is deleted.`, isOrder ? " Since this was a new build, choose what happens to the order:" : ` It also reopens ${label} so it's available again.`), isOrder ? /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     { onClick: () => onResolve("convert-to-display"), className: "w-full text-left px-4 py-3 rounded-md border border-[#E2DED5] hover:bg-[#F1EEE9]" },
@@ -5951,6 +6417,7 @@ function DealsView({ db, persist }) {
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [convertTarget, setConvertTarget] = useState(null);
   const [closeDealTarget, setCloseDealTarget] = useState(null);
+  const [closeDisplayTarget, setCloseDisplayTarget] = useState(null);
   const [closeDealPriceTarget, setCloseDealPriceTarget] = useState(null);
   const [fellThroughTarget, setFellThroughTarget] = useState(null);
   const formDirtyRef = useRef(false);
@@ -5968,11 +6435,60 @@ function DealsView({ db, persist }) {
     setDiscardConfirmOpen(false);
     setModal(null);
   };
+  const resolveDealSiteId = (dealRec) => {
+    if (dealRec.saleType === "order" || dealRec.saleType === "display") {
+      const order = db.cottageOrders.find((o) => o.id === dealRec.saleRefId);
+      return (order && order.siteId) || null;
+    }
+    if (dealRec.saleType === "consignment") {
+      const listing = db.consignmentListings.find((l) => l.id === dealRec.saleRefId);
+      const cottage = listing && db.cottages.find((c) => c.id === listing.cottageId);
+      return (cottage && cottage.siteId) || null;
+    }
+    return null;
+  };
   const save = (deal) => {
-    const exists = db.deals.some((d) => d.id === deal.id);
-    const deals = exists ? db.deals.map((d) => d.id === deal.id ? deal : d) : [...db.deals, deal];
-    const activityLog = addLog(db, actor, exists ? `Updated deal for ${deal.name}` : `Added deal for ${deal.name}`);
-    persist({ ...db, deals, activityLog });
+    const existingDeal = db.deals.find((d) => d.id === deal.id);
+    const closingDateChanged = deal.closingDate && deal.closingDate !== (existingDeal && existingDeal.closingDate);
+    let workOrders = db.workOrders;
+    let finalDeal = deal;
+    let gasTestNote = "";
+    if (closingDateChanged) {
+      const siteId = resolveDealSiteId(deal);
+      const linkedWO = deal.gasTestWorkOrderId ? db.workOrders.find((w) => w.id === deal.gasTestWorkOrderId) : null;
+      if (linkedWO) {
+        workOrders = db.workOrders.map((w) => w.id === linkedWO.id ? { ...w, date: deal.closingDate, siteId: siteId || w.siteId } : w);
+        gasTestNote = " \u2014 gas test work order updated";
+      } else {
+        const newWO = {
+          id: uid(),
+          title: `Gas Test \u2014 ${deal.name}`,
+          description: `Gas safety test required ahead of closing on ${deal.closingDate} for ${deal.name}'s purchase.`,
+          siteId: siteId || null,
+          cottageId: null,
+          customerId: deal.customerId || null,
+          assignedTo: "",
+          status: "Open",
+          priority: "",
+          workGroup: "",
+          date: deal.closingDate,
+          completedDate: null,
+          laborHours: 0,
+          laborRate: 0,
+          laborRateType: "",
+          paymentStatus: "",
+          partsUsed: [],
+          salesSourced: true
+        };
+        workOrders = [...db.workOrders, newWO];
+        finalDeal = { ...deal, gasTestWorkOrderId: newWO.id };
+        gasTestNote = " \u2014 gas test work order created";
+      }
+    }
+    const exists = !!existingDeal;
+    const deals = exists ? db.deals.map((d) => d.id === finalDeal.id ? finalDeal : d) : [...db.deals, finalDeal];
+    const activityLog = addLog(db, actor, (exists ? `Updated deal for ${finalDeal.name}` : `Added deal for ${finalDeal.name}`) + gasTestNote);
+    persist({ ...db, deals, workOrders, activityLog });
     formDirtyRef.current = false;
     setModal(null);
     setToast(exists ? "Deal updated" : "Deal added");
@@ -6034,7 +6550,7 @@ function DealsView({ db, persist }) {
       customerId = newCustomer.id;
       customers = [...db.customers, newCustomer];
     }
-    const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, totalPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, soldDate: todayISO(), dealId: deal.id } : o);
+    const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, totalPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, soldDate: todayISO(), dealId: deal.id, locationChoice: details.locationChoice || o.locationChoice || null } : o);
     const entry = { id: uid(), text: `Moved to Deposit on an existing Display Model (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Deposit", saleType: "display", saleRefId: orderId, customerId, commentLog: [entry, ...d.commentLog || []] } : d);
     const activityLog = addLog(db, actor, `${deal.name}'s deal moved to Deposit \u2014 Display Model sale`);
@@ -6054,9 +6570,18 @@ function DealsView({ db, persist }) {
     setToast("Moved to Deposit");
   };
   const openCloseDeal = (deal) => {
-    if (deal.saleType === "order" || deal.saleType === "display") {
+    if (deal.saleType === "order") {
       const order = db.cottageOrders.find((o) => o.id === deal.saleRefId);
       setCloseDealPriceTarget({ deal, order });
+      return;
+    }
+    if (deal.saleType === "display") {
+      const order = db.cottageOrders.find((o) => o.id === deal.saleRefId);
+      if (!order) {
+        setToast("Couldn't find the linked unit \u2014 check it wasn't removed");
+        return;
+      }
+      setCloseDisplayTarget({ deal, order });
       return;
     }
     const listing = db.consignmentListings.find((l) => l.id === deal.saleRefId);
@@ -6211,6 +6736,12 @@ function DealsView({ db, persist }) {
     db,
     persist,
     onClose: () => setCloseDealTarget(null)
+  }), closeDisplayTarget && /* @__PURE__ */ React.createElement(CloseDisplaySaleModal, {
+    deal: closeDisplayTarget.deal,
+    order: closeDisplayTarget.order,
+    db,
+    persist,
+    onClose: () => setCloseDisplayTarget(null)
   }), closeDealPriceTarget && /* @__PURE__ */ React.createElement(SalePriceModal, {
     title: `Close Deal \u2014 ${closeDealPriceTarget.deal.name}`,
     priceLabel: "Final Sale Price",
@@ -6241,6 +6772,7 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   const [source, setSource] = useState((initial == null ? void 0 : initial.source) || "");
   const [stage, setStage] = useState((initial == null ? void 0 : initial.stage) || "Interested");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const [closingDate, setClosingDate] = useState((initial == null ? void 0 : initial.closingDate) || "");
   const [commentLog, setCommentLog] = useState((initial == null ? void 0 : initial.commentLog) || []);
   const [commentText, setCommentText] = useState("");
   const isFirstRender = useRef(true);
@@ -6252,7 +6784,7 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [name, phone, email, listingId, source, stage, notes, commentLog, customerId, leadType]);
+  }, [name, phone, email, listingId, source, stage, notes, closingDate, commentLog, customerId, leadType]);
   const pickCustomer = (id) => {
     setCustomerId(id);
     const c = (customers || []).find((cust) => cust.id === id);
@@ -6296,6 +6828,8 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
       saleRefId: (initial == null ? void 0 : initial.saleRefId) || null,
       addedDate: (initial == null ? void 0 : initial.addedDate) || todayISO(),
       notes: notes.trim(),
+      closingDate: closingDate || null,
+      gasTestWorkOrderId: (initial == null ? void 0 : initial.gasTestWorkOrderId) || null,
       commentLog
     });
   };
@@ -6338,7 +6872,7 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   } }, leadTypeToggle, existingCustomerField, leadType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Linked to an existing customer \u2014 fields below are pre-filled from their profile and can be edited for this deal only."), switchConfirmModal, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Lead Source" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: source, onChange: (e) => setSource(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not specified"), PROSPECT_SOURCES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Interested In" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: listingId, onChange: (e) => setListingId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "General interest (no specific listing)"), activeListings.map((l) => {
     const cottage = (cottages || []).find((c) => c.id === l.cottageId);
     return /* @__PURE__ */ React.createElement("option", { key: l.id, value: l.id }, cottage ? cottage.name : "Unknown cottage");
-  }))), stageField, /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "What they're looking for, when they'd like to visit, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5] mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Comments"), commentLog.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, commentLog.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement(
+  }))), stageField, /* @__PURE__ */ React.createElement(Field, { label: "Expected Closing Date (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: closingDate, onChange: (e) => setClosingDate(e.target.value) }), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1" }, "Setting or changing this automatically creates (or updates) a Gas Test work order due that day.")), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "What they're looking for, when they'd like to visit, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5] mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Comments"), commentLog.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, commentLog.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -8548,6 +9082,7 @@ function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmoun
       ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;margin:0 0 6px;" />` : ""}
       ${company.name ? `<div style="font-size:16px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>` : ""}
       ${company.address ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml(company.address)}</div>` : ""}
+      ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
     </div>` : ""}
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;color:#F9F5EC !important;">Hydro Bill \u2014 Site ${escapeHtml(site.number)}</h1>
@@ -8566,6 +9101,7 @@ function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmoun
       </table>
       ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
+      <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
   </div>`;
 }
@@ -9191,6 +9727,7 @@ const TABS = [
   { key: "salesdashboard", label: "Sales Dashboard", group: "sales" },
   { key: "salesreport", label: "Sales Report", group: "sales" },
   { key: "cottageorders", label: "New Cottage Orders", group: "sales" },
+  { key: "inventory", label: "QIC Inventory", group: "sales" },
   { key: "consignments", label: "Consignment Listings", group: "sales" },
   { key: "sunspace", label: "Sunspace Accessories", group: "sales" },
   { key: "deals", label: "Deals", group: "sales" },
@@ -9463,7 +10000,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
