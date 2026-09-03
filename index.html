@@ -2854,6 +2854,50 @@ function getPaymentInstructions(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.paymentInstructions) != null ? _b : DEFAULT_PAYMENT_INSTRUCTIONS;
 }
+const DEFAULT_COMPANY_NAME = "Quinte's Isle Campark";
+const DEFAULT_COMPANY_ADDRESS = "237 Salmon Point Road, Cherry Valley, ON K0K 1P0";
+const DEFAULT_COMPANY_LOGO_URL = "https://www.qicampark.com/images/QuinteIsleCampark-300x142.png";
+function getCompanyProfile(db) {
+  var _a;
+  const c = ((_a = db.settings) == null ? void 0 : _a.company) || {};
+  return {
+    name: c.name != null ? c.name : DEFAULT_COMPANY_NAME,
+    address: c.address != null ? c.address : DEFAULT_COMPANY_ADDRESS,
+    logoUrl: c.logoUrl != null ? c.logoUrl : DEFAULT_COMPANY_LOGO_URL
+  };
+}
+function CompanyProfileControl({ db, persist }) {
+  const current = getCompanyProfile(db);
+  const [name, setName] = useState(current.name);
+  const [address, setAddress] = useState(current.address);
+  const [logoUrl, setLogoUrl] = useState(current.logoUrl);
+  useEffect(() => {
+    const c = getCompanyProfile(db);
+    setName(c.name);
+    setAddress(c.address);
+    setLogoUrl(c.logoUrl);
+  }, [JSON.stringify(db.settings && db.settings.company)]);
+  const commit = (patch) => {
+    persist({ ...db, settings: { ...db.settings || {}, company: { ...getCompanyProfile(db), ...patch } } });
+  };
+  const fieldCls = "w-72 rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-sm text-[#1E1A13] focus:outline-none focus:ring-2 focus:ring-[#C1652F]/50 focus:border-[#C1652F]";
+  return /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Company name"), /* @__PURE__ */ React.createElement("input", { type: "text", value: name, onChange: (e) => setName(e.target.value), onBlur: () => commit({ name: name.trim() }), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      commit({ name: name.trim() });
+      e.currentTarget.blur();
+    }
+  }, className: fieldCls })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Company address"), /* @__PURE__ */ React.createElement("input", { type: "text", value: address, onChange: (e) => setAddress(e.target.value), onBlur: () => commit({ address: address.trim() }), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      commit({ address: address.trim() });
+      e.currentTarget.blur();
+    }
+  }, className: fieldCls })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "whitespace-nowrap w-32" }, "Logo URL"), /* @__PURE__ */ React.createElement("input", { type: "text", value: logoUrl, onChange: (e) => setLogoUrl(e.target.value), onBlur: () => commit({ logoUrl: logoUrl.trim() }), onKeyDown: (e) => {
+    if (e.key === "Enter") {
+      commit({ logoUrl: logoUrl.trim() });
+      e.currentTarget.blur();
+    }
+  }, className: fieldCls })));
+}
 function PaymentInstructionsControl({ db, persist }) {
   const [value, setValue] = useState(getPaymentInstructions(db));
   useEffect(() => {
@@ -3181,7 +3225,7 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
   const totalInvoiced = invoices.reduce((sum, inv) => sum + computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total, 0);
   const totalCollected = invoices.reduce((sum, inv) => sum + (Number(inv.depositAmount) || 0), 0);
   const totalOutstanding = totalInvoiced - totalCollected;
-  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Invoices"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, invoices.length, " invoice", invoices.length === 1 ? "" : "s")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(AccountingEmailControl, { db, persist }), /* @__PURE__ */ React.createElement(PaymentInstructionsControl, { db, persist }), /* @__PURE__ */ React.createElement("input", {
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Invoices"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, invoices.length, " invoice", invoices.length === 1 ? "" : "s")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(CompanyProfileControl, { db, persist }), /* @__PURE__ */ React.createElement(AccountingEmailControl, { db, persist }), /* @__PURE__ */ React.createElement(PaymentInstructionsControl, { db, persist }), /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " w-52",
     placeholder: "Search invoices\u2026",
     value: filter,
@@ -4198,6 +4242,7 @@ function buildQuoteHtml(quote, db, taxRate) {
 function buildQuoteEmailText(quote, db, taxRate) {
   const site = db.sites.find((s) => s.id === quote.siteId);
   const cottage = db.cottages.find((c) => c.id === quote.cottageId);
+  const company = getCompanyProfile(db);
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
   const customerStatusLabel = CUSTOMER_STATUS_LABEL[quote.status] || quote.status;
 
@@ -4227,14 +4272,19 @@ function buildQuoteEmailText(quote, db, taxRate) {
   summaryRows += summaryRow(`Tax (${taxRate}%)`, formatPrice(tax));
 
   return `
-  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
-    <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;background:#FFFDFA;color-scheme:light;">
+    ${company.logoUrl || company.name ? `<div style="text-align:center;padding:0 0 16px;background:#FFFDFA;">
+      ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;" />` : `<div style="font-size:18px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>`}
+    </div>` : ""}
+    <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;">${escapeHtml(quote.title)}</h1>
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
         ${escapeHtml(quote.date)} \u00B7 ${escapeHtml(customerStatusLabel)}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}
       </p>
     </div>
-    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
       ${quote.notes ? `<p style="font-size:14px;color:#4B4740;margin:0 0 20px;line-height:1.5;">${escapeHtml(quote.notes).replace(/\n/g, "<br>")}</p>` : ""}
       ${
         quote.lineItems && quote.lineItems.length
@@ -4263,6 +4313,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
 function buildWinterizingEmailText(request, db) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  const company = getCompanyProfile(db);
   const servicedItems = WINTERIZING_OPTIONS.filter((opt) => opt.key !== "keyAtReception" && request.options && request.options[opt.key]);
   const servicedList = servicedItems.length ? `
       <div style="margin:0 0 16px;">
@@ -4272,14 +4323,19 @@ function buildWinterizingEmailText(request, db) {
         </ul>
       </div>` : "";
   return `
-  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
-    <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;background:#FFFDFA;color-scheme:light;">
+    ${company.logoUrl || company.name ? `<div style="text-align:center;padding:0 0 16px;background:#FFFDFA;">
+      ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;" />` : `<div style="font-size:18px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>`}
+    </div>` : ""}
+    <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;">Your Cottage Has Been Winterized</h1>
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
         ${escapeHtml(request.completedDate || todayISO())}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}
       </p>
     </div>
-    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
       <p style="font-size:14px;color:#4B4740;margin:0 0 16px;line-height:1.6;">
         Good news \u2014 winterizing for your cottage${cottage ? ` <strong>${escapeHtml(cottage.name)}</strong>` : ""} has been completed. Your water lines, plumbing, and systems have been prepared for the off-season.
       </p>
@@ -4389,6 +4445,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
   const site = db.sites.find((s) => s.id === invoice.siteId);
   const cottage = db.cottages.find((c) => c.id === invoice.cottageId);
   const customer = db.customers.find((c) => c.id === invoice.customerId);
+  const company = getCompanyProfile(db);
   const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(invoice, effectiveTaxRate);
   const laborHours = Number(invoice.laborHours) || 0;
@@ -4417,6 +4474,13 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </div>`;
   return `
     <div class="wo">
+      ${company.name || company.logoUrl ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #ddd;">
+        ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="height:48px;max-width:180px;object-fit:contain;" />` : ""}
+        <div>
+          ${company.name ? `<div style="font-weight:700;font-size:16px;color:#1E1A13;">${escapeHtml(company.name)}</div>` : ""}
+          ${company.address ? `<div style="font-size:12px;color:#75716A;">${escapeHtml(company.address)}</div>` : ""}
+        </div>
+      </div>` : ""}
       <div class="wo-head">
         <div>
           <div class="label">${infoSheet ? "Info Sheet" : "Invoice"}</div>
@@ -4448,6 +4512,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
 function buildInvoiceEmailText(invoice, db, taxRate) {
   const site = db.sites.find((s) => s.id === invoice.siteId);
   const customer = db.customers.find((c) => c.id === invoice.customerId);
+  const company = getCompanyProfile(db);
   const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(invoice, effectiveTaxRate);
   const laborHours = Number(invoice.laborHours) || 0;
@@ -4472,12 +4537,17 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
         ${lineRows}
       </table>` : "";
   return `
-  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
-    <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
-      <h1 style="margin:0;font-size:20px;font-weight:600;">Invoice ${escapeHtml(invoice.invoiceNumber)}</h1>
-      <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">${escapeHtml(invoice.date)}${invoice.title ? ` \u00B7 ${escapeHtml(invoice.title)}` : ""}</p>
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;background:#FFFDFA;color-scheme:light;">
+    ${company.logoUrl || company.name ? `<div style="text-align:center;padding:0 0 16px;background:#FFFDFA;">
+      ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;" />` : `<div style="font-size:18px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>`}
+    </div>` : ""}
+    <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
+      <h1 style="margin:0;font-size:20px;font-weight:600;color:#F9F5EC !important;">Invoice ${escapeHtml(invoice.invoiceNumber)}</h1>
+      <p style="margin:6px 0 0;font-size:13px;opacity:0.85;color:#F9F5EC !important;">${escapeHtml(invoice.date)}${invoice.title ? ` \u00B7 ${escapeHtml(invoice.title)}` : ""}</p>
     </div>
-    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
       ${customer || site ? `<table style="width:100%;font-size:13px;margin:0 0 16px;">
         ${customer ? `<tr><td style="padding:1px 0;color:#75716A;width:70px;">Customer</td><td style="padding:1px 0;color:#1E1A13;font-weight:600;">${escapeHtml(customer.name)}</td></tr>` : ""}
         ${site ? `<tr><td style="padding:1px 0;color:#75716A;">Site</td><td style="padding:1px 0;color:#1E1A13;font-weight:600;">${escapeHtml(site.number)}</td></tr>` : ""}
@@ -8456,12 +8526,18 @@ function getHydroRate(db) {
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
 }
 function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmount, total, taxRate, db) {
+  const company = getCompanyProfile(db);
   return `
-  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;">
-    <div style="background:#377249;color:#F9F5EC;padding:22px 26px;border-radius:10px 10px 0 0;">
-      <h1 style="margin:0;font-size:20px;font-weight:600;">Hydro Bill \u2014 Site ${escapeHtml(site.number)}</h1>
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <div style="font-family:Georgia,'Times New Roman',serif;max-width:560px;margin:0 auto;background:#FFFDFA;color-scheme:light;">
+    ${company.logoUrl || company.name ? `<div style="text-align:center;padding:0 0 16px;background:#FFFDFA;">
+      ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="${escapeHtml(company.name)}" style="max-height:56px;max-width:220px;object-fit:contain;" />` : `<div style="font-size:18px;font-weight:700;color:#1E1A13 !important;">${escapeHtml(company.name)}</div>`}
+    </div>` : ""}
+    <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
+      <h1 style="margin:0;font-size:20px;font-weight:600;color:#F9F5EC !important;">Hydro Bill \u2014 Site ${escapeHtml(site.number)}</h1>
     </div>
-    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background:#FFFDFA;">
+    <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
       <table style="width:100%;font-size:14px;margin-bottom:14px;">
         <tr><td style="padding:2px 0;color:#75716A;">Customer</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml((owner == null ? void 0 : owner.name) || "\u2014")}</td></tr>
         <tr><td style="padding:2px 0;color:#75716A;">Site</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml(site.number)}</td></tr>
