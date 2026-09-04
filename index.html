@@ -28,10 +28,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <!-- PDF.js (read text out of uploaded PDFs, e.g. Square sales reports) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
   if (window["pdfjsLib"]) {
-    window["pdfjsLib"].GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+    window["pdfjsLib"].GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 </script>
 
@@ -9221,7 +9221,7 @@ function SquareMonthlyEntryModal({ db, persist, onClose }) {
       if (!filledKeys.length) notices.push("couldn't find any recognizable sales figures in this file");
       setParseNotice(notices.length ? `Parsed with some gaps: ${notices.join("; ")}.` : "Parsed successfully \u2014 double-check the numbers below before saving.");
     } catch (err) {
-      setParseError("Couldn't read that PDF. Make sure it's a genuine Square Sales Summary export, then try again, or enter the numbers manually below.");
+      setParseError(`Couldn't read that PDF (${(err == null ? void 0 : err.message) || "unknown error"}). Make sure it's a genuine Square Sales Summary export, then try again, or enter the numbers manually below.`);
     } finally {
       setParsing(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
