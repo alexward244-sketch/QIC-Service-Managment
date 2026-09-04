@@ -4306,7 +4306,6 @@ function buildWorkOrderHtml(wo, db) {
         <div class="sign-line">Completed by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
-      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 
@@ -4384,7 +4383,6 @@ function buildQuoteHtml(quote, db, taxRate) {
         <div class="sign-line">Approved by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
-      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildQuoteEmailText(quote, db, taxRate) {
@@ -4541,7 +4539,6 @@ function buildWinterizingHtml(request, db) {
         <div class="sign-line">Completed by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
-      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildPropaneRequestHtml(request, db) {
@@ -4587,7 +4584,6 @@ function buildPropaneRequestHtml(request, db) {
         <div class="sign-line">Completed by (signature)</div>
         <div class="sign-line">Date</div>
       </div>
-      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildWorkOrderEmailText(wo, db) {
@@ -4721,7 +4717,6 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </table>` : ""}
       ${infoSheet && laborHours ? `<div class="label" style="margin-top:16px;">Labour</div><p class="desc" style="min-height:0;border:none;">${laborHours} hr \u2014 ${escapeHtml(invoice.laborRateType || "Rate")}</p>` : ""}
       ${summaryTable}
-      <div style="text-align:center;margin-top:22px;padding:8px 14px;background:#FFF8E8;border-radius:6px;display:inline-block;font-size:11px;color:#75716A;">Family-owned and operated by the Ward Family since 1983</div>
     </div>`;
 }
 function buildInvoiceEmailText(invoice, db, taxRate) {
