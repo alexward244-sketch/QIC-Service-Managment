@@ -27,6 +27,14 @@
 <!-- SheetJS (Excel export) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
+<!-- PDF.js (read text out of uploaded PDFs, e.g. Square sales reports) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+<script>
+  if (window["pdfjsLib"]) {
+    window["pdfjsLib"].GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js";
+  }
+</script>
+
 <!-- EmailJS (send email from a shared connected account, no backend needed) -->
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 
@@ -356,9 +364,99 @@ const RATE_OPTIONS = [
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const PAYMENT_STATUS = ["Paid", "Invoice"];
 const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho"];
-const SQUARE_LOCATIONS = ["Restaurant", "Snack Bar", "Waterfront Store", "Main Store"];
+const SQUARE_LOCATIONS = ["Waterfront Store", "Snack Bar", "Quinte's Isle Campark", "Dockside GC"];
+const SQUARE_FIELD_GROUPS = [
+  { title: "Gross Sales", fields: [{ key: "items", label: "Items" }, { key: "serviceCharges", label: "Service Charges" }] },
+  { title: null, fields: [{ key: "returns", label: "Returns" }] },
+  { title: "Discounts & Comps", fields: [{ key: "discounts", label: "Discounts" }, { key: "comps", label: "Comps" }] },
+  { title: null, fields: [{ key: "giftCardSales", label: "Gift Card Sales (Deferred)" }, { key: "taxes", label: "Taxes" }, { key: "tips", label: "Tips" }, { key: "refundsByAmount", label: "Refunds by Amount" }, { key: "cashRounding", label: "Cash Rounding (+/\u2212)" }] },
+  { title: "Total Payments Collected", fields: [{ key: "card", label: "Card" }, { key: "cash", label: "Cash" }] },
+  { title: "Fees", fields: [{ key: "intlFees", label: "Int'l Transaction Fees" }, { key: "squareFees", label: "Square Fees" }] }
+];
+function squareComputeTotals(e) {
+  const grossSales = (Number(e.items) || 0) + (Number(e.serviceCharges) || 0);
+  const discountsComps = (Number(e.discounts) || 0) + (Number(e.comps) || 0);
+  const netSales = grossSales - (Number(e.returns) || 0) - discountsComps;
+  const deferredSales = Number(e.giftCardSales) || 0;
+  const totalSales = netSales + deferredSales + (Number(e.taxes) || 0) + (Number(e.tips) || 0) - (Number(e.refundsByAmount) || 0) + (Number(e.cashRounding) || 0);
+  const fees = (Number(e.intlFees) || 0) + (Number(e.squareFees) || 0);
+  const netTotal = totalSales - fees;
+  return { grossSales, discountsComps, netSales, deferredSales, totalSales, fees, netTotal };
+}
 function squareMonthTotal(entry) {
-  return (entry.categories || []).reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+  return squareComputeTotals(entry).totalSales;
+}
+function parseSquareMoneyText(txt) {
+  if (!txt) return null;
+  const trimmed = txt.trim();
+  const negative = trimmed.startsWith("(") && trimmed.endsWith(")");
+  const cleaned = trimmed.replace(/[()$,]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
+  const num = Number(cleaned);
+  return negative ? -Math.abs(num) : num;
+}
+const SQUARE_PDF_LABEL_MAP = {
+  "items": "items",
+  "service charges": "serviceCharges",
+  "returns": "returns",
+  "discounts": "discounts",
+  "comps": "comps",
+  "gift card sales": "giftCardSales",
+  "taxes": "taxes",
+  "tips": "tips",
+  "refunds by amount": "refundsByAmount",
+  "cash rounding": "cashRounding",
+  "card": "card",
+  "cash": "cash",
+  "international transaction fees": "intlFees",
+  "square fees": "squareFees"
+};
+const SQUARE_PDF_MONTHS = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+async function parseSquareSalesPdf(file) {
+  if (!window.pdfjsLib) throw new Error("PDF reader isn't loaded yet \u2014 try again in a moment.");
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(1);
+  const textContent = await page.getTextContent();
+  const items = textContent.items.map((it) => ({ text: it.str, x: it.transform[4], y: it.transform[5] })).filter((it) => it.text && it.text.trim());
+  const rowMap = {};
+  items.forEach((it) => {
+    const key = Math.round(it.y / 2) * 2;
+    if (!rowMap[key]) rowMap[key] = [];
+    rowMap[key].push(it);
+  });
+  const rowKeys = Object.keys(rowMap).map(Number).sort((a, b) => b - a);
+  const rows = rowKeys.map((k) => rowMap[k].sort((a, b) => a.x - b.x));
+  const lines = rows.map((r) => r.map((it) => it.text).join(" ").replace(/\s+/g, " ").trim());
+  let month = "";
+  for (const line of lines) {
+    const m = line.match(/^([A-Za-z]{3,9})\s+\d+\s*-\s*\d+,\s*(\d{4})/);
+    if (m) {
+      const abbrev = m[1].slice(0, 3).toLowerCase();
+      if (SQUARE_PDF_MONTHS[abbrev]) {
+        month = `${m[2]}-${SQUARE_PDF_MONTHS[abbrev]}`;
+        break;
+      }
+    }
+  }
+  let location = "";
+  for (const line of lines) {
+    if (line.includes("\u00B7") && !/reporting day/i.test(line)) {
+      location = line.split("\u00B7")[0].trim();
+      break;
+    }
+  }
+  const fields = {};
+  rows.forEach((row) => {
+    const moneyItem = row.find((it) => parseSquareMoneyText(it.text) !== null);
+    if (!moneyItem) return;
+    const value = parseSquareMoneyText(moneyItem.text);
+    const labelText = row.filter((it) => it !== moneyItem).map((it) => it.text).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
+    const fieldKey = SQUARE_PDF_LABEL_MAP[labelText];
+    if (!fieldKey) return;
+    fields[fieldKey] = fieldKey === "cashRounding" ? value : Math.abs(value);
+  });
+  return { month, location, fields };
 }
 const TANK_PART_NAMES = ["20lb Propane Tank Filled", "30lb Propane Tank Filled", "40lb Propane Tank Filled", "100lb Propane Refill Filled"];
 const SALUTATION_OPTIONS = ["", "Mr.", "Mrs.", "Ms.", "Dr.", "Mx."];
@@ -9073,26 +9171,72 @@ function SquareMonthlyEntryModal({ db, persist, onClose }) {
   const nowD = /* @__PURE__ */ new Date();
   const [month, setMonth] = useState(`${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, "0")}`);
   const [location, setLocation] = useState(SQUARE_LOCATIONS[0]);
-  const [categories, setCategories] = useState([{ name: "", amount: "" }]);
+  const FIELD_KEYS = ["items", "serviceCharges", "returns", "discounts", "comps", "giftCardSales", "taxes", "tips", "refundsByAmount", "cashRounding", "card", "cash", "intlFees", "squareFees"];
+  const blankFields = () => Object.fromEntries(FIELD_KEYS.map((k) => [k, ""]));
+  const [fields, setFields] = useState(blankFields());
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState("");
+  const [parseNotice, setParseNotice] = useState("");
+  const fileInputRef = useRef(null);
   useEffect(() => {
     const match = (db.squareMonthlySales || []).find((e) => e.month === month && e.location === location);
-    setCategories(match && match.categories && match.categories.length ? match.categories.map((c) => ({ name: c.name, amount: String(c.amount) })) : [{ name: "", amount: "" }]);
+    if (match) {
+      const next = blankFields();
+      FIELD_KEYS.forEach((k) => {
+        next[k] = match[k] != null ? String(match[k]) : "";
+      });
+      setFields(next);
+    } else {
+      setFields(blankFields());
+    }
   }, [month, location]);
-  const updateCategory = (idx, field, value) => {
-    setCategories((cats) => cats.map((c, i) => i === idx ? { ...c, [field]: value } : c));
+  const updateField = (key, value) => setFields((f) => ({ ...f, [key]: value }));
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setParsing(true);
+    setParseError("");
+    setParseNotice("");
+    try {
+      const parsed = await parseSquareSalesPdf(file);
+      if (parsed.month) setMonth(parsed.month);
+      let matchedLocation = null;
+      if (parsed.location) {
+        matchedLocation = SQUARE_LOCATIONS.find((loc) => loc.toLowerCase() === parsed.location.toLowerCase());
+        if (matchedLocation) setLocation(matchedLocation);
+      }
+      const filledKeys = Object.keys(parsed.fields);
+      if (filledKeys.length) {
+        setFields((f) => {
+          const next = { ...f };
+          filledKeys.forEach((k) => {
+            next[k] = String(parsed.fields[k]);
+          });
+          return next;
+        });
+      }
+      const notices = [];
+      if (!parsed.month) notices.push("couldn't detect the month \u2014 please set it manually");
+      if (parsed.location && !matchedLocation) notices.push(`couldn't match location "${parsed.location}" \u2014 please select it manually`);
+      if (!filledKeys.length) notices.push("couldn't find any recognizable sales figures in this file");
+      setParseNotice(notices.length ? `Parsed with some gaps: ${notices.join("; ")}.` : "Parsed successfully \u2014 double-check the numbers below before saving.");
+    } catch (err) {
+      setParseError("Couldn't read that PDF. Make sure it's a genuine Square Sales Summary export, then try again, or enter the numbers manually below.");
+    } finally {
+      setParsing(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
-  const addCategory = () => setCategories((cats) => [...cats, { name: "", amount: "" }]);
-  const removeCategory = (idx) => setCategories((cats) => cats.filter((_, i) => i !== idx));
-  const total = categories.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+  const numericFields = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, Number(v) || 0]));
+  const totals = squareComputeTotals(numericFields);
   const save = () => {
-    const finalCategories = categories.map((c) => ({ name: (c.name || "").trim(), amount: Number(c.amount) || 0 })).filter((c) => c.name);
-    if (!finalCategories.length) return;
+    const cleaned = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, Number(v) || 0]));
     const existingEntry = (db.squareMonthlySales || []).find((e) => e.month === month && e.location === location);
-    const nextList = existingEntry ? (db.squareMonthlySales || []).map((e) => e === existingEntry ? { ...e, categories: finalCategories, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } : e) : [...db.squareMonthlySales || [], { id: uid(), month, location, categories: finalCategories, createdAt: (/* @__PURE__ */ new Date()).toISOString() }];
+    const nextList = existingEntry ? (db.squareMonthlySales || []).map((e) => e === existingEntry ? { ...e, ...cleaned, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } : e) : [...db.squareMonthlySales || [], { id: uid(), month, location, ...cleaned, createdAt: (/* @__PURE__ */ new Date()).toISOString() }];
     persist({ ...db, squareMonthlySales: nextList });
     onClose();
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Enter Square Monthly Sales", onClose }, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Month" }, /* @__PURE__ */ React.createElement("input", { type: "month", className: inputCls, value: month, onChange: (e) => setMonth(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Location" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: location, onChange: (e) => setLocation(e.target.value) }, SQUARE_LOCATIONS.map((loc) => /* @__PURE__ */ React.createElement("option", { key: loc, value: loc }, loc))))), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Categories"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, categories.map((c, idx) => /* @__PURE__ */ React.createElement("div", { key: idx, className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, placeholder: "e.g. Food, Merchandise", value: c.name, onChange: (e) => updateCategory(idx, "name", e.target.value) }), /* @__PURE__ */ React.createElement("input", { type: "number", className: `${inputCls} w-32`, placeholder: "0.00", value: c.amount, onChange: (e) => updateCategory(idx, "amount", e.target.value) }), categories.length > 1 && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removeCategory(idx), className: "text-[#a8532a] hover:underline text-xs px-1" }, "Remove")))), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addCategory, className: "text-xs text-[#377249] hover:underline font-medium mt-2" }, "+ Add Category")), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center pt-2 border-t border-[#E2DED5] mb-4" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#75716A]" }, "Month Total"), /* @__PURE__ */ React.createElement("span", { className: "text-lg font-serif text-[#1E1A13]" }, React.createElement(Money, { value: total }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: save, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save")));
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Enter Square Monthly Sales", onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "mb-4 rounded-lg border border-dashed border-[#E2DED5] p-3" }, /* @__PURE__ */ React.createElement("label", { className: "block text-xs font-semibold text-[#1E1A13] mb-1" }, "Upload Square Sales Summary PDF"), /* @__PURE__ */ React.createElement("input", { type: "file", accept: "application/pdf", ref: fileInputRef, onChange: handlePdfUpload, className: "text-xs" }), parsing && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1" }, "Reading PDF\u2026"), parseNotice && !parseError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#28633C] mt-1" }, parseNotice), parseError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1" }, parseError)), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3 mb-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Month" }, /* @__PURE__ */ React.createElement("input", { type: "month", className: inputCls, value: month, onChange: (e) => setMonth(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Location" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: location, onChange: (e) => setLocation(e.target.value) }, SQUARE_LOCATIONS.map((loc) => /* @__PURE__ */ React.createElement("option", { key: loc, value: loc }, loc))))), /* @__PURE__ */ React.createElement("div", { className: "space-y-3 mb-4" }, SQUARE_FIELD_GROUPS.map((group, gi) => /* @__PURE__ */ React.createElement("div", { key: gi }, group.title && /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-1 font-semibold" }, group.title), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3 gap-y-2" }, group.fields.map((f) => /* @__PURE__ */ React.createElement(Field, { key: f.key, label: f.label }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, placeholder: "0.00", value: fields[f.key], onChange: (e) => updateField(f.key, e.target.value) }))))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, "Gross Sales"), /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, React.createElement(Money, { value: totals.grossSales }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, "Net Sales"), /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, React.createElement(Money, { value: totals.netSales }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between pt-1 border-t border-[#E2DED5] font-semibold" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Total Sales"), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, React.createElement(Money, { value: totals.totalSales }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, "Net Total (after fees)"), /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, React.createElement(Money, { value: totals.netTotal })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: save, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save")));
 }
 function AdminDashboardView({ db, persist }) {
   var _a, _b, _c, _d;
