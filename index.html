@@ -90,9 +90,21 @@ if (EMAIL_ENABLED && window.emailjs) {
   window.emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 }
 let emailUsageRecorder = null;
+let emailUsageState = { month: "", count: 0 };
 function currentMonthKey() {
   const d = /* @__PURE__ */ new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function syncEmailUsageFromDb(dbUsage) {
+  const usage = dbUsage || {};
+  const monthKey = currentMonthKey();
+  if (emailUsageState.month !== monthKey) {
+    emailUsageState = usage.month === monthKey ? { month: monthKey, count: usage.count || 0 } : { month: monthKey, count: 0 };
+    return;
+  }
+  if ((usage.count || 0) > emailUsageState.count) {
+    emailUsageState = { month: monthKey, count: usage.count || 0 };
+  }
 }
 function sendEmail({ toEmail, toName, subject, message, department }) {
   if (!EMAIL_ENABLED || !window.emailjs) {
@@ -3684,7 +3696,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const emailMonthKey = currentMonthKey();
   const emailUsage = db.emailUsage || {};
   const emailsUsedThisMonth = emailUsage.month === emailMonthKey ? emailUsage.count || 0 : 0;
-  const emailFreeLimit = 200;
+  const emailFreeLimit = 2e3;
   const emailUsagePct = Math.min(100, Math.round(emailsUsedThisMonth / emailFreeLimit * 100));
   const emailUsageTone = emailUsagePct >= 90 ? "text-[#a8532a]" : emailUsagePct >= 60 ? "text-[#9A6B1F]" : "text-[#28633C]";
   const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
@@ -3732,7 +3744,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
       },
       a.kind === "delivery" ? "Delivered" : "Completed"
     ));
-  })))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-2" }, "Email Usage This Month"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${emailUsageTone}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", emailFreeLimit, " on the EmailJS free plan")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${emailUsageBarTone}`, style: { width: `${emailUsagePct}%` } })), emailUsagePct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 sends will silently fail once you hit ", emailFreeLimit, ". Consider upgrading your EmailJS plan.")));
+  })))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Activity"), recentActivity.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, recentActivity.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740] truncate" }, entry.summary), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(entry.ts)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mt-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-2" }, "Email Usage This Month"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${emailUsageTone}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", emailFreeLimit, " on the EmailJS Personal plan")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${emailUsageBarTone}`, style: { width: `${emailUsagePct}%` } })), emailUsagePct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 sends will silently fail once you hit ", emailFreeLimit, ". Consider upgrading your EmailJS plan.")));
 }
 
 function StaffView({ db, persist }) {
@@ -9968,14 +9980,19 @@ function AppContent() {
   dbRef.current = db;
   persistRef.current = persist;
   useEffect(() => {
+    syncEmailUsageFromDb(db && db.emailUsage);
+  }, [db && db.emailUsage && db.emailUsage.month, db && db.emailUsage && db.emailUsage.count]);
+  useEffect(() => {
     emailUsageRecorder = () => {
       const currentDb = dbRef.current;
       const currentPersist = persistRef.current;
       if (!currentDb || !currentPersist) return;
       const monthKey = currentMonthKey();
-      const usage = currentDb.emailUsage || {};
-      const count = usage.month === monthKey ? (usage.count || 0) + 1 : 1;
-      currentPersist({ ...currentDb, emailUsage: { month: monthKey, count } });
+      if (emailUsageState.month !== monthKey) {
+        emailUsageState = { month: monthKey, count: 0 };
+      }
+      emailUsageState = { month: monthKey, count: emailUsageState.count + 1 };
+      currentPersist({ ...currentDb, emailUsage: { ...emailUsageState } });
     };
     return () => {
       emailUsageRecorder = null;
