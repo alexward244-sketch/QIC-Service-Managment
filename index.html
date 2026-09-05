@@ -82,6 +82,7 @@ const DOC_REF = db_.collection("campground").doc("data");
 const PENDING_SIGNUPS_REF = db_.collection("pendingSignups");
 const PROPANE_REQUESTS_REF = db_.collection("propaneRequests");
 const WINTERIZING_REQUESTS_REF = db_.collection("winterizingRequests");
+const WORK_ORDERS_REF = db_.collection("workOrders");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
@@ -859,6 +860,7 @@ function useDb() {
   const [mainData, setMainData] = useState(null);
   const [propaneList, setPropaneList] = useState(null);
   const [winterizingList, setWinterizingList] = useState(null);
+  const [workOrdersList, setWorkOrdersList] = useState(null);
   const [pendingSignups, setPendingSignups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
@@ -899,15 +901,14 @@ function useDb() {
           migratedCollectionsRef.current = true;
           const legacyPropaneRequests = merged.propaneRequests || [];
           const legacyWinterizingRequests = merged.winterizingRequests || [];
-          if (legacyPropaneRequests.length > 0 || legacyWinterizingRequests.length > 0) {
-            const batch = db_.batch();
-            legacyPropaneRequests.forEach((r) => {
-              batch.set(PROPANE_REQUESTS_REF.doc(r.id || uid()), r);
-            });
-            legacyWinterizingRequests.forEach((r) => {
-              batch.set(WINTERIZING_REQUESTS_REF.doc(r.id || uid()), r);
-            });
-            batch.commit().then(() => DOC_REF.update({ propaneRequests: [], winterizingRequests: [] })).catch(() => {
+          const legacyWorkOrders = merged.workOrders || [];
+          const migrationOps = [
+            ...legacyPropaneRequests.map((r) => ({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r })),
+            ...legacyWinterizingRequests.map((r) => ({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r })),
+            ...legacyWorkOrders.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w }))
+          ];
+          if (migrationOps.length > 0) {
+            commitInChunks(migrationOps).then(() => DOC_REF.update({ propaneRequests: [], winterizingRequests: [], workOrders: [] })).catch(() => {
             });
           }
         }
@@ -945,16 +946,26 @@ function useDb() {
       () => {
       }
     );
+    const unsubWorkOrders = WORK_ORDERS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setWorkOrdersList(list);
+      },
+      () => {
+      }
+    );
     return () => {
       unsub();
       unsubPending();
       unsubPropane();
       unsubWinterizing();
+      unsubWorkOrders();
     };
   }, []);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [] } : null;
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [] } : null;
   const persist = useCallback(async (next) => {
-    const { propaneRequests, winterizingRequests, ...rest } = next;
+    const { propaneRequests, winterizingRequests, workOrders, ...rest } = next;
     setMainData(rest);
     const attempt = () => DOC_REF.set(rest);
     lastAttempt.current = attempt;
@@ -1011,13 +1022,33 @@ function useDb() {
       setSaveError(`Couldn't remove that winterizing sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
+  const saveWorkOrder = useCallback(async (wo) => {
+    const attempt = () => WORK_ORDERS_REF.doc(wo.id).set(wo);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteWorkOrder = useCallback(async (id) => {
+    const attempt = () => WORK_ORDERS_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
   const error = saveError || connectionError;
   const retry = useCallback(() => {
     if (!lastAttempt.current) return;
     const attempt = lastAttempt.current;
     attempt().then(() => setSaveError(null)).catch((e) => setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
   }, []);
-  return { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, retry };
+  return { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, retry };
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
@@ -1228,7 +1259,7 @@ function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm
     "Yes, send"
   )));
 }
-function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, onClose }) {
+function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
     site: "Site",
@@ -1259,6 +1290,9 @@ function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, o
     } else if (entry.type === "winterizingRequest") {
       persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
       saveWinterizingRequest(entry.data);
+    } else if (entry.type === "workOrder") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveWorkOrder(entry.data);
     } else {
       persist({ ...restoreTrashItem(db, entry.id), activityLog });
     }
@@ -1333,7 +1367,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
-function SitesView({ db, persist, readOnly, filterPrefill }) {
+function SitesView({ db, persist, saveWorkOrder, readOnly, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -1491,6 +1525,7 @@ function SitesView({ db, persist, readOnly, filterPrefill }) {
       site: db.sites.find((s) => s.id === detailId),
       db,
       persist,
+      saveWorkOrder,
       readOnly,
       onClose: () => setDetailId(null),
       onEdit: (s) => {
@@ -1609,7 +1644,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
     selected.size === 1 ? "" : "s"
   )));
 }
-function SiteDetailModal({ site, db, persist, readOnly, onClose, onEdit }) {
+function SiteDetailModal({ site, db, persist, saveWorkOrder, readOnly, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -1642,12 +1677,13 @@ function SiteDetailModal({ site, db, persist, readOnly, onClose, onEdit }) {
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Edit Site"
-  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }), viewingCottageId && /* @__PURE__ */ React.createElement(
+  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null) }), viewingCottageId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
       cottage: db.cottages.find((c) => c.id === viewingCottageId),
       db,
       persist,
+      saveWorkOrder,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCottageId(null),
@@ -1660,6 +1696,7 @@ function SiteDetailModal({ site, db, persist, readOnly, onClose, onEdit }) {
       customer: db.customers.find((c) => c.id === viewingCustomerId),
       db,
       persist,
+      saveWorkOrder,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCustomerId(null),
@@ -1684,7 +1721,7 @@ function WorkOrderListRow({ wo, onClick }) {
     /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 flex-shrink-0" }, wo.completedDate && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#75716A]" }, wo.completedDate), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status))
   );
 }
-function WorkOrderViewModal({ wo, db, persist, onClose, onEdit, onDelete, onText, smsStatus, onCreateInvoice }) {
+function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, onClose, onEdit, onDelete, onText, smsStatus, onCreateInvoice }) {
   const [noteText, setNoteText] = useState("");
   const actor = useCurrentActor();
   const site = db.sites.find((s) => s.id === wo.siteId);
@@ -1695,8 +1732,8 @@ function WorkOrderViewModal({ wo, db, persist, onClose, onEdit, onDelete, onText
   const addNote = () => {
     if (!noteText.trim()) return;
     const entry = { id: uid(), text: noteText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
-    const workOrders = db.workOrders.map((w) => w.id === wo.id ? { ...w, notes: [entry, ...w.notes || []] } : w);
-    persist({ ...db, workOrders });
+    const updated = { ...wo, notes: [entry, ...wo.notes || []] };
+    saveWorkOrder(updated);
     setNoteText("");
   };
   return /* @__PURE__ */ React.createElement(Modal, { title: wo.title, onClose, xl: true }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), wo.paymentStatus), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
@@ -1828,7 +1865,7 @@ function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreate
   const body = /* @__PURE__ */ React.createElement("div", { className: "p-4" }, infoBlock, actions);
   return /* @__PURE__ */ React.createElement("div", { className: "fixed sm:absolute left-0 right-0 sm:left-auto sm:right-4 bottom-0 sm:bottom-auto sm:top-4 w-full sm:w-80 bg-[#FFFDFA] border border-[#E2DED5] rounded-t-xl sm:rounded-xl shadow-2xl z-30 max-h-[70vh] overflow-y-auto" }, header, body);
 }
-function CampgroundMapView({ db, persist, isAdminOrManager, onCreateWorkOrder }) {
+function CampgroundMapView({ db, persist, saveWorkOrder, isAdminOrManager, onCreateWorkOrder }) {
   const actor = useCurrentActor();
   const sites = db.sites || [];
   const mapInfo = db.campgroundMap;
@@ -2088,7 +2125,7 @@ function CampgroundMapView({ db, persist, isAdminOrManager, onCreateWorkOrder })
       },
       onUnpin: unpinSite
     }
-  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, readOnly: true, onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
+  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, readOnly: true, onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
 }
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
@@ -2132,7 +2169,7 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
-function CottagesView({ db, persist, readOnly, canTransfer, filterPrefill }) {
+function CottagesView({ db, persist, saveWorkOrder, readOnly, canTransfer, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -2229,6 +2266,7 @@ function CottagesView({ db, persist, readOnly, canTransfer, filterPrefill }) {
       cottage: db.cottages.find((c) => c.id === detailId),
       db,
       persist,
+      saveWorkOrder,
       readOnly,
       canTransfer: canTransfer != null ? canTransfer : !readOnly,
       onClose: () => setDetailId(null),
@@ -2572,7 +2610,7 @@ function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onT
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
 }
-function CottageDetailModal({ cottage, db, persist, readOnly, canTransfer, nested, onClose, onEdit }) {
+function CottageDetailModal({ cottage, db, persist, saveWorkOrder, readOnly, canTransfer, nested, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -2685,12 +2723,13 @@ function CottageDetailModal({ cottage, db, persist, readOnly, canTransfer, neste
       persist,
       onClose: () => setTransferOpen(false)
     }
-  ), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }), viewingCustomerId && /* @__PURE__ */ React.createElement(
+  ), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null) }), viewingCustomerId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === viewingCustomerId),
       db,
       persist,
+      saveWorkOrder,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCustomerId(null),
@@ -2805,7 +2844,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 
-function CustomersView({ db, persist, filterPrefill }) {
+function CustomersView({ db, persist, saveWorkOrder, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -2901,6 +2940,7 @@ function CustomersView({ db, persist, filterPrefill }) {
       customer: db.customers.find((c) => c.id === detailId),
       db,
       persist,
+      saveWorkOrder,
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -2917,7 +2957,7 @@ function CustomersView({ db, persist, filterPrefill }) {
   ));
 }
 
-function CustomerDetailModal({ customer, db, persist, nested, onClose, onEdit }) {
+function CustomerDetailModal({ customer, db, persist, saveWorkOrder, nested, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   if (!customer) return null;
@@ -2945,12 +2985,13 @@ function CustomerDetailModal({ customer, db, persist, nested, onClose, onEdit })
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Edit Customer"
-  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }), viewingCottageId && /* @__PURE__ */ React.createElement(
+  )), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null) }), viewingCottageId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
       cottage: db.cottages.find((c) => c.id === viewingCottageId),
       db,
       persist,
+      saveWorkOrder,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCottageId(null),
@@ -4083,7 +4124,7 @@ const QUOTE_STATUS_STYLES = {
   Accepted: "bg-[#377249]/10 text-[#377249]",
   Declined: "bg-[#F5E3D9] text-[#a8532a]"
 };
-function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPrefill }) {
+function QuotesView({ db, persist, saveWorkOrder, onGoToWorkOrders, onCreateInvoice, filterPrefill }) {
   var _a, _b, _c, _d, _e, _f;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -4166,7 +4207,8 @@ function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPref
     };
     const quotes = db.quotes.map((q) => q.id === quote.id ? { ...q, workOrderId: newId } : q);
     const activityLog = addLog(db, actor, `Converted quote "${quote.title}" to a work order`);
-    persist({ ...db, workOrders: [...db.workOrders, newWorkOrder], quotes, activityLog });
+    persist({ ...db, quotes, activityLog });
+    saveWorkOrder(newWorkOrder);
     if (onGoToWorkOrders) onGoToWorkOrders();
   };
   const filtered = db.quotes.filter((q) => {
@@ -6825,7 +6867,7 @@ function DealFellThroughModal({ deal, onResolve, onClose }) {
     "Confirm \u2014 Deal Fell Through"
   )));
 }
-function DealsView({ db, persist }) {
+function DealsView({ db, persist, saveWorkOrder }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -6867,14 +6909,14 @@ function DealsView({ db, persist }) {
   const save = (deal) => {
     const existingDeal = db.deals.find((d) => d.id === deal.id);
     const closingDateChanged = deal.closingDate && deal.closingDate !== (existingDeal && existingDeal.closingDate);
-    let workOrders = db.workOrders;
     let finalDeal = deal;
     let gasTestNote = "";
+    let changedWorkOrder = null;
     if (closingDateChanged) {
       const siteId = resolveDealSiteId(deal);
       const linkedWO = deal.gasTestWorkOrderId ? db.workOrders.find((w) => w.id === deal.gasTestWorkOrderId) : null;
       if (linkedWO) {
-        workOrders = db.workOrders.map((w) => w.id === linkedWO.id ? { ...w, date: deal.closingDate, siteId: siteId || w.siteId } : w);
+        changedWorkOrder = { ...linkedWO, date: deal.closingDate, siteId: siteId || linkedWO.siteId };
         gasTestNote = " \u2014 gas test work order updated";
       } else {
         const newWO = {
@@ -6897,7 +6939,7 @@ function DealsView({ db, persist }) {
           partsUsed: [],
           salesSourced: true
         };
-        workOrders = [...db.workOrders, newWO];
+        changedWorkOrder = newWO;
         finalDeal = { ...deal, gasTestWorkOrderId: newWO.id };
         gasTestNote = " \u2014 gas test work order created";
       }
@@ -6905,7 +6947,8 @@ function DealsView({ db, persist }) {
     const exists = !!existingDeal;
     const deals = exists ? db.deals.map((d) => d.id === finalDeal.id ? finalDeal : d) : [...db.deals, finalDeal];
     const activityLog = addLog(db, actor, (exists ? `Updated deal for ${finalDeal.name}` : `Added deal for ${finalDeal.name}`) + gasTestNote);
-    persist({ ...db, deals, workOrders, activityLog });
+    persist({ ...db, deals, activityLog });
+    if (changedWorkOrder) saveWorkOrder(changedWorkOrder);
     formDirtyRef.current = false;
     setModal(null);
     setToast(exists ? "Deal updated" : "Deal added");
@@ -7386,7 +7429,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
     ))
   );
 }
-function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
+function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
   var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
   useEffect(() => {
@@ -7427,7 +7470,6 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
   };
   const save = (wo) => {
     const existing = db.workOrders.find((x) => x.id === wo.id);
-    const workOrders = existing ? db.workOrders.map((x) => x.id === wo.id ? wo : x) : [...db.workOrders, wo];
     let activityLog = addLog(db, actor, existing ? `Updated work order "${wo.title}"` : `Created work order "${wo.title}"`);
     const assignmentChanged = wo.assignedTo && wo.assignedTo !== (existing == null ? void 0 : existing.assignedTo);
     let nextPendingText = null;
@@ -7449,7 +7491,8 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
         nextPendingText = { wo, staffMember };
       }
     }
-    persist({ ...db, workOrders, activityLog });
+    persist({ ...db, activityLog });
+    saveWorkOrder(wo);
     formDirtyRef.current = false;
     setModal(null);
     setToast(existing ? "Work order updated" : "Work order created");
@@ -7486,7 +7529,9 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
     var _a2, _b2;
     const wo = db.workOrders.find((w) => w.id === id);
     const activityLog = addLog(db, actor, `Removed work order "${(_a2 = wo == null ? void 0 : wo.title) != null ? _a2 : ""}" (moved to trash)`);
-    persist({ ...trashItem(db, "workOrder", wo, (_b2 = wo == null ? void 0 : wo.title) != null ? _b2 : "Work Order"), activityLog });
+    const entry = { id: uid(), type: "workOrder", data: wo, label: (_b2 = wo == null ? void 0 : wo.title) != null ? _b2 : "Work Order", deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteWorkOrder(id);
     confirm.clear();
   };
   const changeStatus = (wo, newStatus) => {
@@ -7540,7 +7585,8 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
       }
     }
     const activityLog = addLog(db, actor, `Work order "${wo.title}" moved to ${newStatus}`);
-    persist({ ...db, workOrders: db.workOrders.map((w) => w.id === wo.id ? updated : w), parts, sunspaceOrders, cottages, activityLog });
+    persist({ ...db, parts, sunspaceOrders, cottages, activityLog });
+    saveWorkOrder(updated);
     if (newStatus === "Completed" && wo.status !== "Completed" && wo.cottageId) {
       const cottage = db.cottages.find((c) => c.id === wo.cottageId);
       if (cottage && (cottage.appliances || []).length > 0) {
@@ -7579,8 +7625,9 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
   const bulkUpdate = (field, value, ids) => {
     const idSet = new Set(ids);
     let parts = db.parts;
-    const workOrders = db.workOrders.map((w) => {
-      if (!idSet.has(w.id)) return w;
+    const changed = [];
+    db.workOrders.forEach((w) => {
+      if (!idSet.has(w.id)) return;
       const updated = { ...w, [field]: value };
       if (field === "status" && value === "Completed" && w.status !== "Completed") {
         updated.completedDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
@@ -7592,11 +7639,13 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
           });
         }
       }
-      return updated;
+      changed.push(updated);
     });
     const fieldLabel = field === "status" ? "status" : "assignment";
     const activityLog = addLog(db, actor, `Bulk-updated ${fieldLabel} for ${ids.length} work order${ids.length === 1 ? "" : "s"}`);
-    persist({ ...db, workOrders, parts, activityLog });
+    persist({ ...db, parts, activityLog });
+    commitInChunks(changed.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id), data: w }))).catch(() => {
+    });
     setBulkEditOpen(false);
   };
   const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
@@ -7769,6 +7818,7 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
       wo: db.workOrders.find((w) => w.id === viewingWO.id) || viewingWO,
       db,
       persist,
+      saveWorkOrder,
       onClose: () => setViewingWO(null),
       onEdit: (w) => setModal({ mode: "edit", data: w }),
       onDelete: (w) => confirm.ask(w.id),
@@ -9090,7 +9140,7 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRu
   }).filter(Boolean).join(", ");
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "", (request.receivedAt || request.createdAt) ? ` \xB7 ${formatReceivedTime(request.receivedAt || request.createdAt)}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(request), className: "text-[#75716A] hover:underline" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
 }
-function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, pendingSignups: pendingSignupsProp, removePendingSignup }) {
+function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [modal, setModal] = useState(null);
   const [reviewingEntry, setReviewingEntry] = useState(null);
   const confirm = useConfirm();
@@ -9151,9 +9201,9 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, pe
       paymentStatus: request.payment || ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
-    const nextWorkOrders = [...db.workOrders || [], wo];
     const activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
-    persist({ ...db, workOrders: nextWorkOrders, activityLog });
+    persist({ ...db, activityLog });
+    saveWorkOrder(wo);
     savePropaneRequest(updated);
   };
   const confirmSignup = (request) => {
@@ -9228,7 +9278,7 @@ function buildServiceItems(db, taxRate) {
   });
   return items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
-function ServiceReportsView({ db, persist, saveWinterizingRequest }) {
+function ServiceReportsView({ db, persist, saveWinterizingRequest, saveWorkOrder }) {
   var _a, _b;
   const [viewingWO, setViewingWO] = useState(null);
   const [editingWinterizing, setEditingWinterizing] = useState(null);
@@ -9321,7 +9371,7 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest }) {
       className: "px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#E2DED5] bg-white text-[#4B4740] hover:bg-[#F1EEE9] disabled:opacity-40 disabled:cursor-not-allowed"
     },
     "Next \u2192"
-  )))), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, onClose: () => setViewingWO(null) }), editingWinterizing && /* @__PURE__ */ React.createElement(Modal, { title: "Edit Winterizing Sign-Up", onClose: () => setEditingWinterizing(null) }, /* @__PURE__ */ React.createElement(WinterizingRequestForm, {
+  )))), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null) }), editingWinterizing && /* @__PURE__ */ React.createElement(Modal, { title: "Edit Winterizing Sign-Up", onClose: () => setEditingWinterizing(null) }, /* @__PURE__ */ React.createElement(WinterizingRequestForm, {
     initial: editingWinterizing,
     db,
     onSave: (request) => {
@@ -10303,7 +10353,7 @@ const TABS = [
   { key: "sites", label: "Sites", group: "accounting", hidden: true }
 ];
 function AppContent() {
-  const { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, retry } = useDb();
+  const { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
   const [mode, setMode] = useState("service");
@@ -10441,9 +10491,10 @@ function AppContent() {
       );
       persist({
         ...db,
-        workOrders: [...db.workOrders, ...newWorkOrders],
         recurringTasks: updatedTasks,
         activityLog
+      });
+      commitInChunks(newWorkOrders.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id), data: w }))).catch(() => {
       });
     }
   }, [db, actor, persist]);
@@ -10482,14 +10533,17 @@ function AppContent() {
       next.activityLog = addLog(next, actor, "Restored data from a backup file");
       const importedPropane = next.propaneRequests || [];
       const importedWinterizing = next.winterizingRequests || [];
+      const importedWorkOrders = next.workOrders || [];
       persist(next);
       try {
-        const [existingPropaneSnap, existingWinterizingSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get()]);
+        const [existingPropaneSnap, existingWinterizingSnap, existingWorkOrdersSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get()]);
         const ops = [];
         existingPropaneSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingWinterizingSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingWorkOrdersSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         importedPropane.forEach((r) => ops.push({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWinterizing.forEach((r) => ops.push({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r }));
+        importedWorkOrders.forEach((w) => ops.push({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w }));
         await commitInChunks(ops);
       } catch (e) {
       }
@@ -10585,7 +10639,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveWorkOrder, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -10600,7 +10654,7 @@ function AppContent() {
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) }));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) }));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
