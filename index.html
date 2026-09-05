@@ -83,6 +83,9 @@ const PENDING_SIGNUPS_REF = db_.collection("pendingSignups");
 const PROPANE_REQUESTS_REF = db_.collection("propaneRequests");
 const WINTERIZING_REQUESTS_REF = db_.collection("winterizingRequests");
 const WORK_ORDERS_REF = db_.collection("workOrders");
+const CUSTOMERS_REF = db_.collection("customers");
+const QUOTES_REF = db_.collection("quotes");
+const INVOICES_REF = db_.collection("invoices");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
@@ -861,6 +864,9 @@ function useDb() {
   const [propaneList, setPropaneList] = useState(null);
   const [winterizingList, setWinterizingList] = useState(null);
   const [workOrdersList, setWorkOrdersList] = useState(null);
+  const [customersList, setCustomersList] = useState(null);
+  const [quotesList, setQuotesList] = useState(null);
+  const [invoicesList, setInvoicesList] = useState(null);
   const [pendingSignups, setPendingSignups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
@@ -902,13 +908,19 @@ function useDb() {
           const legacyPropaneRequests = merged.propaneRequests || [];
           const legacyWinterizingRequests = merged.winterizingRequests || [];
           const legacyWorkOrders = merged.workOrders || [];
+          const legacyCustomers = merged.customers || [];
+          const legacyQuotes = merged.quotes || [];
+          const legacyInvoices = merged.invoices || [];
           const migrationOps = [
             ...legacyPropaneRequests.map((r) => ({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r })),
             ...legacyWinterizingRequests.map((r) => ({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r })),
-            ...legacyWorkOrders.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w }))
+            ...legacyWorkOrders.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w })),
+            ...legacyCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id || uid()), data: c })),
+            ...legacyQuotes.map((q) => ({ type: "set", ref: QUOTES_REF.doc(q.id || uid()), data: q })),
+            ...legacyInvoices.map((i) => ({ type: "set", ref: INVOICES_REF.doc(i.id || uid()), data: i }))
           ];
           if (migrationOps.length > 0) {
-            commitInChunks(migrationOps).then(() => DOC_REF.update({ propaneRequests: [], winterizingRequests: [], workOrders: [] })).catch(() => {
+            commitInChunks(migrationOps).then(() => DOC_REF.update({ propaneRequests: [], winterizingRequests: [], workOrders: [], customers: [], quotes: [], invoices: [] })).catch(() => {
             });
           }
         }
@@ -955,17 +967,47 @@ function useDb() {
       () => {
       }
     );
+    const unsubCustomers = CUSTOMERS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setCustomersList(list);
+      },
+      () => {
+      }
+    );
+    const unsubQuotes = QUOTES_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setQuotesList(list);
+      },
+      () => {
+      }
+    );
+    const unsubInvoices = INVOICES_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setInvoicesList(list);
+      },
+      () => {
+      }
+    );
     return () => {
       unsub();
       unsubPending();
       unsubPropane();
       unsubWinterizing();
       unsubWorkOrders();
+      unsubCustomers();
+      unsubQuotes();
+      unsubInvoices();
     };
   }, []);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [] } : null;
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [] } : null;
   const persist = useCallback(async (next) => {
-    const { propaneRequests, winterizingRequests, workOrders, ...rest } = next;
+    const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, ...rest } = next;
     setMainData(rest);
     const attempt = () => DOC_REF.set(rest);
     lastAttempt.current = attempt;
@@ -1042,13 +1084,73 @@ function useDb() {
       setSaveError(`Couldn't remove that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
+  const saveCustomer = useCallback(async (customer) => {
+    const attempt = () => CUSTOMERS_REF.doc(customer.id).set(customer);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that customer${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteCustomer = useCallback(async (id) => {
+    const attempt = () => CUSTOMERS_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that customer${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const saveQuote = useCallback(async (quote) => {
+    const attempt = () => QUOTES_REF.doc(quote.id).set(quote);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that quote${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteQuote = useCallback(async (id) => {
+    const attempt = () => QUOTES_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that quote${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const saveInvoice = useCallback(async (invoice) => {
+    const attempt = () => INVOICES_REF.doc(invoice.id).set(invoice);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that invoice${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteInvoice = useCallback(async (id) => {
+    const attempt = () => INVOICES_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that invoice${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
   const error = saveError || connectionError;
   const retry = useCallback(() => {
     if (!lastAttempt.current) return;
     const attempt = lastAttempt.current;
     attempt().then(() => setSaveError(null)).catch((e) => setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
   }, []);
-  return { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, retry };
+  return { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, retry };
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
@@ -1259,7 +1361,7 @@ function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm
     "Yes, send"
   )));
 }
-function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, onClose }) {
+function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
     site: "Site",
@@ -1293,6 +1395,15 @@ function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, s
     } else if (entry.type === "workOrder") {
       persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
       saveWorkOrder(entry.data);
+    } else if (entry.type === "customer") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveCustomer(entry.data);
+    } else if (entry.type === "quote") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveQuote(entry.data);
+    } else if (entry.type === "invoice") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveInvoice(entry.data);
     } else {
       persist({ ...restoreTrashItem(db, entry.id), activityLog });
     }
@@ -1786,15 +1897,14 @@ function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, onClose, onEdit, o
   )))));
 }
 
-function QuoteCommentsModal({ quote, db, persist, onClose }) {
+function QuoteCommentsModal({ quote, db, persist, saveQuote, onClose }) {
   const [commentText, setCommentText] = useState("");
   const actor = useCurrentActor();
   const comments = quote.commentLog || [];
   const addComment = () => {
     if (!commentText.trim()) return;
     const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
-    const quotes = db.quotes.map((q) => q.id === quote.id ? { ...q, commentLog: [entry, ...q.commentLog || []] } : q);
-    persist({ ...db, quotes });
+    saveQuote({ ...quote, commentLog: [entry, ...quote.commentLog || []] });
     setCommentText("");
   };
   return /* @__PURE__ */ React.createElement(Modal, { title: `Comments \u2014 ${quote.title}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Internal notes for your team only \u2014 these never show up on the printed or emailed quote."), comments.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No comments yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-64 overflow-y-auto" }, comments.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-4" }, /* @__PURE__ */ React.createElement(
@@ -2169,7 +2279,7 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
-function CottagesView({ db, persist, saveWorkOrder, readOnly, canTransfer, filterPrefill }) {
+function CottagesView({ db, persist, saveWorkOrder, saveCustomer, readOnly, canTransfer, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -2183,19 +2293,19 @@ function CottagesView({ db, persist, saveWorkOrder, readOnly, canTransfer, filte
     var _a2;
     const exists = db.cottages.some((x) => x.id === c.id);
     const cottages = exists ? db.cottages.map((x) => x.id === c.id ? c : x) : [...db.cottages, c];
-    let customers = db.customers;
+    let changedCustomer = null;
     let activityLog = addLog(db, actor, exists ? `Updated cottage ${c.name}` : `Added cottage ${c.name}`);
     if (!exists && ownerAction && c.siteId) {
       if (ownerAction.type === "existing" && ownerAction.customerId) {
-        customers = customers.map((cust) => {
-          if (cust.id !== ownerAction.customerId) return cust;
+        const cust = db.customers.find((x) => x.id === ownerAction.customerId);
+        if (cust) {
           const ids = customerSiteIds(cust);
-          if (ids.includes(c.siteId)) return cust;
-          const siteIds = [...ids, c.siteId];
-          return { ...cust, siteIds, siteId: siteIds[0] };
-        });
-        const linked = customers.find((cust) => cust.id === ownerAction.customerId);
-        activityLog = addLog({ activityLog }, actor, `Linked ${(_a2 = linked == null ? void 0 : linked.name) != null ? _a2 : "customer"} to ${c.name}`);
+          if (!ids.includes(c.siteId)) {
+            const siteIds = [...ids, c.siteId];
+            changedCustomer = { ...cust, siteIds, siteId: siteIds[0] };
+          }
+          activityLog = addLog({ activityLog }, actor, `Linked ${cust.name} to ${c.name}`);
+        }
       } else if (ownerAction.type === "new" && ownerAction.name) {
         const newCustomer = {
           id: uid(),
@@ -2209,11 +2319,12 @@ function CottagesView({ db, persist, saveWorkOrder, readOnly, canTransfer, filte
           siteIds: [c.siteId],
           siteId: c.siteId
         };
-        customers = [...customers, newCustomer];
+        changedCustomer = newCustomer;
         activityLog = addLog({ activityLog }, actor, `Added ${newCustomer.name} as owner of ${c.name}`);
       }
     }
-    persist({ ...db, cottages, customers, activityLog });
+    persist({ ...db, cottages, activityLog });
+    if (changedCustomer) saveCustomer(changedCustomer);
     setModal(null);
   };
   const remove = (id) => {
@@ -2340,8 +2451,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
   const submitOffSite = () => {
     if (listing && !soldPriceValid) return;
     if (!destination.trim()) return;
-    const customers = db.customers.map((c) => {
-      if (!oldIds.has(c.id)) return c;
+    const changedCustomers = oldCustomers.map((c) => {
       const remainingSites = customerSiteIds(c).filter((sId) => sId !== site.id);
       return { ...c, siteIds: remainingSites, siteId: remainingSites[0] || null };
     });
@@ -2360,7 +2470,9 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
     );
     const activityLog = addLog(db, actor, `${cottage.name} (Site ${site.number}) sold and taken off-site${listing ? ` (${formatPrice(soldPriceNum)})` : ""} \u2014 kept on file for future service`);
-    persist(applyListingPrice(closeDealForProspect({ ...db, cottages, customers, sites, activityLog }, actor)));
+    persist(applyListingPrice(closeDealForProspect({ ...db, cottages, sites, activityLog }, actor)));
+    commitInChunks(changedCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
+    });
     onClose();
   };
   const submit = () => {
@@ -2373,7 +2485,8 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       if (!customerId) return;
       const target = db.customers.find((c) => c.id === customerId);
       if (!target) return;
-      const customers = db.customers.map((c) => {
+      const affectedIds = /* @__PURE__ */ new Set([...oldIds, customerId]);
+      const changedCustomers = Array.from(affectedIds).map((id) => db.customers.find((c) => c.id === id)).filter(Boolean).map((c) => {
         let siteIds = customerSiteIds(c);
         if (oldIds.has(c.id) && c.id !== customerId) {
           siteIds = siteIds.filter((sId) => sId !== site.id);
@@ -2394,7 +2507,9 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
         (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
       );
       const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
-      persist(applyListingPrice(closeDealForProspect({ ...db, customers, sites, activityLog }, actor)));
+      persist(applyListingPrice(closeDealForProspect({ ...db, sites, activityLog }, actor)));
+      commitInChunks(changedCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
+      });
       onClose();
       return;
     }
@@ -2411,14 +2526,10 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       siteIds: [site.id],
       siteId: site.id
     };
-    const customers = [
-      ...db.customers.map((c) => {
-        if (!oldIds.has(c.id)) return c;
-        const remainingSites = customerSiteIds(c).filter((sId) => sId !== site.id);
-        return { ...c, siteIds: remainingSites, siteId: remainingSites[0] || null };
-      }),
-      newCustomer
-    ];
+    const changedOldCustomers = oldCustomers.map((c) => {
+      const remainingSites = customerSiteIds(c).filter((sId) => sId !== site.id);
+      return { ...c, siteIds: remainingSites, siteId: remainingSites[0] || null };
+    });
     const transferEntry = {
       id: uid(),
       date: todayISO(),
@@ -2430,7 +2541,9 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
     );
     const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
-    persist(applyListingPrice(closeDealForProspect({ ...db, customers, sites, activityLog }, actor)));
+    persist(applyListingPrice(closeDealForProspect({ ...db, sites, activityLog }, actor)));
+    commitInChunks([...changedOldCustomers, newCustomer].map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
+    });
     onClose();
   };
   const customerOptions = db.customers.filter((c) => !oldIds.has(c.id)).map((c) => {
@@ -2844,7 +2957,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 
-function CustomersView({ db, persist, saveWorkOrder, filterPrefill }) {
+function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -2857,9 +2970,9 @@ function CustomersView({ db, persist, saveWorkOrder, filterPrefill }) {
   const actor = useCurrentActor();
   const save = (c) => {
     const exists = db.customers.some((x) => x.id === c.id);
-    const customers = exists ? db.customers.map((x) => x.id === c.id ? c : x) : [...db.customers, c];
     const activityLog = addLog(db, actor, exists ? `Updated customer ${c.name}` : `Added customer ${c.name}`);
-    persist({ ...db, customers, activityLog });
+    persist({ ...db, activityLog });
+    saveCustomer(c);
     setModal(null);
   };
   const bulkAdd = (rows) => {
@@ -2876,14 +2989,18 @@ function CustomersView({ db, persist, saveWorkOrder, filterPrefill }) {
       siteId: r.siteId
     }));
     const activityLog = addLog(db, actor, `Bulk-added ${newCustomers.length} customer${newCustomers.length === 1 ? "" : "s"}`);
-    persist({ ...db, customers: [...db.customers, ...newCustomers], activityLog });
+    persist({ ...db, activityLog });
+    commitInChunks(newCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
+    });
     setBulkOpen(false);
   };
   const remove = (id) => {
     var _a2, _b2;
     const customer = db.customers.find((c) => c.id === id);
     const activityLog = addLog(db, actor, `Removed customer ${(_a2 = customer == null ? void 0 : customer.name) != null ? _a2 : ""} (moved to trash)`);
-    persist({ ...trashItem(db, "customer", customer, (_b2 = customer == null ? void 0 : customer.name) != null ? _b2 : "Customer"), activityLog });
+    const entry = { id: uid(), type: "customer", data: customer, label: (_b2 = customer == null ? void 0 : customer.name) != null ? _b2 : "Customer", deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteCustomer(id);
     confirm.clear();
   };
   const filtered = db.customers.filter((c) => {
@@ -3567,7 +3684,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
 }
 
-function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) {
+function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -3590,23 +3707,25 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
   };
   const save = (invoice) => {
     const exists = invoices.some((i) => i.id === invoice.id);
-    const next = exists ? invoices.map((i) => i.id === invoice.id ? invoice : i) : [...invoices, invoice];
     const activityLog = addLog(db, actor, exists ? `Updated invoice ${invoice.invoiceNumber}` : `Created invoice ${invoice.invoiceNumber} for ${customerName(invoice.customerId) || "unassigned"}`);
-    persist({ ...db, invoices: next, activityLog });
+    persist({ ...db, activityLog });
+    saveInvoice(invoice);
     setModal(null);
   };
   const remove = (id) => {
     const invoice = invoices.find((i) => i.id === id);
     const activityLog = addLog(db, actor, `Removed invoice ${(invoice == null ? void 0 : invoice.invoiceNumber) || ""} (moved to trash)`);
-    persist({ ...trashItem(db, "invoice", invoice, `Invoice \u2014 ${(invoice == null ? void 0 : invoice.invoiceNumber) || ""}`), activityLog });
+    const entry = { id: uid(), type: "invoice", data: invoice, label: `Invoice \u2014 ${(invoice == null ? void 0 : invoice.invoiceNumber) || ""}`, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteInvoice(id);
     confirm.clear();
   };
   const markPaidInFull = (invoice) => {
     const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
     const updated = { ...invoice, depositAmount: total, paidInFullDate: todayISO() };
-    const next = invoices.map((i) => i.id === invoice.id ? updated : i);
     const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Full`);
-    persist({ ...db, invoices: next, activityLog });
+    persist({ ...db, activityLog });
+    saveInvoice(updated);
   };
   const sendInvoice = (invoice) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
@@ -3634,9 +3753,9 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
     Promise.all(sends).then(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
       const updated = { ...invoice, sentDate: invoice.sentDate || todayISO() };
-      const next = invoices.map((i) => i.id === invoice.id ? updated : i);
       const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
-      persist({ ...db, invoices: next, activityLog });
+      persist({ ...db, activityLog });
+      saveInvoice(updated);
       setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
@@ -4124,7 +4243,7 @@ const QUOTE_STATUS_STYLES = {
   Accepted: "bg-[#377249]/10 text-[#377249]",
   Declined: "bg-[#F5E3D9] text-[#a8532a]"
 };
-function QuotesView({ db, persist, saveWorkOrder, onGoToWorkOrders, onCreateInvoice, filterPrefill }) {
+function QuotesView({ db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders, onCreateInvoice, filterPrefill }) {
   var _a, _b, _c, _d, _e, _f;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -4153,9 +4272,9 @@ function QuotesView({ db, persist, saveWorkOrder, onGoToWorkOrders, onCreateInvo
   };
   const save = (quote) => {
     const exists = db.quotes.some((q) => q.id === quote.id);
-    const quotes = exists ? db.quotes.map((q) => q.id === quote.id ? quote : q) : [...db.quotes, quote];
     const activityLog = addLog(db, actor, exists ? `Updated quote "${quote.title}"` : `Created quote "${quote.title}"`);
-    persist({ ...db, quotes, activityLog });
+    persist({ ...db, activityLog });
+    saveQuote(quote);
     formDirtyRef.current = false;
     setModal(null);
     setToast(exists ? "Quote updated" : "Quote created");
@@ -4182,12 +4301,15 @@ function QuotesView({ db, persist, saveWorkOrder, onGoToWorkOrders, onCreateInvo
     var _a2, _b2;
     const quote = db.quotes.find((q) => q.id === id);
     const activityLog = addLog(db, actor, `Removed quote "${(_a2 = quote == null ? void 0 : quote.title) != null ? _a2 : ""}" (moved to trash)`);
-    persist({ ...trashItem(db, "quote", quote, (_b2 = quote == null ? void 0 : quote.title) != null ? _b2 : "Quote"), activityLog });
+    const entry = { id: uid(), type: "quote", data: quote, label: (_b2 = quote == null ? void 0 : quote.title) != null ? _b2 : "Quote", deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteQuote(id);
     confirm.clear();
   };
   const updateStatus = (quote, status) => {
     const activityLog = addLog(db, actor, `Quote "${quote.title}" marked ${status}`);
-    persist({ ...db, quotes: db.quotes.map((q) => q.id === quote.id ? { ...q, status } : q), activityLog });
+    persist({ ...db, activityLog });
+    saveQuote({ ...quote, status });
   };
   const convertToWorkOrder = (quote) => {
     const newId = uid();
@@ -4205,9 +4327,9 @@ function QuotesView({ db, persist, saveWorkOrder, onGoToWorkOrders, onCreateInvo
       completedDate: null,
       partsUsed: quote.lineItems.filter((li) => li.partId).map((li) => ({ partId: li.partId, quantity: li.quantity }))
     };
-    const quotes = db.quotes.map((q) => q.id === quote.id ? { ...q, workOrderId: newId } : q);
     const activityLog = addLog(db, actor, `Converted quote "${quote.title}" to a work order`);
-    persist({ ...db, quotes, activityLog });
+    persist({ ...db, activityLog });
+    saveQuote({ ...quote, workOrderId: newId });
     saveWorkOrder(newWorkOrder);
     if (onGoToWorkOrders) onGoToWorkOrders();
   };
@@ -4297,6 +4419,7 @@ function QuotesView({ db, persist, saveWorkOrder, onGoToWorkOrders, onCreateInvo
       quote: db.quotes.find((q) => q.id === commentsFor.id) || commentsFor,
       db,
       persist,
+      saveQuote,
       onClose: () => setCommentsFor(null)
     }
   ), confirm.target && /* @__PURE__ */ React.createElement(
@@ -5609,7 +5732,7 @@ function SalesReportView({ db }) {
     className: inputCls + " w-auto"
   }, availableYears.map((y) => /* @__PURE__ */ React.createElement("option", { key: y, value: y }, y)))), summaryCards, categoryCards, monthlyChart);
 }
-function CottageOrdersView({ db, persist }) {
+function CottageOrdersView({ db, persist, saveCustomer }) {
   var _a, _b;
   const customerOrders = db.cottageOrders.filter((o) => o.type === "Customer Order");
   const [modal, setModal] = useState(null);
@@ -5706,18 +5829,20 @@ function CottageOrdersView({ db, persist }) {
       deckPorch: order.deckPorch || "",
       sunroom: order.sunroom || ""
     };
-    let customers = db.customers;
+    let changedCustomer = null;
     if (order.customerId && order.siteId) {
-      customers = customers.map((c) => {
-        if (c.id !== order.customerId) return c;
-        const ids = customerSiteIds(c);
-        if (ids.includes(order.siteId)) return c;
-        const siteIds = [...ids, order.siteId];
-        return { ...c, siteIds, siteId: siteIds[0] };
-      });
+      const cust = db.customers.find((c) => c.id === order.customerId);
+      if (cust) {
+        const ids = customerSiteIds(cust);
+        if (!ids.includes(order.siteId)) {
+          const siteIds = [...ids, order.siteId];
+          changedCustomer = { ...cust, siteIds, siteId: siteIds[0] };
+        }
+      }
     }
     const activityLog = addLog(db, actor, `Created cottage record "${newCottage.name}" from delivered order`);
-    persist({ ...db, cottages: [...db.cottages, newCottage], customers, activityLog });
+    persist({ ...db, cottages: [...db.cottages, newCottage], activityLog });
+    if (changedCustomer) saveCustomer(changedCustomer);
     setCreateCottageFor(null);
   };
   const filtered = customerOrders.filter((o) => {
@@ -6867,7 +6992,7 @@ function DealFellThroughModal({ deal, onResolve, onClose }) {
     "Confirm \u2014 Deal Fell Through"
   )));
 }
-function DealsView({ db, persist, saveWorkOrder }) {
+function DealsView({ db, persist, saveWorkOrder, saveCustomer }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -6963,11 +7088,10 @@ function DealsView({ db, persist, saveWorkOrder }) {
   const convertToOrder = (details) => {
     const deal = convertTarget;
     let customerId = deal.customerId;
-    let customers = db.customers;
+    let newCustomer = null;
     if (!customerId) {
-      const newCustomer = buildCustomerFromContact(deal.name, deal.phone, deal.email);
+      newCustomer = buildCustomerFromContact(deal.name, deal.phone, deal.email);
       customerId = newCustomer.id;
-      customers = [...db.customers, newCustomer];
     }
     const newOrder = {
       id: uid(),
@@ -6997,7 +7121,8 @@ function DealsView({ db, persist, saveWorkOrder }) {
     const entry = { id: uid(), text: `Moved to Deposit as a New Custom Order (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Deposit", saleType: "order", saleRefId: newOrder.id, customerId, commentLog: [entry, ...d.commentLog || []] } : d);
     const activityLog = addLog(db, actor, `${deal.name}'s deal moved to Deposit \u2014 new Cottage Order created`);
-    persist({ ...db, customers, cottageOrders: [...db.cottageOrders, newOrder], deals, activityLog });
+    persist({ ...db, cottageOrders: [...db.cottageOrders, newOrder], deals, activityLog });
+    if (newCustomer) saveCustomer(newCustomer);
     setConvertTarget(null);
     setToast("Moved to Deposit");
   };
@@ -7005,17 +7130,17 @@ function DealsView({ db, persist, saveWorkOrder }) {
     if (!orderId) return;
     const deal = convertTarget;
     let customerId = deal.customerId;
-    let customers = db.customers;
+    let newCustomer = null;
     if (!customerId) {
-      const newCustomer = buildCustomerFromContact(deal.name, deal.phone, deal.email);
+      newCustomer = buildCustomerFromContact(deal.name, deal.phone, deal.email);
       customerId = newCustomer.id;
-      customers = [...db.customers, newCustomer];
     }
     const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, totalPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, soldDate: todayISO(), dealId: deal.id, locationChoice: details.locationChoice || o.locationChoice || null } : o);
     const entry = { id: uid(), text: `Moved to Deposit on an existing Display Model (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Deposit", saleType: "display", saleRefId: orderId, customerId, commentLog: [entry, ...d.commentLog || []] } : d);
     const activityLog = addLog(db, actor, `${deal.name}'s deal moved to Deposit \u2014 Display Model sale`);
-    persist({ ...db, customers, cottageOrders, deals, activityLog });
+    persist({ ...db, cottageOrders, deals, activityLog });
+    if (newCustomer) saveCustomer(newCustomer);
     setConvertTarget(null);
     setToast("Moved to Deposit");
   };
@@ -10353,7 +10478,7 @@ const TABS = [
   { key: "sites", label: "Sites", group: "accounting", hidden: true }
 ];
 function AppContent() {
-  const { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, retry } = useDb();
+  const { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
   const [mode, setMode] = useState("service");
@@ -10534,16 +10659,25 @@ function AppContent() {
       const importedPropane = next.propaneRequests || [];
       const importedWinterizing = next.winterizingRequests || [];
       const importedWorkOrders = next.workOrders || [];
+      const importedCustomers = next.customers || [];
+      const importedQuotes = next.quotes || [];
+      const importedInvoices = next.invoices || [];
       persist(next);
       try {
-        const [existingPropaneSnap, existingWinterizingSnap, existingWorkOrdersSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get()]);
+        const [existingPropaneSnap, existingWinterizingSnap, existingWorkOrdersSnap, existingCustomersSnap, existingQuotesSnap, existingInvoicesSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get(), CUSTOMERS_REF.get(), QUOTES_REF.get(), INVOICES_REF.get()]);
         const ops = [];
         existingPropaneSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingWinterizingSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingWorkOrdersSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingCustomersSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingQuotesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingInvoicesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         importedPropane.forEach((r) => ops.push({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWinterizing.forEach((r) => ops.push({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWorkOrders.forEach((w) => ops.push({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w }));
+        importedCustomers.forEach((c) => ops.push({ type: "set", ref: CUSTOMERS_REF.doc(c.id || uid()), data: c }));
+        importedQuotes.forEach((q) => ops.push({ type: "set", ref: QUOTES_REF.doc(q.id || uid()), data: q }));
+        importedInvoices.forEach((i) => ops.push({ type: "set", ref: INVOICES_REF.doc(i.id || uid()), data: i }));
         await commitInChunks(ops);
       } catch (e) {
       }
@@ -10639,7 +10773,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveWorkOrder, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -10654,7 +10788,7 @@ function AppContent() {
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) }));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) }));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
