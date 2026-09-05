@@ -98,6 +98,7 @@ if (EMAIL_ENABLED && window.emailjs) {
   window.emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 }
 let emailUsageRecorder = null;
+let emailFailureRecorder = null;
 let emailUsageState = { month: "", count: 0 };
 function currentMonthKey() {
   const d = /* @__PURE__ */ new Date();
@@ -114,14 +115,26 @@ function syncEmailUsageFromDb(dbUsage) {
     emailUsageState = { month: monthKey, count: usage.count || 0 };
   }
 }
-function sendEmail({ toEmail, toName, subject, message, department }) {
+function sendEmail({ toEmail, toName, subject, message, department, source }) {
+  const reportFailure = (errMsg) => {
+    if (emailFailureRecorder) {
+      emailFailureRecorder({
+        source: source || `${department || "service"} email`,
+        message: `Failed to send to ${toName || toEmail || "unknown recipient"}${subject ? ` ("${subject}")` : ""} \u2014 ${errMsg}`
+      });
+    }
+  };
   if (!EMAIL_ENABLED || !window.emailjs) {
-    return Promise.reject(new Error("Email isn't set up yet \u2014 add your EmailJS config near the top of this file."));
+    const errMsg = "Email isn't set up yet \u2014 add your EmailJS config near the top of this file.";
+    reportFailure(errMsg);
+    return Promise.reject(new Error(errMsg));
   }
   const dept = department && EMAILJS_SERVICES[department] ? department : "service";
   const serviceId = EMAILJS_SERVICES[dept];
   if (!serviceId || serviceId.startsWith("PASTE_")) {
-    return Promise.reject(new Error(`The "${dept}" email address isn't connected in EmailJS yet \u2014 add its Service ID near the top of this file.`));
+    const errMsg = `The "${dept}" email address isn't connected in EmailJS yet \u2014 add its Service ID near the top of this file.`;
+    reportFailure(errMsg);
+    return Promise.reject(new Error(errMsg));
   }
   return window.emailjs.send(serviceId, EMAILJS_TEMPLATE_ID, {
     to_email: toEmail,
@@ -131,6 +144,9 @@ function sendEmail({ toEmail, toName, subject, message, department }) {
   }).then((result) => {
     if (emailUsageRecorder) emailUsageRecorder();
     return result;
+  }).catch((err) => {
+    reportFailure((err && (err.text || err.message)) || "Unknown error");
+    throw err;
   });
 }
 
@@ -147,7 +163,7 @@ function sendText({ phone, message }) {
   if (!address) {
     return Promise.reject(new Error("No valid phone number to text."));
   }
-  return sendEmail({ toEmail: address, toName: "", subject: "", message: message, department: "service" });
+  return sendEmail({ toEmail: address, toName: "", subject: "", message: message, department: "service", source: "Staff text notification" });
 }
 
 const emptyDb = () => ({
@@ -617,6 +633,16 @@ function defaultPropaneRun(requestedDate) {
   if (requestedDate !== today) return "10am";
   const hour = (/* @__PURE__ */ new Date()).getHours();
   return hour < 10 ? "10am" : "4pm";
+}
+function formatReceivedTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const now = /* @__PURE__ */ new Date();
+  const timeStr = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return `Received ${timeStr}`;
+  const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `Received ${dateStr}, ${timeStr}`;
 }
 function customerSiteIds(customer) {
   if (!customer) return [];
@@ -3446,7 +3472,8 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
       toName: customer.name,
       subject: `Invoice ${invoice.invoiceNumber}`,
       message: buildInvoiceEmailText(invoice, db, taxRate),
-      department: "service"
+      department: "service",
+      source: "Invoice email"
     })];
     if (accountingEmail) {
       sends.push(sendEmail({
@@ -3454,7 +3481,8 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
         toName: "Accounting",
         subject: `Invoice ${invoice.invoiceNumber} \u2014 ${customer.name}`,
         message: buildInvoiceEmailText(invoice, db, taxRate),
-        department: "service"
+        department: "service",
+        source: "Invoice email"
       }));
     }
     Promise.all(sends).then(() => {
@@ -3466,7 +3494,6 @@ function InvoicesView({ db, persist, invoicePrefill, onConsumeInvoicePrefill }) 
       setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
-      logSystemError(db, persist, "Invoice email", `Failed to send invoice ${invoice.invoiceNumber} to ${customer.name}`);
     });
   };
   const filtered = invoices.filter((inv) => {
@@ -3994,7 +4021,8 @@ function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPref
       toName: customer.name,
       subject: `Quote: ${quote.title}`,
       message: buildQuoteEmailText(quote, db, taxRate),
-      department: "service"
+      department: "service",
+      source: "Quote email"
     }).then(() => {
       setEmailStatus((s) => ({ ...s, [quote.id]: "sent" }));
       const activityLog = addLog(db, actor, `Emailed quote "${quote.title}" to ${customer.name}`);
@@ -4002,7 +4030,6 @@ function QuotesView({ db, persist, onGoToWorkOrders, onCreateInvoice, filterPref
       setTimeout(() => setEmailStatus((s) => ({ ...s, [quote.id]: void 0 })), 3e3);
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [quote.id]: "error" }));
-      logSystemError(db, persist, "Quote email", `Failed to send quote "${quote.title}" to ${customer.name}`);
     });
   };
   const remove = (id) => {
@@ -7307,9 +7334,9 @@ function WorkOrdersView({ db, persist, onCreateInvoice, workOrderPrefill, onCons
           toName: staffMember.name,
           subject: `Work order assigned: ${wo.title}`,
           message: buildWorkOrderEmailText(wo, db),
-          department: "service"
+          department: "service",
+          source: "Work order assignment email"
         }).catch(() => {
-          logSystemError(db, persist, "Work order assignment email", `Failed to notify ${staffMember.name} about "${wo.title}"`);
         });
         activityLog = addLog({ activityLog }, actor, `Notified ${staffMember.name} by email about "${wo.title}"`);
       }
@@ -8438,10 +8465,11 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
       completed: false,
       completedDate: null,
       workOrderId: null,
+      receivedAt: entry.receivedAt || null,
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning)), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning)), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
     onChange: pickSite,
@@ -8766,7 +8794,8 @@ function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignups
           toName: customer.name,
           subject: `Your Cottage Has Been Winterized \u2014 ${cottageName(request.cottageId)}`,
           message: buildWinterizingEmailText(updated, db),
-          department: "service"
+          department: "service",
+          source: "Winterizing completion email"
         }).then(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "sent" }));
           const emailedLog = addLog({ ...db, winterizingRequests: next }, actor, `Emailed winterizing completion to ${customer.name}`);
@@ -8774,7 +8803,6 @@ function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignups
           setTimeout(() => setEmailStatus((s) => ({ ...s, [request.id]: void 0 })), 3e3);
         }).catch(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
-          logSystemError(db, persist, "Winterizing completion email", `Failed to email ${customer.name} about ${cottageName(request.cottageId)}`);
         });
       }
     }
@@ -8953,7 +8981,7 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRu
     const part = (db.parts || []).find((p) => p.id === pu.partId);
     return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
   }).filter(Boolean).join(", ");
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(request), className: "text-[#75716A] hover:underline" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
+  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "", (request.receivedAt || request.createdAt) ? ` \xB7 ${formatReceivedTime(request.receivedAt || request.createdAt)}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(request), className: "text-[#75716A] hover:underline" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
 }
 function PropaneView({ db, persist, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [modal, setModal] = useState(null);
@@ -9756,9 +9784,9 @@ function HydroReviewView({ db, persist }) {
         toName: owner.name,
         subject: `Hydro Bill \u2014 Site ${site.number}`,
         message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
-        department: "accounting"
+        department: "accounting",
+        source: "Hydro invoice email"
       }).catch(() => {
-        logSystemError(db, persist, "Hydro invoice email", `Failed to send hydro invoice to ${owner.name} for site ${site.number}`);
       });
     } else if (!owner || !owner.email) {
       logSystemError(db, persist, "Hydro invoice email", `No customer email on file for site ${site.number} \u2014 invoice recorded but not emailed`);
@@ -9769,9 +9797,9 @@ function HydroReviewView({ db, persist }) {
         toName: "Accounting",
         subject: `Copy: Hydro Bill \u2014 Site ${site.number}${(owner == null ? void 0 : owner.name) ? ` (${owner.name})` : ""}`,
         message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
-        department: "accounting"
+        department: "accounting",
+        source: "Hydro invoice copy email"
       }).catch(() => {
-        logSystemError(db, persist, "Hydro invoice copy email", `Failed to send accounting copy for site ${site.number}`);
       });
     }
     setEdits((prev) => {
@@ -10247,6 +10275,17 @@ function AppContent() {
     };
     return () => {
       emailUsageRecorder = null;
+    };
+  }, []);
+  useEffect(() => {
+    emailFailureRecorder = (failure) => {
+      const currentDb = dbRef.current;
+      const currentPersist = persistRef.current;
+      if (!currentDb || !currentPersist) return;
+      logSystemError(currentDb, currentPersist, failure.source, failure.message);
+    };
+    return () => {
+      emailFailureRecorder = null;
     };
   }, []);
   useEffect(() => {
