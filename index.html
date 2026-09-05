@@ -9165,6 +9165,11 @@ function ServiceReportsView({ db, persist }) {
       if (!hay.includes(siteFilter.toLowerCase())) return false;
     }
     return true;
+  }).sort((a, b) => {
+    const aCompleted = a.status === "Completed" ? 0 : 1;
+    const bCompleted = b.status === "Completed" ? 0 : 1;
+    if (aCompleted !== bCompleted) return aCompleted - bCompleted;
+    return (b.date || "").localeCompare(a.date || "");
   });
   const countsByType = TYPES.map((t) => ({ type: t, count: filtered.filter((i) => i.type === t).length }));
   useEffect(() => {
