@@ -80,6 +80,8 @@ try {
 }
 const DOC_REF = db_.collection("campground").doc("data");
 const PENDING_SIGNUPS_REF = db_.collection("pendingSignups");
+const PROPANE_REQUESTS_REF = db_.collection("propaneRequests");
+const WINTERIZING_REQUESTS_REF = db_.collection("winterizingRequests");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
@@ -261,6 +263,17 @@ function purgeExpiredTrash(db) {
   const cutoff = Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const trash = (db.trash || []).filter((t) => new Date(t.deletedAt).getTime() > cutoff);
   return trash.length === (db.trash || []).length ? db : { ...db, trash };
+}
+async function commitInChunks(operations) {
+  const CHUNK = 450;
+  for (let i = 0; i < operations.length; i += CHUNK) {
+    const batch = db_.batch();
+    operations.slice(i, i + CHUNK).forEach((op) => {
+      if (op.type === "delete") batch.delete(op.ref);
+      else batch.set(op.ref, op.data);
+    });
+    await batch.commit();
+  }
 }
 const COTTAGE_ORDER_STATUS_MIGRATION = {
   "Ordered/Designing": "Ordered/Being Built",
@@ -843,19 +856,22 @@ class ErrorBoundary extends React.Component {
   }
 }
 function useDb() {
-  const [db, setDb] = useState(null);
+  const [mainData, setMainData] = useState(null);
+  const [propaneList, setPropaneList] = useState(null);
+  const [winterizingList, setWinterizingList] = useState(null);
   const [pendingSignups, setPendingSignups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const lastAttempt = useRef(null);
   const migratedRef = useRef(false);
+  const migratedCollectionsRef = useRef(false);
   useEffect(() => {
     const unsub = DOC_REF.onSnapshot(
       (snap) => {
         const data = snap.exists ? snap.data() : null;
         const merged = migrateCottageOrderStatuses(purgeExpiredTrash({ ...emptyDb(), ...data && typeof data === "object" ? data : {} }));
-        setDb(merged);
+        setMainData(merged);
         setLoading(false);
         setConnectionError(null);
         if (!migratedRef.current) {
@@ -879,10 +895,26 @@ function useDb() {
             });
           }
         }
+        if (!migratedCollectionsRef.current) {
+          migratedCollectionsRef.current = true;
+          const legacyPropaneRequests = merged.propaneRequests || [];
+          const legacyWinterizingRequests = merged.winterizingRequests || [];
+          if (legacyPropaneRequests.length > 0 || legacyWinterizingRequests.length > 0) {
+            const batch = db_.batch();
+            legacyPropaneRequests.forEach((r) => {
+              batch.set(PROPANE_REQUESTS_REF.doc(r.id || uid()), r);
+            });
+            legacyWinterizingRequests.forEach((r) => {
+              batch.set(WINTERIZING_REQUESTS_REF.doc(r.id || uid()), r);
+            });
+            batch.commit().then(() => DOC_REF.update({ propaneRequests: [], winterizingRequests: [] })).catch(() => {
+            });
+          }
+        }
       },
       (err) => {
         setConnectionError(`Couldn't connect to the shared database${(err == null ? void 0 : err.message) ? `: ${err.message}` : ""}.`);
-        setDb((cur) => cur || emptyDb());
+        setMainData((cur) => cur || emptyDb());
         setLoading(false);
       }
     );
@@ -895,16 +927,39 @@ function useDb() {
       () => {
       }
     );
+    const unsubPropane = PROPANE_REQUESTS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setPropaneList(list);
+      },
+      () => {
+      }
+    );
+    const unsubWinterizing = WINTERIZING_REQUESTS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setWinterizingList(list);
+      },
+      () => {
+      }
+    );
     return () => {
       unsub();
       unsubPending();
+      unsubPropane();
+      unsubWinterizing();
     };
   }, []);
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [] } : null;
   const persist = useCallback(async (next) => {
-    setDb(next);
-    lastAttempt.current = next;
+    const { propaneRequests, winterizingRequests, ...rest } = next;
+    setMainData(rest);
+    const attempt = () => DOC_REF.set(rest);
+    lastAttempt.current = attempt;
     try {
-      await DOC_REF.set(next);
+      await attempt();
       setSaveError(null);
     } catch (e) {
       setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
@@ -916,11 +971,53 @@ function useDb() {
     } catch (e) {
     }
   }, []);
+  const savePropaneRequest = useCallback(async (request) => {
+    const attempt = () => PROPANE_REQUESTS_REF.doc(request.id).set(request);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that propane request${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deletePropaneRequest = useCallback(async (id) => {
+    const attempt = () => PROPANE_REQUESTS_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that propane request${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const saveWinterizingRequest = useCallback(async (request) => {
+    const attempt = () => WINTERIZING_REQUESTS_REF.doc(request.id).set(request);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that winterizing sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteWinterizingRequest = useCallback(async (id) => {
+    const attempt = () => WINTERIZING_REQUESTS_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that winterizing sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
   const error = saveError || connectionError;
   const retry = useCallback(() => {
-    if (lastAttempt.current) persist(lastAttempt.current);
-  }, [persist]);
-  return { db, pendingSignups, loading, error, persist, removePendingSignup, retry };
+    if (!lastAttempt.current) return;
+    const attempt = lastAttempt.current;
+    attempt().then(() => setSaveError(null)).catch((e) => setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
+  }, []);
+  return { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, retry };
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
@@ -1131,7 +1228,7 @@ function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm
     "Yes, send"
   )));
 }
-function TrashModal({ db, persist, onClose }) {
+function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
     site: "Site",
@@ -1156,7 +1253,15 @@ function TrashModal({ db, persist, onClose }) {
   })[type] || type;
   const restore = (entry) => {
     const activityLog = addLog(db, actor, `Restored ${labelFor(entry.type).toLowerCase()} "${entry.label}" from trash`);
-    persist({ ...restoreTrashItem(db, entry.id), activityLog });
+    if (entry.type === "propaneRequest") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      savePropaneRequest(entry.data);
+    } else if (entry.type === "winterizingRequest") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveWinterizingRequest(entry.data);
+    } else {
+      persist({ ...restoreTrashItem(db, entry.id), activityLog });
+    }
   };
   const purge = (entry) => {
     const activityLog = addLog(db, actor, `Permanently deleted ${labelFor(entry.type).toLowerCase()} "${entry.label}"`);
@@ -3843,7 +3948,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const emailMonthKey = currentMonthKey();
   const emailUsage = db.emailUsage || {};
   const emailsUsedThisMonth = emailUsage.month === emailMonthKey ? emailUsage.count || 0 : 0;
-  const emailFreeLimit = 2e3;
+  const emailFreeLimit = ((db.settings || {}).emailMonthlyLimit) || 2e3;
   const emailUsagePct = Math.min(100, Math.round(emailsUsedThisMonth / emailFreeLimit * 100));
   const emailUsageTone = emailUsagePct >= 90 ? "text-[#a8532a]" : emailUsagePct >= 60 ? "text-[#9A6B1F]" : "text-[#28633C]";
   const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
@@ -8746,7 +8851,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(request) }, "Delete")))
   );
 }
-function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup }) {
+function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
@@ -8766,25 +8871,25 @@ function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignups
   };
   const customerFor = (id) => id ? db.customers.find((c) => c.id === id) : null;
   const save = (request) => {
-    const all = db.winterizingRequests || [];
-    const exists = all.some((r) => r.id === request.id);
-    const next = exists ? all.map((r) => r.id === request.id ? request : r) : [...all, request];
-    const activityLog = addLog(db, actor, exists ? `Updated winterizing sign-up for ${cottageName(request.cottageId)}` : `Added winterizing sign-up for ${cottageName(request.cottageId)}`);
-    persist({ ...db, winterizingRequests: next, activityLog });
+    const activityLog = addLog(db, actor, db.winterizingRequests.some((r) => r.id === request.id) ? `Updated winterizing sign-up for ${cottageName(request.cottageId)}` : `Added winterizing sign-up for ${cottageName(request.cottageId)}`);
+    persist({ ...db, activityLog });
+    saveWinterizingRequest(request);
     setModal(null);
   };
   const remove = (id) => {
     const request = requests.find((r) => r.id === id);
     const activityLog = addLog(db, actor, `Removed winterizing sign-up for ${cottageName(request == null ? void 0 : request.cottageId)} (moved to trash)`);
-    persist({ ...trashItem(db, "winterizingRequest", request, `Winterizing \u2014 ${cottageName(request == null ? void 0 : request.cottageId)}`), activityLog });
+    const entry = { id: uid(), type: "winterizingRequest", data: request, label: `Winterizing \u2014 ${cottageName(request == null ? void 0 : request.cottageId)}`, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteWinterizingRequest(id);
     confirm.clear();
   };
   const toggleComplete = (request) => {
     const willBeDone = !request.completed;
     const updated = { ...request, completed: willBeDone, completedDate: willBeDone ? todayISO() : null };
-    const next = (db.winterizingRequests || []).map((r) => r.id === request.id ? updated : r);
     const activityLog = addLog(db, actor, willBeDone ? `Marked winterizing complete for ${cottageName(request.cottageId)}` : `Reopened winterizing sign-up for ${cottageName(request.cottageId)}`);
-    persist({ ...db, winterizingRequests: next, activityLog });
+    persist({ ...db, activityLog });
+    saveWinterizingRequest(updated);
     if (willBeDone) {
       const customer = customerFor(request.customerId);
       if (customer && customer.email) {
@@ -8798,8 +8903,8 @@ function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignups
           source: "Winterizing completion email"
         }).then(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "sent" }));
-          const emailedLog = addLog({ ...db, winterizingRequests: next }, actor, `Emailed winterizing completion to ${customer.name}`);
-          persist({ ...db, winterizingRequests: next, activityLog: emailedLog });
+          const emailedLog = addLog(db, actor, `Emailed winterizing completion to ${customer.name}`);
+          persist({ ...db, activityLog: emailedLog });
           setTimeout(() => setEmailStatus((s) => ({ ...s, [request.id]: void 0 })), 3e3);
         }).catch(() => {
           setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
@@ -8809,17 +8914,19 @@ function WinterizingView({ db, persist, readOnly, pendingSignups: pendingSignups
   };
   const resetSeason = () => {
     const seasonEndDate = todayISO();
-    const doneCount = requests.filter((r) => r.completed).length;
-    const next = (db.winterizingRequests || []).map((r) => !r.archived && r.completed ? { ...r, archived: true, archivedAt: seasonEndDate } : r);
+    const toArchive = (db.winterizingRequests || []).filter((r) => !r.archived && r.completed);
+    const doneCount = toArchive.length;
     const activityLog = addLog(db, actor, `Reset winterizing for the new season \u2014 archived ${doneCount} completed sign-up${doneCount === 1 ? "" : "s"}`);
-    persist({ ...db, winterizingRequests: next, activityLog });
+    persist({ ...db, activityLog });
+    commitInChunks(toArchive.map((r) => ({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id), data: { ...r, archived: true, archivedAt: seasonEndDate } }))).catch(() => {
+    });
     setResetOpen(false);
   };
   const confirmSignup = (request) => {
     if (!reviewingEntry) return;
-    const nextRequests = [...(db.winterizingRequests || []), request];
     const activityLog = addLog(db, actor, `Confirmed winterizing sign-up for ${cottageName(request.cottageId)} from online submission`);
-    persist({ ...db, winterizingRequests: nextRequests, activityLog });
+    persist({ ...db, activityLog });
+    saveWinterizingRequest(request);
     removePendingSignup(reviewingEntry.id);
     setReviewingEntry(null);
   };
@@ -8983,7 +9090,7 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onMoveRu
   }).filter(Boolean).join(", ");
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] bg-[#FFFDFA] border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, site ? `Site ${site.number}` : "No site", cottage ? ` \u2014 ${cottage.name}` : " \u2014 Unlinked cottage"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, customer ? customer.name : "", request.notes ? ` \xB7 ${request.notes}` : "", tankSummary ? ` \xB7 ${tankSummary}` : "", (request.receivedAt || request.createdAt) ? ` \xB7 ${formatReceivedTime(request.receivedAt || request.createdAt)}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0 text-xs" }, paymentLabel && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel), /* @__PURE__ */ React.createElement("button", { onClick: () => onMoveRun(request), className: "text-[#75716A] hover:underline whitespace-nowrap" }, "Move to ", otherRun), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(request), className: "text-[#75716A] hover:underline" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(request), className: "text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline" }, "Delete"), /* @__PURE__ */ React.createElement("button", { onClick: () => onComplete(request), className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap" }, "Mark Complete")));
 }
-function PropaneView({ db, persist, pendingSignups: pendingSignupsProp, removePendingSignup }) {
+function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [modal, setModal] = useState(null);
   const [reviewingEntry, setReviewingEntry] = useState(null);
   const confirm = useConfirm();
@@ -9002,22 +9109,24 @@ function PropaneView({ db, persist, pendingSignups: pendingSignupsProp, removePe
   };
   const save = (request) => {
     const exists = requests.some((r) => r.id === request.id);
-    const next = exists ? requests.map((r) => r.id === request.id ? request : r) : [...requests, request];
     const activityLog = addLog(db, actor, exists ? `Updated propane request for ${cottageName(request.cottageId) || "unassigned"}` : `Added propane request for ${cottageName(request.cottageId) || "unassigned"}`);
-    persist({ ...db, propaneRequests: next, activityLog });
+    persist({ ...db, activityLog });
+    savePropaneRequest(request);
     setModal(null);
   };
   const remove = (id) => {
     const request = requests.find((r) => r.id === id);
     const activityLog = addLog(db, actor, `Removed propane request for ${cottageName(request == null ? void 0 : request.cottageId) || "unassigned"} (moved to trash)`);
-    persist({ ...trashItem(db, "propaneRequest", request, `Propane \u2014 ${cottageName(request == null ? void 0 : request.cottageId) || ""}`), activityLog });
+    const entry = { id: uid(), type: "propaneRequest", data: request, label: `Propane \u2014 ${cottageName(request == null ? void 0 : request.cottageId) || ""}`, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deletePropaneRequest(id);
     confirm.clear();
   };
   const moveRun = (request) => {
     const updated = { ...request, run: request.run === "10am" ? "4pm" : "10am" };
-    const next = requests.map((r) => r.id === request.id ? updated : r);
     const activityLog = addLog(db, actor, `Moved propane request for ${cottageName(request.cottageId) || "unassigned"} to the ${updated.run} run`);
-    persist({ ...db, propaneRequests: next, activityLog });
+    persist({ ...db, activityLog });
+    savePropaneRequest(updated);
   };
   const complete = (request) => {
     const cottage = db.cottages.find((c) => c.id === request.cottageId);
@@ -9042,15 +9151,15 @@ function PropaneView({ db, persist, pendingSignups: pendingSignupsProp, removePe
       paymentStatus: request.payment || ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
-    const nextRequests = requests.map((r) => r.id === request.id ? updated : r);
     const nextWorkOrders = [...db.workOrders || [], wo];
     const activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
-    persist({ ...db, propaneRequests: nextRequests, workOrders: nextWorkOrders, activityLog });
+    persist({ ...db, workOrders: nextWorkOrders, activityLog });
+    savePropaneRequest(updated);
   };
   const confirmSignup = (request) => {
-    const nextRequests = [...requests, request];
     const activityLog = addLog(db, actor, `Confirmed propane request from online sign-up`);
-    persist({ ...db, propaneRequests: nextRequests, activityLog });
+    persist({ ...db, activityLog });
+    savePropaneRequest(request);
     removePendingSignup(reviewingEntry.id);
     setReviewingEntry(null);
   };
@@ -9119,7 +9228,7 @@ function buildServiceItems(db, taxRate) {
   });
   return items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
-function ServiceReportsView({ db, persist }) {
+function ServiceReportsView({ db, persist, saveWinterizingRequest }) {
   var _a, _b;
   const [viewingWO, setViewingWO] = useState(null);
   const [editingWinterizing, setEditingWinterizing] = useState(null);
@@ -9216,11 +9325,10 @@ function ServiceReportsView({ db, persist }) {
     initial: editingWinterizing,
     db,
     onSave: (request) => {
-      const all = db.winterizingRequests || [];
-      const next = all.map((r) => r.id === request.id ? request : r);
       const cottage = db.cottages.find((c) => c.id === request.cottageId);
       const activityLog = addLog(db, actor, `Updated winterizing sign-up for ${(cottage == null ? void 0 : cottage.name) || "Unknown cottage"}`);
-      persist({ ...db, winterizingRequests: next, activityLog });
+      persist({ ...db, activityLog });
+      saveWinterizingRequest(request);
       setEditingWinterizing(null);
     },
     onCancel: () => setEditingWinterizing(null)
@@ -10094,7 +10202,7 @@ function SystemHealthView({ db, persist }) {
   const emailMonthKey = currentMonthKey();
   const emailUsage = db.emailUsage || {};
   const emailsUsedThisMonth = emailUsage.month === emailMonthKey ? emailUsage.count || 0 : 0;
-  const emailLimit = ((db.settings || {}).emailMonthlyLimit) || 200;
+  const emailLimit = ((db.settings || {}).emailMonthlyLimit) || 2e3;
   const emailPct = Math.min(100, Math.round(emailsUsedThisMonth / emailLimit * 100));
   const zohoUsed = ((db.settings || {}).zohoFlowUsedThisMonth) || 0;
   const zohoLimit = ((db.settings || {}).zohoFlowMonthlyLimit) || 100;
@@ -10135,7 +10243,7 @@ function SystemHealthView({ db, persist }) {
   const clearErrors = () => {
     persist({ ...db, systemErrorLog: [] });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "System Health & Alerts"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 200), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS free plan: "), "200 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "System Health & Alerts"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
 }
 function ParkSubNav({ active, onSelect, allowedTabKeys }) {
   const items = [
@@ -10195,7 +10303,7 @@ const TABS = [
   { key: "sites", label: "Sites", group: "accounting", hidden: true }
 ];
 function AppContent() {
-  const { db, pendingSignups, loading, error, persist, removePendingSignup, retry } = useDb();
+  const { db, pendingSignups, loading, error, persist, removePendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
   const [mode, setMode] = useState("service");
@@ -10368,11 +10476,23 @@ function AppContent() {
     };
     reader.readAsText(file);
   };
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (importPending && !importPending.__invalid) {
       const next = { ...emptyDb(), ...importPending };
       next.activityLog = addLog(next, actor, "Restored data from a backup file");
+      const importedPropane = next.propaneRequests || [];
+      const importedWinterizing = next.winterizingRequests || [];
       persist(next);
+      try {
+        const [existingPropaneSnap, existingWinterizingSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get()]);
+        const ops = [];
+        existingPropaneSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingWinterizingSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        importedPropane.forEach((r) => ops.push({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r }));
+        importedWinterizing.forEach((r) => ops.push({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r }));
+        await commitInChunks(ops);
+      } catch (e) {
+      }
     }
     setImportPending(null);
   };
@@ -10465,7 +10585,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -10480,7 +10600,7 @@ function AppContent() {
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) }));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) }));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
