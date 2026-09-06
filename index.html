@@ -1413,7 +1413,7 @@ function PaymentMethodModal({ title, methods, initialMethod, onConfirm, onCancel
   const [method, setMethod] = useState(initialMethod || methods[0]);
   return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, /* @__PURE__ */ React.createElement(Field, { label: "Paid Via" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: method, onChange: (e) => setMethod(e.target.value), autoFocus: true }, methods.map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onConfirm(method), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Confirm")));
 }
-function PaidCheckToggle({ isPaid, method, options, onSelect }) {
+function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
   useEffect(() => {
@@ -1427,16 +1427,16 @@ function PaidCheckToggle({ isPaid, method, options, onSelect }) {
     onSelect(m);
     setOpen(false);
   };
-  return /* @__PURE__ */ React.createElement("div", { className: "relative inline-block", ref: wrapperRef }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "relative inline-flex items-center gap-2", ref: wrapperRef }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
       onClick: () => setOpen((o) => !o),
-      title: isPaid ? `Paid \u2014 ${method}` : "Mark as paid",
-      className: `w-6 h-6 rounded-full flex items-center justify-center border-2 transition ${isPaid ? "bg-[#377249] border-[#377249] text-[#F9F5EC]" : "bg-white border-[#C7C2B8] text-transparent hover:border-[#377249]"}`
+      title: isPaid ? `Paid in Advance \u2014 ${method}` : "Mark as Paid in Advance",
+      className: `w-6 h-6 flex-shrink-0 rounded-full flex items-center justify-center border-2 transition ${isPaid ? "bg-[#377249] border-[#377249] text-[#F9F5EC]" : "bg-white border-[#C7C2B8] text-transparent hover:border-[#377249]"}`
     },
     /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))
-  ), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 right-0 w-32 rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg overflow-hidden" }, options.map((m) => /* @__PURE__ */ React.createElement(
+  ), showLabel && /* @__PURE__ */ React.createElement("span", { className: isPaid ? "text-xs font-medium text-[#28633C]" : "text-xs text-[#9A968D]" }, isPaid ? `Paid in Advance \u2014 ${method}` : "Not paid in advance"), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 top-full left-0 w-32 rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg overflow-hidden" }, options.map((m) => /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -3714,6 +3714,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   const [serviceCallType, setServiceCallType] = useState((initial == null ? void 0 : initial.serviceCallType) || "None");
   const [depositAmount, setDepositAmount] = useState((initial == null ? void 0 : initial.depositAmount) != null ? initial.depositAmount : "");
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
+  const [paidInAdvanceMethod, setPaidInAdvanceMethod] = useState((initial == null ? void 0 : initial.paidInAdvanceMethod) || null);
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -3807,6 +3808,8 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
       taxRate,
       depositAmount: depositAmount === "" ? 0 : Number(depositAmount),
       depositDate,
+      paidInAdvanceMethod,
+      paidInAdvanceDate: paidInAdvanceMethod ? (initial == null ? void 0 : initial.paidInAdvanceDate) || todayISO() : null,
       sentDate: (initial == null ? void 0 : initial.sentDate) || null,
       paidInFullDate: (initial == null ? void 0 : initial.paidInFullDate) || null,
       createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
@@ -3814,7 +3817,13 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Invoice #"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber)), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Invoice #"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber)), /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+    isPaid: !!paidInAdvanceMethod,
+    method: paidInAdvanceMethod,
+    options: ADVANCE_PAYMENT_METHODS,
+    showLabel: true,
+    onSelect: (m) => setPaidInAdvanceMethod(paidInAdvanceMethod === m ? null : m)
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
     onChange: pickSite,
