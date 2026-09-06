@@ -960,7 +960,6 @@ function useDb() {
   const [saveError, setSaveError] = useState(null);
   const lastAttempt = useRef(null);
   const migratedRef = useRef(false);
-  const migratedCollectionsRef = useRef(false);
   useEffect(() => {
     const unsub = DOC_REF.onSnapshot(
       (snap) => {
@@ -987,27 +986,6 @@ function useDb() {
           const migratedDeals = buildDealsFromLegacyData(merged);
           if (migratedDeals) {
             DOC_REF.update({ deals: migratedDeals, prospects: [] }).catch(() => {
-            });
-          }
-        }
-        if (!migratedCollectionsRef.current) {
-          migratedCollectionsRef.current = true;
-          const legacyPropaneRequests = merged.propaneRequests || [];
-          const legacyWinterizingRequests = merged.winterizingRequests || [];
-          const legacyWorkOrders = merged.workOrders || [];
-          const legacyCustomers = merged.customers || [];
-          const legacyQuotes = merged.quotes || [];
-          const legacyInvoices = merged.invoices || [];
-          const migrationOps = [
-            ...legacyPropaneRequests.map((r) => ({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r })),
-            ...legacyWinterizingRequests.map((r) => ({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r })),
-            ...legacyWorkOrders.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w })),
-            ...legacyCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id || uid()), data: c })),
-            ...legacyQuotes.map((q) => ({ type: "set", ref: QUOTES_REF.doc(q.id || uid()), data: q })),
-            ...legacyInvoices.map((i) => ({ type: "set", ref: INVOICES_REF.doc(i.id || uid()), data: i }))
-          ];
-          if (migrationOps.length > 0) {
-            commitInChunks(migrationOps).then(() => DOC_REF.update({ propaneRequests: [], winterizingRequests: [], workOrders: [], customers: [], quotes: [], invoices: [] })).catch(() => {
             });
           }
         }
