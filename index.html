@@ -781,7 +781,8 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       shopSuppliesPercent: (db.settings && db.settings.shopSuppliesPercent) != null ? db.settings.shopSuppliesPercent : 5,
       shopSuppliesAmount: 0,
       serviceCallType: "None",
-      serviceCall: 0
+      serviceCall: 0,
+      paidInAdvanceMethod: source.paymentStatus === "Paid" && source.paymentMethod ? source.paymentMethod : null
     };
   }
   if (sourceType === "quote") {
@@ -9183,6 +9184,23 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   const [requestedDate, setRequestedDate] = useState(entry.requestedDate || todayISO());
   const [run, setRun] = useState(defaultPropaneRun(entry.requestedDate || todayISO()));
   const [notes, setNotes] = useState(entry.notes || "");
+  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
+  const default100lb = tankParts.find((p) => p.name.trim().toLowerCase() === "100lb propane refill filled");
+  const [partsUsed, setPartsUsed] = useState(default100lb ? [{ partId: default100lb.id, quantity: 1 }] : []);
+  const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
+  const setTankQuantity = (partId, qty) => {
+    setPartsUsed((items) => {
+      const n = Math.max(0, Math.floor(Number(qty) || 0));
+      const without = items.filter((pu) => pu.partId !== partId);
+      return n > 0 ? [...without, { partId, quantity: n }] : without;
+    });
+  };
+  const [payment, setPayment] = useState("Paid");
+  const [paymentMethod, setPaymentMethod] = useState("Zoho");
+  const choosePayment = (val) => {
+    setPayment(val);
+    if (val !== "Paid") setPaymentMethod("");
+  };
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -9233,6 +9251,9 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
       requestedDate,
       run,
       notes: notes.trim(),
+      partsUsed,
+      payment,
+      paymentMethod: payment === "Paid" ? paymentMethod : "",
       completed: false,
       completedDate: null,
       workOrderId: null,
@@ -9270,7 +9291,48 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
       className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${run === r ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
     },
     r
-  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onDiscard, className: "px-4 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Discard Submission"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  ))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), tankParts.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Tanks" }, /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, tankParts.map((part) => /* @__PURE__ */ React.createElement("div", { key: part.id, className: "flex items-center justify-between gap-3 border border-[#E2DED5] rounded-md px-3 py-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13]" }, part.name, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, " \u2014 ", formatPrice(part.price))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTankQuantity(part.id, tankQuantity(part.id) - 1),
+      className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
+    },
+    "\u2212"
+  ), /* @__PURE__ */ React.createElement("span", { className: "w-5 text-center text-sm font-medium" }, tankQuantity(part.id)), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setTankQuantity(part.id, tankQuantity(part.id) + 1),
+      className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
+    },
+    "+"
+  ))))), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, "Online sign-ups are for one 100lb refill \u2014 defaulted below. Add more here if this customer called in extra tanks.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => choosePayment("Paid"),
+      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${payment === "Paid" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "Paid"
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => choosePayment("Invoice"),
+      className: `flex-1 px-3 py-2 rounded-md text-sm font-medium border ${payment === "Invoice" ? "bg-[#9A6B1F] text-[#F9F5EC] border-[#9A6B1F]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    "To Invoice (Accounting)"
+  )), payment === "Paid" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-2" }, PROPANE_PAYMENT_METHODS.map((m) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: m,
+      type: "button",
+      onClick: () => setPaymentMethod(m),
+      className: `flex-1 px-3 py-1.5 rounded-md text-xs font-medium border ${paymentMethod === m ? "bg-[#28633C] text-[#F9F5EC] border-[#28633C]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
+    },
+    m
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onDiscard, className: "px-4 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Discard Submission"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -9814,7 +9876,8 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       partsUsed: request.partsUsed || [],
       laborHours: "",
       laborRateType: "N/A",
-      paymentStatus: request.payment || ""
+      paymentStatus: request.payment || "",
+      paymentMethod: request.payment === "Paid" ? request.paymentMethod || "" : ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
     const activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
@@ -10934,8 +10997,8 @@ function SettingsView({ db, persist }) {
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
-  { key: "invoices", label: "Invoices", group: "service" },
   { key: "workorders", label: "Work Orders", group: "service" },
+  { key: "invoices", label: "Invoices", group: "service" },
   { key: "propane", label: "Propane", group: "service" },
   { key: "parts", label: "Parts", group: "service" },
   { key: "thepark", label: "The Park", group: "service" },
