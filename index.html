@@ -10088,10 +10088,9 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
   const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
   const [title, setTitle] = useState(entry.submittedCategory || "Service Request");
-  const [description, setDescription] = useState(
-    [entry.submittedDescription, entry.submittedName ? `Submitted by: ${entry.submittedName}` : "", entry.submittedPhone ? `Phone: ${entry.submittedPhone}` : "", entry.submittedEmail ? `Email: ${entry.submittedEmail}` : ""].filter(Boolean).join("\n")
-  );
+  const [description, setDescription] = useState(entry.submittedDescription || "");
   const [priority, setPriority] = useState(entry.submittedUrgency && PRIORITY.includes(entry.submittedUrgency) ? entry.submittedUrgency : "Medium");
+  const nameMismatchWarning = siteCustomerMismatchWarning(entry, guessSite, db);
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -10131,9 +10130,12 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   };
   const confirm = () => {
     if (!siteId && !cottageId) return;
-    onConfirm({ siteId: siteId || null, cottageId: cottageId || null, customerId: customerId || null, title: title.trim() || "Service Request", description: description.trim(), priority });
+    const contactLines = [entry.submittedName ? `Submitted by: ${entry.submittedName}` : "", entry.submittedPhone ? `Phone: ${entry.submittedPhone}` : "", entry.submittedEmail ? `Email: ${entry.submittedEmail}` : ""].filter(Boolean).join("\n");
+    const fullDescription = [description.trim(), contactLines].filter(Boolean).join("\n\n");
+    onConfirm({ siteId: siteId || null, cottageId: cottageId || null, customerId: customerId || null, title: title.trim() || "Service Request", description: fullDescription, priority });
   };
-  return /* @__PURE__ */ React.createElement("div", null, !guessSite && entry.submittedSiteNumber && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, `No site matched "${entry.submittedSiteNumber}" automatically — please select one below.`), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  const contactInfoEl = /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessSite && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning));
+  return /* @__PURE__ */ React.createElement("div", null, contactInfoEl, /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
     onChange: pickSite,
