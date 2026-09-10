@@ -1366,7 +1366,7 @@ function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) 
       },
       placeholder: placeholder || "Search\u2026"
     }
-  ), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg" }, /* @__PURE__ */ React.createElement(
+  ), open && /* @__PURE__ */ React.createElement("div", { className: "fixed sm:absolute inset-x-4 top-20 sm:inset-x-auto sm:top-auto sm:mt-1 sm:w-full max-h-[60vh] sm:max-h-48 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg z-50 sm:z-20" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -10101,7 +10101,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       setSelectMode((s) => !s);
       setSelectedIds(/* @__PURE__ */ new Set());
     },
-    className: `px-3 py-2 rounded-md border text-sm font-medium transition whitespace-nowrap ${selectMode ? "bg-[#C1652F] text-white border-[#C1652F]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
+    className: `hidden sm:inline-flex px-3 py-2 rounded-md border text-sm font-medium transition whitespace-nowrap ${selectMode ? "bg-[#C1652F] text-white border-[#C1652F]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
   }, selectMode ? "Done Selecting" : "Select to Print"), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setResetOpen(true),
     className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
@@ -10138,7 +10138,23 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   } else if (filtered.length === 0) {
     body = /* @__PURE__ */ React.createElement(EmptyState, { text: "No sign-ups match your search." });
   } else {
-    const pendingList = pending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic px-1 mb-5" }, "Nothing pending.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-3 sm:space-y-0 sm:rounded-lg sm:border sm:border-[#E2DED5] sm:divide-y sm:divide-[#EEEBE5] sm:overflow-hidden mb-5" }, pending.map(renderRow));
+    const pendingBySection = Object.entries(pending.reduce((groups, r) => {
+      const cottage = db.cottages.find((c) => c.id === r.cottageId);
+      const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+      const key = (site && site.section && site.section.trim()) || "No Section";
+      (groups[key] = groups[key] || []).push(r);
+      return groups;
+    }, {})).sort(([nameA], [nameB]) => {
+      if (nameA === "No Section") return 1;
+      if (nameB === "No Section") return -1;
+      const idxA = SECTION_ORDER.findIndex((s) => s.toLowerCase() === nameA.toLowerCase());
+      const idxB = SECTION_ORDER.findIndex((s) => s.toLowerCase() === nameB.toLowerCase());
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return nameA.localeCompare(nameB);
+    });
+    const pendingList = pending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic px-1 mb-5" }, "Nothing pending.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden space-y-5 mb-5" }, pendingBySection.map(([sectionName, items]) => /* @__PURE__ */ React.createElement("div", { key: sectionName }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold uppercase tracking-wider text-[#75716A]" }, sectionName), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#75716A] bg-[#F1EEE9] rounded-full px-2 py-0.5" }, items.length)), /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, items.map(renderRow))))), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] overflow-hidden mb-5" }, pending.map(renderRow)));
     const completedSection = completed.length === 0 ? null : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A] mb-2 px-1" }, "Completed (", completed.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "space-y-3 sm:space-y-0 sm:rounded-lg sm:border sm:border-[#E2DED5] sm:divide-y sm:divide-[#EEEBE5] sm:overflow-hidden" }, completed.map(renderRow)));
     body = /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A] mb-2 px-1" }, "Pending (", pending.length, ")"), pendingList, completedSection);
   }
