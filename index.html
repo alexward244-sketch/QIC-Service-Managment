@@ -4531,7 +4531,7 @@ function PartForm({ initial, onSave, onCancel }) {
     }
   )), /* @__PURE__ */ React.createElement(Field, { label: "Account" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: purchaseAccount, onChange: (e) => setPurchaseAccount(e.target.value), placeholder: "For invoicing (added later)" })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: purchaseDescription, onChange: (e) => setPurchaseDescription(e.target.value), placeholder: "e.g. manufacturer / supplier we buy this from" }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Part")));
 }
-function StatCard({ label, value, onClick, tone }) {
+function StatCard({ label, value, onClick, tone, subtitle }) {
   return /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -4541,7 +4541,8 @@ function StatCard({ label, value, onClick, tone }) {
       className: `text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 ${onClick ? "hover:border-[#377249]/40 transition cursor-pointer" : "cursor-default"}`
     },
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1.5" }, label),
-    /* @__PURE__ */ React.createElement("div", { className: `text-xl sm:text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
+    /* @__PURE__ */ React.createElement("div", { className: `text-xl sm:text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value),
+    subtitle && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] mt-1 truncate" }, subtitle)
   );
 }
 function DashboardSearch({ db, onJump }) {
@@ -4633,9 +4634,7 @@ function UnrecognizedSignupsModal({ entries, onDiscard, onClose }) {
   })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, pendingSignups, removePendingSignup }) {
-  var _a, _b;
   const actor = useCurrentActor();
-  const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const overdueCount = db.workOrders.filter(isOverdue).length;
@@ -4662,7 +4661,19 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
       setUnrecognizedOpen(true);
     }
   };
-  const pendingQuoteValue = db.quotes.filter((q) => q.status === "Draft" || q.status === "Sent").reduce((sum, q) => sum + computeQuoteTotals(q, taxRate).total, 0);
+  const activePropane = (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank);
+  const todayKey = todayISO();
+  const overduePropane = activePropane.filter((r) => r.requestedDate < todayKey);
+  const tenAmPropane = activePropane.filter((r) => r.requestedDate === todayKey && r.run === "10am");
+  const fourPmPropane = activePropane.filter((r) => r.requestedDate === todayKey && r.run === "4pm");
+  const pendingPropaneCount = propaneSignups + overduePropane.length + tenAmPropane.length + fourPmPropane.length;
+  const pendingPropaneParts = [
+    propaneSignups > 0 && `${propaneSignups} need${propaneSignups === 1 ? "s" : ""} confirmation`,
+    overduePropane.length > 0 && `${overduePropane.length} overdue`,
+    tenAmPropane.length > 0 && `${tenAmPropane.length} on 10am run`,
+    fourPmPropane.length > 0 && `${fourPmPropane.length} on 4pm run`
+  ].filter(Boolean);
+  const pendingPropaneSubtitle = pendingPropaneParts.length > 0 ? pendingPropaneParts.join(" \xB7 ") : "All caught up";
   const recentWorkOrders = db.workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
   const upcomingAppointments = (db.serviceAppointments || []).filter((a) => !a.completedDate).map((a) => ({ ...a, itemType: "appointment" }));
   const scheduledWorkOrders = db.workOrders.filter((w) => w.status !== "Completed" && w.date && w.date > todayISO()).map((w) => ({ id: w.id, title: w.title, date: w.date, time: "", itemType: "workOrder", wo: w }));
@@ -4720,7 +4731,13 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
     label: "Sign-Ups Needing Review",
     value: signupsNeedingReview,
     onClick: goToReview
-  }), (!allowedTabKeys || allowedTabKeys.has("quotes")) && /* @__PURE__ */ React.createElement(StatCard, { label: "Pending Quote Value", value: formatPrice(pendingQuoteValue), onClick: () => onGoToTab("quotes") })), /* @__PURE__ */ React.createElement("div", { className: "grid lg:grid-cols-3 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Work Orders"), recentWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No work orders yet.") : /* @__PURE__ */ React.createElement("div", null, recentWorkOrders.map((w) => {
+  }), (!allowedTabKeys || allowedTabKeys.has("propane")) && /* @__PURE__ */ React.createElement(StatCard, {
+    label: "Pending Propane",
+    value: pendingPropaneCount,
+    tone: pendingPropaneCount > 0 ? "text-[#a8532a]" : void 0,
+    subtitle: pendingPropaneSubtitle,
+    onClick: () => onGoToTab("propane")
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid lg:grid-cols-3 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Work Orders"), recentWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No work orders yet.") : /* @__PURE__ */ React.createElement("div", null, recentWorkOrders.map((w) => {
     const site = db.sites.find((s) => s.id === w.siteId);
     const cottage = db.cottages.find((c) => c.id === w.cottageId);
     const where = site ? `Site ${site.number}` : cottage ? cottage.name : "\u2014";
