@@ -1333,7 +1333,6 @@ const inputCls = "w-full rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-3 py
 function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [mobilePos, setMobilePos] = useState(null);
   const wrapperRef = useRef(null);
   const inputRef = useRef(null);
   const pickedRef = useRef(false);
@@ -1348,37 +1347,6 @@ function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-  useEffect(() => {
-    if (!open) {
-      setMobilePos(null);
-      return;
-    }
-    const measure = () => {
-      if (!inputRef.current || window.innerWidth >= 640) {
-        setMobilePos(null);
-        return;
-      }
-      const rect = inputRef.current.getBoundingClientRect();
-      const vh = window.visualViewport && window.visualViewport.height || window.innerHeight;
-      const spaceBelow = vh - rect.bottom;
-      const spaceAbove = rect.top;
-      if (spaceBelow >= 160 || spaceBelow >= spaceAbove) {
-        setMobilePos({ top: rect.bottom + 4, left: rect.left, width: rect.width, maxHeight: Math.max(120, Math.min(280, spaceBelow - 12)) });
-      } else {
-        const maxHeight = Math.max(120, Math.min(280, spaceAbove - 12));
-        setMobilePos({ top: rect.top - 4 - maxHeight, left: rect.left, width: rect.width, maxHeight });
-      }
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    document.addEventListener("scroll", measure, true);
-    if (window.visualViewport) window.visualViewport.addEventListener("resize", measure);
-    return () => {
-      window.removeEventListener("resize", measure);
-      document.removeEventListener("scroll", measure, true);
-      if (window.visualViewport) window.visualViewport.removeEventListener("resize", measure);
-    };
-  }, [open]);
   const filtered = query ? options.filter((o) => (o.searchText || o.label).toLowerCase().includes(query.toLowerCase())) : options;
   const pick = (val) => {
     pickedRef.current = true;
@@ -1404,6 +1372,11 @@ function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) 
       onFocus: () => {
         setOpen(true);
         setQuery("");
+        if (window.innerWidth < 640) {
+          setTimeout(() => {
+            if (inputRef.current) inputRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
+          }, 250);
+        }
       },
       onBlur: () => {
         const typed = query;
@@ -1433,8 +1406,7 @@ function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) 
   ), open && /* @__PURE__ */ React.createElement(
     "div",
     {
-      className: mobilePos ? "fixed overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg z-50" : "absolute z-20 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg",
-      style: mobilePos ? { top: mobilePos.top, left: mobilePos.left, width: mobilePos.width, maxHeight: mobilePos.maxHeight } : void 0
+      className: "absolute z-20 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg"
     },
     /* @__PURE__ */ React.createElement(
       "button",
