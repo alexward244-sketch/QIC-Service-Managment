@@ -4711,7 +4711,17 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
       className: "text-xs px-2.5 py-1 rounded-md border border-[#a8532a]/40 text-[#a8532a] hover:bg-white/40 font-medium whitespace-nowrap"
     },
     "Review"
-  )), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Open Work Orders", value: openWorkOrders.length, onClick: () => onGoToTab("workorders") }), /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => onGoToTab("propane"),
+      className: `sm:hidden w-full text-left rounded-xl border p-5 mb-4 transition ${pendingPropaneCount > 0 ? "border-[#a8532a]/30 bg-[#F5E3D9]" : "border-[#E2DED5] bg-[#FFFDFA]"}`
+    },
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold uppercase tracking-wider text-[#75716A]" }, "Pending Propane"), /* @__PURE__ */ React.createElement("span", { className: "text-xl text-[#75716A]" }, "→")),
+    /* @__PURE__ */ React.createElement("div", { className: `font-serif text-5xl font-bold mt-1 ${pendingPropaneCount > 0 ? "text-[#a8532a]" : "text-[#1E1A13]"}` }, pendingPropaneCount),
+    /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#75716A] mt-1" }, pendingPropaneSubtitle)
+  ), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Open Work Orders", value: openWorkOrders.length, onClick: () => onGoToTab("workorders") }), /* @__PURE__ */ React.createElement(
     StatCard,
     {
       label: "Overdue",
@@ -4731,13 +4741,13 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
     label: "Sign-Ups Needing Review",
     value: signupsNeedingReview,
     onClick: goToReview
-  }), (!allowedTabKeys || allowedTabKeys.has("propane")) && /* @__PURE__ */ React.createElement(StatCard, {
+  }), (!allowedTabKeys || allowedTabKeys.has("propane")) && /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block" }, /* @__PURE__ */ React.createElement(StatCard, {
     label: "Pending Propane",
     value: pendingPropaneCount,
     tone: pendingPropaneCount > 0 ? "text-[#a8532a]" : void 0,
     subtitle: pendingPropaneSubtitle,
     onClick: () => onGoToTab("propane")
-  })), /* @__PURE__ */ React.createElement("div", { className: "grid lg:grid-cols-3 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Work Orders"), recentWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No work orders yet.") : /* @__PURE__ */ React.createElement("div", null, recentWorkOrders.map((w) => {
+  }))), /* @__PURE__ */ React.createElement("div", { className: "grid lg:grid-cols-3 gap-4" }, /* @__PURE__ */ React.createElement("div", { className: "lg:col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Recent Work Orders"), recentWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No work orders yet.") : /* @__PURE__ */ React.createElement("div", null, recentWorkOrders.map((w) => {
     const site = db.sites.find((s) => s.id === w.siteId);
     const cottage = db.cottages.find((c) => c.id === w.cottageId);
     const where = site ? `Site ${site.number}` : cottage ? cottage.name : "\u2014";
