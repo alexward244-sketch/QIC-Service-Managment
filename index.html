@@ -1100,7 +1100,7 @@ function useDb() {
   }, []);
   const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [] } : null;
   const persist = useCallback(async (next) => {
-    const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, ...rest } = next;
+    const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, ...rest } = next;
     setMainData(rest);
     const attempt = () => DOC_REF.set(rest);
     lastAttempt.current = attempt;
