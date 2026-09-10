@@ -9905,16 +9905,22 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
   const statusAccent = isDone ? "#377249" : "#3B6E91";
   const checkedOptions = WINTERIZING_OPTIONS.filter((opt) => request.options && request.options[opt.key]);
   const gateItems = checkedOptions.filter((opt) => !opt.gateExempt);
+  const anodeRodRequested = Boolean(request.options && request.options.anodeRod);
+  const anodeRodReplaced = Boolean(request.anodeRodReplacedAt);
   // Mobile-only completion gate: on phones, staff check off each customer-requested
   // task (kept in local component state \u2014 never saved) before Mark Winterized
-  // unlocks. Items marked gateExempt (anode rod replacement, key left at reception)
-  // are asks/notes rather than guaranteed tasks \u2014 shown as badges, never required.
+  // unlocks. keyAtReception is gateExempt \u2014 an ask/note rather than a guaranteed
+  // task \u2014 shown as a badge, never required. The anode rod also isn't required,
+  // but still shows in this checklist (tapping it persists anodeRodReplacedAt and
+  // triggers auto-invoicing immediately, same as before) since it's still something
+  // worth tracking here.
   // On desktop (or when there's nothing gate-worthy to check off), the checkbox
   // still toggles completion instantly, exactly as before.
   const isMobile = useIsMobile();
   const [confirming, setConfirming] = useState(false);
   const [checkedLocal, setCheckedLocal] = useState(() => /* @__PURE__ */ new Set());
-  const needsGate = isMobile && gateItems.length > 0;
+  const needsGate = isMobile && (gateItems.length > 0 || anodeRodRequested && !anodeRodReplaced);
+  const inlineOptions = isMobile ? checkedOptions.filter((opt) => opt.key !== "anodeRod") : checkedOptions;
   const handleToggleChange = () => {
     if (readOnly) return;
     if (!isDone && needsGate) {
@@ -9943,7 +9949,17 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
     },
     /* @__PURE__ */ React.createElement("span", { className: `w-5 h-5 rounded flex-shrink-0 border-2 flex items-center justify-center ${checkedLocal.has(opt.key) ? "bg-[#377249] border-[#377249]" : "bg-[#FFFDFA] border-[#C7C2B8]"}` }, checkedLocal.has(opt.key) && /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-3 h-3", fill: "none", stroke: "#F9F5EC", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))),
     /* @__PURE__ */ React.createElement("span", { className: `text-sm ${checkedLocal.has(opt.key) ? "text-[#28633C] line-through" : "text-[#1E1A13]"}` }, opt.label)
-  ))), /* @__PURE__ */ React.createElement(
+  )), anodeRodRequested && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      disabled: anodeRodReplaced,
+      onClick: () => onAnodeRodReplaced(request),
+      className: `w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-md border ${anodeRodReplaced ? "bg-[#DDF1E1] border-[#377249]/40" : "bg-[#FBEEDA] border-[#e0bfa6]"}`
+    },
+    /* @__PURE__ */ React.createElement("span", { className: `w-5 h-5 rounded flex-shrink-0 border-2 flex items-center justify-center ${anodeRodReplaced ? "bg-[#377249] border-[#377249]" : "bg-[#FFFDFA] border-[#C7C2B8]"}` }, anodeRodReplaced && /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-3 h-3", fill: "none", stroke: "#F9F5EC", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))),
+    /* @__PURE__ */ React.createElement("span", { className: `text-sm ${anodeRodReplaced ? "text-[#28633C] line-through" : "text-[#1E1A13]"}` }, anodeRodReplaced ? "Anode rod replaced — invoiced" : "Replace the anode rod (optional — tap when done)")
+  )), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -9957,28 +9973,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
     allLocalChecked ? "Mark Winterized" : `Mark Winterized (${checkedLocal.size}/${gateItems.length} checked)`
   )) : null;
   const canEmail = isDone && customer && customer.email && !readOnly;
-  const alreadyEmailed = Boolean(request.completionEmailedAt);
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
-    "div",
-    {
-      className: `flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-3 px-4 py-4 sm:py-3 hover:bg-[#F1EEE9] transition rounded-xl sm:rounded-none border sm:border-0 border-[#E2DED5] border-l-4 border-l-[${statusAccent}] ${isDone ? "bg-[#DDF1E1]/40" : "bg-[#FFFDFA]"}`
-    },
-    selectMode && /* @__PURE__ */ React.createElement("input", {
-      type: "checkbox",
-      checked: Boolean(selected),
-      onChange: () => onToggleSelect(request.id),
-      className: "w-4 h-4 accent-[#C1652F] flex-shrink-0"
-    }),
-    /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-4 sm:gap-3 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
-      "input",
-      {
-        type: "checkbox",
-        checked: isDone,
-        disabled: readOnly,
-        onChange: handleToggleChange,
-        className: "w-7 h-7 sm:w-5 sm:h-5 accent-[#377249] flex-shrink-0"
-      }
-    ), /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-base sm:text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, cottage ? cottage.name : "Unknown cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-xs text-[#75716A] flex flex-wrap gap-x-2" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), customer && !customer.email && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "No email on file")), checkedOptions.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "flex flex-wrap gap-1.5 sm:gap-1 mt-1.5 sm:mt-1" }, checkedOptions.map((opt) => {
+  const nameBlock = /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-base sm:text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, cottage ? cottage.name : "Unknown cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-xs text-[#75716A] flex flex-wrap gap-x-2" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), customer && !customer.email && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "No email on file")), inlineOptions.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "flex flex-wrap gap-1.5 sm:gap-1 mt-1.5 sm:mt-1" }, inlineOptions.map((opt) => {
       if (opt.key === "anodeRod") {
         const replaced = Boolean(request.anodeRodReplacedAt);
         return /* @__PURE__ */ React.createElement(
@@ -10000,7 +9995,30 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
         key: opt.key,
         className: `text-xs sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium ${opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}`
       }, opt.label);
-    })))),
+    })));
+  const toggleArea = isMobile ? /* @__PURE__ */ React.createElement("div", { onClick: readOnly ? void 0 : handleToggleChange, className: `flex items-center gap-4 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, nameBlock) : /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-3 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
+      "input",
+      {
+        type: "checkbox",
+        checked: isDone,
+        disabled: readOnly,
+        onChange: handleToggleChange,
+        className: "w-7 h-7 sm:w-5 sm:h-5 accent-[#377249] flex-shrink-0"
+      }
+    ), nameBlock);
+  const alreadyEmailed = Boolean(request.completionEmailedAt);
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      className: `flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-3 px-4 py-4 sm:py-3 hover:bg-[#F1EEE9] transition rounded-xl sm:rounded-none border sm:border-0 border-[#E2DED5] border-l-4 border-l-[${statusAccent}] ${isDone ? "bg-[#DDF1E1]/40" : "bg-[#FFFDFA]"}`
+    },
+    selectMode && /* @__PURE__ */ React.createElement("input", {
+      type: "checkbox",
+      checked: Boolean(selected),
+      onChange: () => onToggleSelect(request.id),
+      className: "w-4 h-4 accent-[#C1652F] flex-shrink-0"
+    }),
+    toggleArea,
     /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap sm:flex-nowrap items-center gap-3 flex-shrink-0" }, alreadyEmailed && /* @__PURE__ */ React.createElement("span", { className: "text-xs sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C] whitespace-nowrap" }, "Emailed \u2713"), !alreadyEmailed && emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), !alreadyEmailed && emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), canEmail && !alreadyEmailed && /* @__PURE__ */ React.createElement("button", {
       onClick: () => onEmailCustomer(request),
       disabled: emailStatus === "sending",
