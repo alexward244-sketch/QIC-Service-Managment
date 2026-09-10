@@ -817,6 +817,21 @@ function useCurrentActor() {
   const pinName = React.useContext(PinNameContext);
   return pinName || email || "Unknown";
 }
+function useIsMobile() {
+  const query = "(max-width: 639px)";
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const handler = (e) => setIsMobile(e.matches);
+    if (mql.addEventListener) mql.addEventListener("change", handler);
+    else mql.addListener(handler);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", handler);
+      else mql.removeListener(handler);
+    };
+  }, []);
+  return isMobile;
+}
 const PIN_IDLE_MS = 30 * 60 * 1e3;
 function usePinIdentity(required, emailKey) {
   const storageKey = `pinIdentity:${emailKey || ""}`;
@@ -4018,6 +4033,32 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
 }
 
+function InvoiceCard({ inv, db, taxRate, emailStatus, onEdit, onPrint, onInfoSheet, onEmail, onMarkPaidInFull, onMarkPaidInAdvance, onDelete }) {
+  const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
+  const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
+  const { total } = computeQuoteTotals(inv, effectiveTaxRate);
+  const balance = total - (Number(inv.depositAmount) || 0);
+  const status = invoiceStatus(inv, taxRate);
+  const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
+  const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
+  const es = emailStatus[inv.id];
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, inv.invoiceNumber), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+    isPaid: !!inv.paidInAdvanceMethod,
+    method: inv.paidInAdvanceMethod,
+    options: ADVANCE_PAYMENT_METHODS,
+    showLabel: true,
+    compactLabel: true,
+    onSelect: (m) => onMarkPaidInAdvance(inv, m)
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Total ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(total))), status !== "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Balance ", /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, formatPrice(balance)))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, status !== "Paid" && /* @__PURE__ */ React.createElement("button", { onClick: () => onMarkPaidInFull(inv), className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap" }, "Mark Paid in Full"), EMAIL_ENABLED && (customer == null ? void 0 : customer.email) && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => onEmail(inv),
+      disabled: es === "sending",
+      className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap disabled:opacity-50"
+    },
+    es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
+  ), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onInfoSheet(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Info Sheet"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(inv), className: "text-[#a8532a] hover:underline text-xs py-2" }, "Delete")));
+}
 function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -4133,10 +4174,10 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     value: formatPrice(totalOutstanding),
     tone: totalOutstanding > 0 ? "text-[#a8532a]" : "text-[#28633C]"
   }));
-  const table = invoices.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, {
+  const desktopTable = invoices.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, {
     text: "No invoices yet.",
     action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Create an invoice")
-  }) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No invoices match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Invoice #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Paid in Advance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Total"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Balance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-56" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((inv) => {
+  }) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No invoices match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Invoice #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Paid in Advance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Total"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Balance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-56" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((inv) => {
     const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
     const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
     const { total } = computeQuoteTotals(inv, effectiveTaxRate);
@@ -4168,6 +4209,21 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
       es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
     ), status !== "Paid" && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => setPaidMethodPrompt(inv) }, "Mark Paid in Full"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(inv.id) }, "Delete"))));
   }))));
+  const mobileCards = invoices.length === 0 || filtered.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "sm:hidden space-y-3" }, filtered.map((inv) => /* @__PURE__ */ React.createElement(InvoiceCard, {
+    key: inv.id,
+    inv,
+    db,
+    taxRate,
+    emailStatus,
+    onEdit: (i) => setModal({ mode: "edit", data: i }),
+    onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
+    onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
+    onEmail: (i) => setSendConfirm(i),
+    onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
+    onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
+    onDelete: (i) => confirm.ask(i.id)
+  })));
+  const table = /* @__PURE__ */ React.createElement(React.Fragment, null, desktopTable, mobileCards);
   const modalEl = modal ? /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Invoice" : "Edit Invoice", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(InvoiceForm, {
     initial: modal.data,
     sites: db.sites,
@@ -4402,7 +4458,7 @@ function StatCard({ label, value, onClick, tone }) {
       className: `text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 ${onClick ? "hover:border-[#377249]/40 transition cursor-pointer" : "cursor-default"}`
     },
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1.5" }, label),
-    /* @__PURE__ */ React.createElement("div", { className: `text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
+    /* @__PURE__ */ React.createElement("div", { className: `text-xl sm:text-2xl font-serif font-bold ${tone || "text-[#1E1A13]"}` }, value)
   );
 }
 function DashboardSearch({ db, onJump }) {
@@ -4576,7 +4632,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
         "button",
         {
           onClick: () => onGoToTab("workorders"),
-          className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap flex-shrink-0"
+          className: "min-h-[34px] flex items-center text-xs sm:text-[11px] px-3 sm:px-2.5 py-1.5 sm:py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap flex-shrink-0"
         },
         "View \u2192"
       ));
@@ -4585,7 +4641,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
       "button",
       {
         onClick: () => completeAppointment(a),
-        className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap flex-shrink-0"
+        className: "min-h-[34px] flex items-center text-xs sm:text-[11px] px-3 sm:px-2.5 py-1.5 sm:py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap flex-shrink-0"
       },
       a.kind === "delivery" ? "Delivered" : "Completed"
     ));
@@ -8026,33 +8082,33 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), cottage && /* @__PURE__ */ React.createElement("span", null, cottage.name), wo.assignedTo && /* @__PURE__ */ React.createElement("span", null, "Assigned: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("span", null, wo.laborHours, " hrs \xB7 ", wo.laborRateType)),
     wo.description && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#4B4740] mt-2 leading-relaxed" }, wo.description),
     isDone && wo.completedDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-2 italic" }, "Completed ", wo.completedDate),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: "flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onViewNotes(wo),
-        className: "px-2.5 py-1 rounded-full bg-[#377249] text-white font-semibold hover:bg-[#135C30] whitespace-nowrap"
+        className: "px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-full bg-[#377249] text-white font-semibold hover:bg-[#135C30] whitespace-nowrap"
       },
       "View"
-    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onViewNotes(wo) }, "Notes", wo.notes && wo.notes.length > 0 ? ` (${wo.notes.length})` : ""), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1.5 sm:py-0", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onViewNotes(wo) }, "Notes", wo.notes && wo.notes.length > 0 ? ` (${wo.notes.length})` : ""), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
       "button",
       {
-        className: "text-[#377249] hover:underline disabled:opacity-50",
+        className: "text-[#377249] hover:underline disabled:opacity-50 py-1.5 sm:py-0",
         disabled: smsStatus === "sending",
         onClick: () => onText(wo, assignedStaff)
       },
       smsStatus === "sending" ? "Texting\u2026" : smsStatus === "sent" ? "Texted \u2713" : smsStatus === "error" ? "Failed \u2014 retry" : "Text"
-    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(wo) }, "Delete")), !isDone ? /* @__PURE__ */ React.createElement(
+    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1.5 sm:py-0", onClick: () => onDelete(wo) }, "Delete")), !isDone ? /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onAdvance(wo),
-        className: "text-[11px] px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium"
+        className: "w-full sm:w-auto flex items-center justify-center min-h-[42px] sm:min-h-0 text-sm sm:text-[11px] px-4 sm:px-2.5 py-2.5 sm:py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold sm:font-medium"
       },
       wo.status === "Open" ? "Start \u2192" : "Mark Complete \u2192"
     ) : onCreateInvoice && !wo.salesSourced && !hasInvoice && /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => onCreateInvoice(wo),
-        className: "text-[11px] px-2.5 py-1 rounded-full bg-[#C1652F]/10 text-[#C1652F] hover:bg-[#C1652F]/20 font-medium whitespace-nowrap"
+        className: "w-full sm:w-auto flex items-center justify-center min-h-[42px] sm:min-h-0 text-sm sm:text-[11px] px-4 sm:px-2.5 py-2.5 sm:py-1 rounded-full bg-[#C1652F]/10 text-[#C1652F] hover:bg-[#C1652F]/20 font-semibold sm:font-medium whitespace-nowrap"
       },
       "Create Invoice \u2192"
     ))
@@ -8977,7 +9033,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
         type: "number",
         min: "0",
         step: "1",
-        className: inputCls + " w-16",
+        className: inputCls + " w-20 sm:w-16 text-center",
         value: pu.quantity,
         onChange: (e) => updatePartQty(pu.partId, e.target.value)
       }
@@ -8986,7 +9042,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       {
         type: "button",
         onClick: () => removePartUsed(pu.partId),
-        className: "text-[#a8532a] hover:bg-[#F5E3D9] w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0",
+        className: "text-[#a8532a] hover:bg-[#F5E3D9] w-9 h-9 sm:w-7 sm:h-7 rounded-full flex items-center justify-center flex-shrink-0",
         "aria-label": "Remove part"
       },
       "\u2715"
@@ -8997,7 +9053,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       const priceWithTax = (Number(part == null ? void 0 : part.price) || 0) * (1 + (Number(taxRate) || 0) / 100);
       return sum + priceWithTax * (Number(pu.quantity) || 0);
     }, 0)
-  ))), /* @__PURE__ */ React.createElement("div", { className: "w-72" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  ))), /* @__PURE__ */ React.createElement("div", { className: "w-full sm:w-72" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: parts.map((p) => ({ value: p.id, label: `${p.name} \u2014 ${formatPrice(Number(p.price) * (1 + (Number(taxRate) || 0) / 100))} incl. tax${p.trackQuantity === false ? "" : ` (${p.quantity} in stock)`}`, searchText: `${p.name} ${p.sku || ""}` })),
     value: "",
     onChange: (val) => {
@@ -9706,16 +9762,65 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
     "Save Sign-Up"
   )));
 }
-function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode, selected, onEdit, onDelete, onToggle, onToggleSelect, onPrint }) {
+function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode, selected, onEdit, onDelete, onToggle, onDirectComplete, onToggleSelect, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
   const isDone = Boolean(request.completed);
   const checkedOptions = WINTERIZING_OPTIONS.filter((opt) => request.options && request.options[opt.key]);
-  return /* @__PURE__ */ React.createElement(
+  // Mobile-only completion gate: on phones, staff check off each customer-requested
+  // item (kept in local component state \u2014 never saved) before Mark Winterized
+  // unlocks. On desktop (or when there's nothing to check off), the checkbox still
+  // toggles completion instantly, exactly as before.
+  const isMobile = useIsMobile();
+  const [confirming, setConfirming] = useState(false);
+  const [checkedLocal, setCheckedLocal] = useState(() => /* @__PURE__ */ new Set());
+  const needsGate = isMobile && checkedOptions.length > 0;
+  const handleToggleChange = () => {
+    if (readOnly) return;
+    if (!isDone && needsGate) {
+      setCheckedLocal(/* @__PURE__ */ new Set());
+      setConfirming(true);
+    } else {
+      onToggle(request);
+    }
+  };
+  const toggleLocalItem = (key) => {
+    setCheckedLocal((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const allLocalChecked = checkedOptions.length > 0 && checkedOptions.every((opt) => checkedLocal.has(opt.key));
+  const confirmModal = confirming ? /* @__PURE__ */ React.createElement(Modal, { title: `Confirm Winterizing \u2014 ${cottage ? cottage.name : "Cottage"}`, onClose: () => setConfirming(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Check off each item as you complete it. This is for your reference only \u2014 the customer never sees it."), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-4" }, checkedOptions.map((opt) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: opt.key,
+      type: "button",
+      onClick: () => toggleLocalItem(opt.key),
+      className: `w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-md border ${checkedLocal.has(opt.key) ? "bg-[#DDF1E1] border-[#377249]/40" : "bg-[#FFFDFA] border-[#E2DED5]"}`
+    },
+    /* @__PURE__ */ React.createElement("span", { className: `w-5 h-5 rounded flex-shrink-0 border-2 flex items-center justify-center ${checkedLocal.has(opt.key) ? "bg-[#377249] border-[#377249]" : "bg-[#FFFDFA] border-[#C7C2B8]"}` }, checkedLocal.has(opt.key) && /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-3 h-3", fill: "none", stroke: "#F9F5EC", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))),
+    /* @__PURE__ */ React.createElement("span", { className: `text-sm ${checkedLocal.has(opt.key) ? "text-[#28633C] line-through" : "text-[#1E1A13]"}` }, opt.label)
+  ))), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      disabled: !allLocalChecked,
+      onClick: () => {
+        onDirectComplete(request);
+        setConfirming(false);
+      },
+      className: "w-full py-3 rounded-full text-sm font-semibold bg-[#377249] text-white disabled:bg-[#E2DED5] disabled:text-[#9A968D]"
+    },
+    allLocalChecked ? "Mark Winterized" : `Mark Winterized (${checkedLocal.size}/${checkedOptions.length} checked)`
+  )) : null;
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
     "div",
     {
-      className: `flex items-center justify-between gap-3 px-4 py-3 hover:bg-[#F1EEE9] transition ${isDone ? "bg-[#DDF1E1]/40" : "bg-[#FFFDFA]"}`
+      className: `flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 px-4 py-3 hover:bg-[#F1EEE9] transition ${isDone ? "bg-[#DDF1E1]/40" : "bg-[#FFFDFA]"}`
     },
     selectMode && /* @__PURE__ */ React.createElement("input", {
       type: "checkbox",
@@ -9723,21 +9828,21 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
       onChange: () => onToggleSelect(request.id),
       className: "w-4 h-4 accent-[#C1652F] flex-shrink-0"
     }),
-    /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-3 min-w-0 flex-1 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-3 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
       "input",
       {
         type: "checkbox",
         checked: isDone,
         disabled: readOnly,
-        onChange: () => !readOnly && onToggle(request),
-        className: "w-5 h-5 accent-[#377249] flex-shrink-0"
+        onChange: handleToggleChange,
+        className: "w-6 h-6 sm:w-5 sm:h-5 accent-[#377249] flex-shrink-0"
       }
     ), /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, cottage ? cottage.name : "Unknown cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), customer && !customer.email && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "No email on file")), checkedOptions.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "flex flex-wrap gap-1 mt-1" }, checkedOptions.map((opt) => /* @__PURE__ */ React.createElement("span", {
       key: opt.key,
       className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}`
     }, opt.label))))),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDelete(request) }, "Delete")))
-  );
+    /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap sm:flex-nowrap items-center gap-3 flex-shrink-0" }, emailStatus === "sending" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#75716A]" }, "Emailing\u2026"), emailStatus === "sent" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#28633C]" }, "Email sent"), emailStatus === "error" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#a8532a]" }, "Email failed"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 sm:gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1.5 sm:py-0", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1.5 sm:py-0", onClick: () => onDelete(request) }, "Delete")))
+  ), confirmModal);
 }
 function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup }) {
   const [filter, setFilter] = useState("");
@@ -9878,6 +9983,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     onEdit: (req) => setModal({ mode: "edit", data: req }),
     onDelete: (req) => confirm.ask(req.id),
     onToggle: requestToggle,
+    onDirectComplete: toggleComplete,
     onToggleSelect: toggleSelect,
     onPrint: printOne
   });
