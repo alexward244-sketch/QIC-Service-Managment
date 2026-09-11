@@ -11982,8 +11982,467 @@ const TABS = [
   { key: "cottages", label: "Cottages", group: "accounting", hidden: true },
   { key: "sites", label: "Sites", group: "accounting", hidden: true }
 ];
+const FIELD_TABS = [
+  { key: "today", label: "Today" },
+  { key: "jobs", label: "Jobs" },
+  { key: "runs", label: "Runs" },
+  { key: "park", label: "Park" },
+  { key: "more", label: "More" }
+];
+function FieldHeader({ title, subtitle, online }) {
+  return React.createElement(
+    "div",
+    { className: "flex-shrink-0 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 pb-2.5 flex items-start justify-between gap-3", style: { paddingTop: "max(14px, env(safe-area-inset-top))" } },
+    React.createElement(
+      "div",
+      { className: "min-w-0" },
+      React.createElement("h1", { className: "font-serif text-xl text-[#377249] truncate" }, title),
+      subtitle && React.createElement("p", { className: "text-[11.5px] text-[#75716A] mt-0.5 truncate" }, subtitle)
+    ),
+    React.createElement(
+      "span",
+      { className: "flex-shrink-0 min-h-[34px] flex items-center gap-1.5 rounded-full border border-[#E2DED5] bg-[#F9F5EC] px-2.5 py-1.5 text-[11px] font-semibold text-[#4B4740] whitespace-nowrap" },
+      React.createElement("span", { className: `w-[7px] h-[7px] rounded-full flex-shrink-0 ${online ? "bg-[#377249]" : "bg-[#9A6B1F]"}` }),
+      online ? "Synced" : "Offline"
+    )
+  );
+}
+function FieldOfflineBanner() {
+  return React.createElement(
+    "div",
+    { className: "flex-shrink-0 bg-[#FBEEDA] border-b border-[#e8d7b4] px-4 py-2" },
+    React.createElement("p", { className: "text-[11.5px] font-medium text-[#9A6B1F]" }, "Offline — changes are saved on this device and will sync when you're back in range.")
+  );
+}
+function FieldTabBar({ screen, onSelect }) {
+  return React.createElement(
+    "div",
+    { className: "flex-shrink-0 bg-[#FFFDFA] border-t border-[#E2DED5] flex px-1.5 pt-2", style: { paddingBottom: "max(10px, env(safe-area-inset-bottom))" } },
+    FIELD_TABS.map((t) => {
+      const active = screen === t.key || t.key === "jobs" && screen === "job";
+      return React.createElement(
+        "button",
+        { key: t.key, type: "button", onClick: () => onSelect(t.key), className: "flex-1 min-h-[52px] flex flex-col items-center justify-center gap-1" },
+        React.createElement("span", { className: `w-[9px] h-[9px] rounded-[3px] ${active ? "bg-[#377249]" : "bg-[#E2DED5]"}` }),
+        React.createElement("span", { className: `text-[10.5px] font-semibold ${active ? "text-[#28633C]" : "text-[#75716A]"}` }, t.label)
+      );
+    })
+  );
+}
+function FieldStatCard({ label, value, color, onClick }) {
+  return React.createElement(
+    "button",
+    { type: "button", onClick, className: "text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3 min-h-[76px]" },
+    React.createElement("div", { className: "text-[10px] font-semibold uppercase tracking-[0.06em] text-[#75716A]" }, label),
+    React.createElement("div", { className: "font-serif text-[28px] leading-[1.1] mt-1", style: { color } }, value)
+  );
+}
+function fieldJobLocation(wo, db) {
+  const site = db.sites.find((s) => s.id === wo.siteId);
+  const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : null;
+  return [site ? `Site ${site.number}` : null, customer ? customer.name : null, cottage ? cottage.name : null].filter(Boolean).join(" \xB7 ");
+}
+function fieldJobAccent(wo) {
+  if (wo.status === "Completed") return "#377249";
+  if (isOverdue(wo) || wo.priority === "Urgent") return "#a8532a";
+  if (wo.priority === "High") return "#9A6B1F";
+  if (wo.priority === "Low") return "#9A968D";
+  return "#3E7A72";
+}
+function FieldJobRow({ wo, db, onOpen }) {
+  return React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: onOpen,
+      className: "w-full text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3.5 mb-2.5",
+      style: { borderLeft: `4px solid ${fieldJobAccent(wo)}` }
+    },
+    React.createElement(
+      "div",
+      { className: "flex items-start justify-between gap-2" },
+      React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, wo.title),
+      React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)
+    ),
+    React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-1 truncate" }, fieldJobLocation(wo, db) || "—")
+  );
+}
+function FieldJobCard({ wo, db, onOpen }) {
+  const isDone = wo.status === "Completed";
+  const overdue = isOverdue(wo);
+  return React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: onOpen,
+      className: `w-full text-left rounded-xl p-4 mb-3 shadow-[0_1px_2px_rgba(30,26,19,.04)] ${isDone ? "bg-[#F1EEE9] border border-[#EEEBE5]" : "bg-[#FFFDFA] border border-[#E2DED5]"}`,
+      style: { borderLeft: `4px solid ${fieldJobAccent(wo)}` }
+    },
+    React.createElement(
+      "div",
+      { className: "flex items-start justify-between gap-2" },
+      React.createElement("span", { className: "text-base font-bold text-[#1E1A13]" }, wo.title),
+      wo.priority && React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority)
+    ),
+    React.createElement("div", { className: "text-[13px] text-[#4B4740] mt-1 truncate" }, fieldJobLocation(wo, db) || "—"),
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between gap-2 mt-2.5" },
+      React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status),
+      React.createElement("span", { className: `text-[11.5px] flex-shrink-0 ${overdue ? "text-[#a8532a]" : "text-[#75716A]"}` }, wo.date || "")
+    )
+  );
+}
+function FieldTodayScreen({ db, actor, onOpenJob, onSeeAllJobs, onGoToRuns }) {
+  const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && (w.assignedTo || "").trim().toLowerCase() === (actor || "").trim().toLowerCase());
+  const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
+  const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
+  const overdueCount = db.workOrders.filter(isOverdue).length;
+  const activePropane = (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank);
+  const todayKey = todayISO();
+  const overduePropane = activePropane.filter((r) => r.requestedDate < todayKey);
+  const tenAmPropane = activePropane.filter((r) => r.requestedDate === todayKey && r.run === "10am");
+  const fourPmPropane = activePropane.filter((r) => r.requestedDate === todayKey && r.run === "4pm");
+  const pendingPropaneCount = overduePropane.length + tenAmPropane.length + fourPmPropane.length;
+  const pendingPropaneParts = [
+    overduePropane.length > 0 && `${overduePropane.length} overdue`,
+    tenAmPropane.length > 0 && `${tenAmPropane.length} on 10am run`,
+    fourPmPropane.length > 0 && `${fourPmPropane.length} on 4pm run`
+  ].filter(Boolean);
+  const pendingPropaneSubtitle = pendingPropaneParts.length > 0 ? pendingPropaneParts.join(" \xB7 ") : "All caught up";
+  const todaysJobs = openWorkOrders.slice().sort((a, b) => {
+    const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
+    const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
+    if (aFlag !== bFlag) return aFlag - bFlag;
+    return (a.date || "").localeCompare(b.date || "");
+  }).slice(0, 5);
+  const recentActivity = (db.activityLog || []).slice(0, 6);
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "grid grid-cols-3 gap-2 mb-3.5" },
+      React.createElement(FieldStatCard, { label: "My Jobs", value: myOpenJobs.length, color: "#1E1A13", onClick: () => onSeeAllJobs() }),
+      React.createElement(FieldStatCard, { label: "Urgent", value: urgentCount, color: urgentCount > 0 ? "#a8532a" : "#1E1A13", onClick: () => onSeeAllJobs() }),
+      React.createElement(FieldStatCard, { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "#a8532a" : "#1E1A13", onClick: () => onSeeAllJobs() })
+    ),
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: onGoToRuns,
+        className: `w-full text-left rounded-[14px] border p-4 mb-4 ${pendingPropaneCount > 0 ? "border-[rgba(168,83,42,.3)] bg-[#F5E3D9]" : "border-[#E2DED5] bg-[#FFFDFA]"}`
+      },
+      React.createElement(
+        "div",
+        { className: "flex items-center justify-between" },
+        React.createElement("span", { className: "text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A]" }, "Pending Propane"),
+        React.createElement("span", { className: "text-[#75716A]" }, "→")
+      ),
+      React.createElement("div", { className: `font-serif text-[44px] leading-none mt-1 ${pendingPropaneCount > 0 ? "text-[#a8532a]" : "text-[#1E1A13]"}` }, pendingPropaneCount),
+      React.createElement("div", { className: "text-[13px] text-[#75716A] mt-1.5" }, pendingPropaneSubtitle)
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between mb-2" },
+      React.createElement("h2", { className: "text-[15px] font-bold text-[#1E1A13]" }, "Today's Jobs"),
+      React.createElement("button", { type: "button", onClick: () => onSeeAllJobs(), className: "text-xs font-semibold text-[#377249]" }, "See all")
+    ),
+    todaysJobs.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Nothing open right now.") : React.createElement("div", { className: "mb-5" }, todaysJobs.map((w) => React.createElement(FieldJobRow, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) }))),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" },
+      React.createElement("h3", { className: "text-[15px] font-bold text-[#1E1A13] mb-2" }, "Recent Activity"),
+      recentActivity.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing yet.") : recentActivity.map((e) => React.createElement(
+        "div",
+        { key: e.id, className: "flex items-center justify-between gap-3 py-1.5 border-b border-[#EEEBE5] last:border-b-0" },
+        React.createElement("span", { className: "text-[12.5px] text-[#4B4740] truncate" }, e.summary),
+        React.createElement("span", { className: "text-[11px] text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))
+      ))
+    )
+  );
+}
+function FieldJobsScreen({ db, filter, onFilter, onOpenJob }) {
+  const filtered = db.workOrders.filter((w) => w.status === filter).sort((a, b) => {
+    const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
+    const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
+    if (aFlag !== bFlag) return aFlag - bFlag;
+    return (a.date || "").localeCompare(b.date || "");
+  });
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "flex gap-2 mb-4" },
+      STATUS.map((s) => React.createElement(
+        "button",
+        {
+          key: s,
+          type: "button",
+          onClick: () => onFilter(s),
+          className: `flex-1 min-h-[40px] rounded-full text-[12.5px] font-semibold border ${filter === s ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "bg-[#FFFDFA] text-[#4B4740] border-[#E2DED5]"}`
+        },
+        s
+      ))
+    ),
+    filtered.length === 0 ? React.createElement(EmptyState, { text: `No ${filter.toLowerCase()} jobs.` }) : filtered.map((w) => React.createElement(FieldJobCard, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) }))
+  );
+}
+function FieldAddPartModal({ db, onAdd, onClose }) {
+  const [partId, setPartId] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const part = db.parts.find((p) => p.id === partId);
+  const qtyNum = Number(quantity);
+  const valid = !!part && Number.isFinite(qtyNum) && qtyNum > 0;
+  return React.createElement(
+    Modal,
+    { title: "Add Part From Truck Stock", onClose },
+    React.createElement(Field, { label: "Part" }, React.createElement(SearchableSelect, {
+      options: db.parts.map((p) => ({ value: p.id, label: `${p.name}${p.sku ? " — " + p.sku : ""}`, searchText: `${p.name} ${p.sku || ""}` })),
+      value: partId,
+      onChange: setPartId,
+      placeholder: "Search parts…"
+    })),
+    React.createElement(Field, { label: "Quantity" }, React.createElement("input", { type: "number", min: "1", className: inputCls, value: quantity, onChange: (e) => setQuantity(e.target.value) })),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2 mt-4" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      React.createElement("button", { type: "button", disabled: !valid, onClick: () => onAdd(partId, qtyNum), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Add Part")
+    )
+  );
+}
+function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, onCreateInvoice, onGoToSiteMap, setToast }) {
+  const [addPartOpen, setAddPartOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  if (!wo) {
+    return React.createElement(EmptyState, { text: "That job is no longer available." });
+  }
+  const site = db.sites.find((s) => s.id === wo.siteId);
+  const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : null;
+  const changeJobStatus = (newStatus) => {
+    if (newStatus === wo.status) return;
+    const updated = { ...wo, status: newStatus };
+    let parts = db.parts;
+    if (newStatus === "Completed" && wo.status !== "Completed") {
+      updated.completedDate = todayISO();
+      updated.archived = false;
+      if (wo.partsUsed && wo.partsUsed.length) {
+        parts = db.parts.map((p) => {
+          const used = wo.partsUsed.find((pu) => pu.partId === p.id);
+          if (!used || p.trackQuantity === false) return p;
+          return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
+        });
+      }
+    } else if (wo.status === "Completed" && newStatus !== "Completed") {
+      updated.completedDate = null;
+      if (wo.partsUsed && wo.partsUsed.length) {
+        parts = db.parts.map((p) => {
+          const used = wo.partsUsed.find((pu) => pu.partId === p.id);
+          if (!used || p.trackQuantity === false) return p;
+          return { ...p, quantity: (Number(p.quantity) || 0) + (Number(used.quantity) || 0) };
+        });
+      }
+    }
+    const activityLog = addLog(db, actor, `Work order "${wo.title}" moved to ${newStatus}`);
+    persist({ ...db, parts, activityLog });
+    saveWorkOrder(updated);
+    setToast(newStatus === "Completed" ? "Marked complete" : newStatus === "In Progress" ? "Job started" : "Job reopened");
+  };
+  const primaryLabel = wo.status === "Open" ? "Start Job" : wo.status === "In Progress" ? "Mark Complete" : "Reopen Job";
+  const primaryNext = wo.status === "Open" ? "In Progress" : wo.status === "In Progress" ? "Completed" : "Open";
+  const updateBilling = (patch) => {
+    const nextLaborRateType = patch.laborRateType !== void 0 ? patch.laborRateType : wo.laborRateType || "N/A";
+    const nextLaborRate = (RATE_OPTIONS.find((r) => r.label === nextLaborRateType) || RATE_OPTIONS[1]).rate;
+    saveWorkOrder({ ...wo, ...patch, laborRateType: nextLaborRateType, laborRate: nextLaborRate });
+  };
+  const setPayment = (value) => {
+    const activityLog = addLog(db, actor, `Work order "${wo.title}" payment marked ${value || "not set"}`);
+    persist({ ...db, activityLog });
+    saveWorkOrder({ ...wo, paymentStatus: value });
+  };
+  const addPart = (partId, quantity) => {
+    const existing = (wo.partsUsed || []).find((pu) => pu.partId === partId);
+    const nextPartsUsed = existing ? (wo.partsUsed || []).map((pu) => pu.partId === partId ? { ...pu, quantity: (Number(pu.quantity) || 0) + quantity } : pu) : [...wo.partsUsed || [], { partId, quantity }];
+    saveWorkOrder({ ...wo, partsUsed: nextPartsUsed });
+    setAddPartOpen(false);
+    setToast("Part added");
+  };
+  const addNote = () => {
+    const text = noteText.trim();
+    if (!text) return;
+    const entry = { id: uid(), text, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    saveWorkOrder({ ...wo, notes: [entry, ...wo.notes || []] });
+    setNoteText("");
+    setToast("Note added");
+  };
+  const factRow = (label, value) => React.createElement(
+    "div",
+    { className: "flex items-center justify-between gap-3 py-2 border-b border-[#EEEBE5] last:border-b-0 text-sm" },
+    React.createElement("span", { className: "text-[#75716A]" }, label),
+    React.createElement("span", { className: "text-[#1E1A13] font-medium text-right" }, value || "—")
+  );
+  return React.createElement(
+    React.Fragment,
+    null,
+    addPartOpen && React.createElement(FieldAddPartModal, { db, onAdd: addPart, onClose: () => setAddPartOpen(false) }),
+    React.createElement("button", { type: "button", onClick: onBack, className: "text-[13px] font-semibold text-[#377249] mb-3" }, "← Work Orders"),
+    React.createElement("h1", { className: "font-serif text-[22px] text-[#1E1A13]" }, wo.title),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2 mt-1.5 mb-4" },
+      wo.priority && React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority),
+      React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)
+    ),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" },
+      factRow("Site", site ? `Site ${site.number}` : null),
+      factRow("Customer", customer ? customer.name : null),
+      factRow("Cottage", cottage ? cottage.name : null),
+      factRow("Work group", wo.workGroup),
+      factRow("Assigned", wo.assignedTo),
+      factRow("Scheduled", wo.date)
+    ),
+    React.createElement(
+      "div",
+      { className: "grid grid-cols-2 gap-2 mb-3" },
+      React.createElement("a", { href: customer && customer.phone ? `tel:${customer.phone}` : void 0, className: `min-h-[44px] flex items-center justify-center rounded-xl text-sm font-semibold border ${customer && customer.phone ? "border-[#E2DED5] text-[#377249]" : "border-[#E2DED5] text-[#9A968D] pointer-events-none"}` }, "Call customer"),
+      React.createElement("button", { type: "button", onClick: onGoToSiteMap, className: "min-h-[44px] rounded-xl text-sm font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Site map")
+    ),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" },
+      React.createElement("h3", { className: "text-sm font-bold text-[#1E1A13] mb-2" }, "Billing"),
+      React.createElement(
+        "div",
+        { className: "grid grid-cols-2 gap-3 mb-3" },
+        React.createElement(Field, { label: "Payment Status" }, React.createElement("select", { className: inputCls, value: wo.paymentStatus || "", onChange: (e) => setPayment(e.target.value) }, React.createElement("option", { value: "" }, "—"), PAYMENT_STATUS.map((p) => React.createElement("option", { key: p, value: p }, p)))),
+        React.createElement(Field, { label: "Labor Hours" }, React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: wo.laborHours != null ? wo.laborHours : "", onChange: (e) => updateBilling({ laborHours: Number(e.target.value) || 0 }) }))
+      ),
+      React.createElement(Field, { label: "Labor Rate" }, React.createElement("select", { className: inputCls, value: wo.laborRateType || "N/A", onChange: (e) => updateBilling({ laborRateType: e.target.value }) }, RATE_OPTIONS.map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label))))
+    ),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" },
+      React.createElement("h3", { className: "text-sm font-bold text-[#1E1A13] mb-2" }, "Parts Used"),
+      (wo.partsUsed || []).length === 0 ? React.createElement("p", { className: "text-xs text-[#9A968D] mb-2" }, "No parts logged yet.") : (wo.partsUsed || []).map((pu) => {
+        const part = db.parts.find((p) => p.id === pu.partId);
+        return React.createElement(
+          "div",
+          { key: pu.partId, className: "flex items-center justify-between gap-2 py-1.5 border-b border-[#EEEBE5] last:border-b-0 text-sm" },
+          React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"),
+          React.createElement("span", { className: "text-[#75716A]" }, "\xD7", pu.quantity)
+        );
+      }),
+      React.createElement("button", { type: "button", onClick: () => setAddPartOpen(true), className: "w-full min-h-[44px] mt-2 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ Add part from truck stock")
+    ),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-4" },
+      React.createElement("h3", { className: "text-sm font-bold text-[#1E1A13] mb-2" }, "Notes"),
+      (wo.notes || []).length === 0 ? React.createElement("p", { className: "text-xs text-[#9A968D] mb-2" }, "No notes yet.") : (wo.notes || []).map((n) => React.createElement(
+        "div",
+        { key: n.id, className: "bg-[#F1EEE9] rounded-lg px-3 py-2.5 mb-2" },
+        React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, n.text),
+        React.createElement("p", { className: "text-[10.5px] text-[#75716A] mt-1" }, n.author, " \xB7 ", timeAgo(n.ts))
+      )),
+      React.createElement(
+        "div",
+        { className: "flex gap-2 mt-2" },
+        React.createElement("input", { className: inputCls + " min-h-[44px]", placeholder: "Add a note…", value: noteText, onChange: (e) => setNoteText(e.target.value), onKeyDown: (e) => {
+          if (e.key === "Enter") addNote();
+        } }),
+        React.createElement("button", { type: "button", onClick: addNote, className: "min-h-[44px] px-4 rounded-lg bg-[#377249] text-white text-sm font-semibold flex-shrink-0" }, "Add")
+      )
+    ),
+    React.createElement("button", { type: "button", onClick: () => changeJobStatus(primaryNext), className: "w-full min-h-[54px] rounded-xl bg-[#377249] active:bg-[#28633C] text-white text-base font-bold mb-2" }, primaryLabel),
+    onCreateInvoice && React.createElement("button", { type: "button", onClick: () => onCreateInvoice(wo), className: "w-full min-h-[44px] rounded-xl text-sm font-semibold" + " bg-[rgba(193,101,47,.1)] border border-[rgba(193,101,47,.35)] text-[#C1652F]" }, "Create Invoice")
+  );
+}
+function FieldComingSoon({ label }) {
+  return React.createElement(
+    "div",
+    { className: "rounded-xl border border-dashed border-[#C7C2B8] bg-[#FFFDFA] p-6 text-center" },
+    React.createElement("p", { className: "text-sm font-semibold text-[#4B4740] mb-1" }, label),
+    React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Coming in a later update. Use the desktop view for this for now.")
+  );
+}
+function FieldApp({ db, persist, actor, saveWorkOrder, onCreateInvoice, onGoToDesktopTab }) {
+  const [screen, setScreen] = useState("today");
+  const [jobFilter, setJobFilter] = useState("Open");
+  const [jobId, setJobId] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine);
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+  const openJob = (id) => {
+    setJobId(id);
+    setScreen("job");
+  };
+  const goToJobs = () => {
+    setJobId(null);
+    setScreen("jobs");
+  };
+  const selectTab = (key) => {
+    setJobId(null);
+    setScreen(key);
+  };
+  const titles = {
+    today: ["Today", new Date().toLocaleDateString(void 0, { weekday: "long", day: "2-digit", month: "long" }) + (actor ? ` \xB7 ${actor}` : "")],
+    jobs: ["Work Orders", null],
+    job: ["Job Detail", null],
+    runs: ["Runs", null],
+    park: ["The Park", null],
+    more: ["More", null]
+  };
+  const [title, subtitle] = titles[screen] || ["QIC Field", null];
+  const wo = jobId ? db.workOrders.find((w) => w.id === jobId) : null;
+  return React.createElement(
+    "div",
+    { className: "h-[100dvh] flex flex-col bg-[#F9F5EC] text-[#1E1A13]" },
+    React.createElement(FieldHeader, { title, subtitle, online }),
+    !online && React.createElement(FieldOfflineBanner, null),
+    React.createElement(
+      "div",
+      { className: "flex-1 overflow-y-auto px-4 pt-3.5 pb-5" },
+      screen === "today" && React.createElement(FieldTodayScreen, { db, actor, onOpenJob: openJob, onSeeAllJobs: goToJobs, onGoToRuns: () => selectTab("runs") }),
+      screen === "jobs" && React.createElement(FieldJobsScreen, { db, filter: jobFilter, onFilter: setJobFilter, onOpenJob: openJob }),
+      screen === "job" && React.createElement(FieldJobDetailScreen, {
+        db,
+        persist,
+        actor,
+        wo,
+        saveWorkOrder,
+        onBack: goToJobs,
+        setToast,
+        onCreateInvoice: (order) => onCreateInvoice(order),
+        onGoToSiteMap: () => onGoToDesktopTab("map")
+      }),
+      (screen === "runs" || screen === "park" || screen === "more") && React.createElement(FieldComingSoon, { label: FIELD_TABS.find((t) => t.key === screen).label })
+    ),
+    toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
+    React.createElement(FieldTabBar, { screen, onSelect: selectTab })
+  );
+}
 function AppContent() {
   const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
+  const isMobileViewport = useIsMobile();
+  const [fieldModeOverride, setFieldModeOverride] = useState(
+    () => typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mode") : null
+  );
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
   const [mode, setMode] = useState("service");
@@ -12243,6 +12702,23 @@ function AppContent() {
     setTab("workorders");
     setMobileNavOpen(false);
   };
+  const fieldMode = fieldModeOverride === "field" ? true : fieldModeOverride === "desktop" ? false : isMobileViewport;
+  if (fieldMode) {
+    return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(FieldApp, {
+      db,
+      persist,
+      actor,
+      saveWorkOrder,
+      onCreateInvoice: (order) => {
+        createInvoiceFromSource(order, "workOrder");
+        setFieldModeOverride("desktop");
+      },
+      onGoToDesktopTab: (key) => {
+        setTab(key);
+        setFieldModeOverride("desktop");
+      }
+    }));
+  }
   return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 py-3" }, /* @__PURE__ */ React.createElement(
     "button",
     {
