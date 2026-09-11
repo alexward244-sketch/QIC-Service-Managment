@@ -10592,6 +10592,19 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       };
       saveInvoice(invoice);
       activityLog = addLog({ ...db, activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for prepaid propane fill (${request.paymentMethod})`);
+      const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
+      if (EMAIL_ENABLED && accountingEmail) {
+        sendEmail({
+          toEmail: accountingEmail,
+          toName: "Accounting",
+          subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid)`,
+          message: buildInvoiceEmailText(invoice, db, taxRateVal),
+          department: "accounting",
+          source: "Propane fill accounting notification"
+        }).catch(() => {
+        });
+        activityLog = addLog({ ...db, activityLog }, actor, `Notified accounting of completed prepaid propane fill (${invoice.invoiceNumber})`);
+      }
     }
     persist({ ...db, activityLog });
   };
@@ -12611,6 +12624,19 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       };
       saveInvoice(invoice);
       activityLog = addLog({ activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for prepaid propane fill (${request.paymentMethod})`);
+      const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
+      if (EMAIL_ENABLED && accountingEmail) {
+        sendEmail({
+          toEmail: accountingEmail,
+          toName: "Accounting",
+          subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid)`,
+          message: buildInvoiceEmailText(invoice, db, taxRateVal),
+          department: "accounting",
+          source: "Propane fill accounting notification"
+        }).catch(() => {
+        });
+        activityLog = addLog({ activityLog }, actor, `Notified accounting of completed prepaid propane fill (${invoice.invoiceNumber})`);
+      }
     }
     persist({ ...db, activityLog });
     setToast("Marked delivered");
