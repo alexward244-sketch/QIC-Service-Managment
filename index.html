@@ -12019,7 +12019,7 @@ function FieldTabBar({ screen, onSelect }) {
     "div",
     { className: "flex-shrink-0 bg-[#FFFDFA] border-t border-[#E2DED5] flex px-1.5 pt-2", style: { paddingBottom: "max(10px, env(safe-area-inset-bottom))" } },
     FIELD_TABS.map((t) => {
-      const active = screen === t.key || t.key === "jobs" && screen === "job" || t.key === "more" && ["hydro", "hydropad", "parts"].includes(screen);
+      const active = screen === t.key || t.key === "jobs" && screen === "job" || t.key === "more" && ["hydro", "hydropad", "parts", "quotes", "invoices"].includes(screen);
       return React.createElement(
         "button",
         { key: t.key, type: "button", onClick: () => onSelect(t.key), className: "flex-1 min-h-[52px] flex flex-col items-center justify-center gap-1" },
@@ -12902,7 +12902,9 @@ function FieldParkScreen({ db, persist, saveWorkOrder, saveCottage, saveSite }) 
 function FieldMoreScreen({ onNavigate }) {
   const rows = [
     { key: "hydro", label: "Hydro Readings" },
-    { key: "parts", label: "Parts" }
+    { key: "parts", label: "Parts" },
+    { key: "quotes", label: "Quotes" },
+    { key: "invoices", label: "Invoices" }
   ];
   return React.createElement(
     "div",
@@ -12918,7 +12920,7 @@ function FieldMoreScreen({ onNavigate }) {
       React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
       React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
     )),
-    React.createElement("div", { className: "px-4 py-3 border-t border-[#EEEBE5]" }, React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Quotes, Invoices, and Sync settings are coming in a later update — use the desktop view for those for now."))
+    React.createElement("div", { className: "px-4 py-3 border-t border-[#EEEBE5]" }, React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Push notifications and sync settings are coming in a later update — use the desktop view for those for now."))
   );
 }
 function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) {
@@ -13036,7 +13038,234 @@ function FieldPartsScreen({ db, onBack }) {
     })
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
+function FieldQuoteCard({ q, db, taxRate, onEdit, onPrint, onConvert }) {
+  const site = db.sites.find((s) => s.id === q.siteId);
+  const cottage = db.cottages.find((c) => c.id === q.cottageId);
+  const customer = db.customers.find((c) => c.id === q.customerId);
+  const sub = [customer ? customer.name : null, site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" \xB7 ") || "—";
+  const { total } = computeQuoteTotals(q, taxRate);
+  return React.createElement(
+    "div",
+    { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" },
+    React.createElement(
+      "div",
+      { className: "flex items-start justify-between gap-2" },
+      React.createElement("span", { className: "text-base font-bold text-[#1E1A13]" }, q.title),
+      React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)
+    ),
+    React.createElement("div", { className: "text-[13px] text-[#75716A] mt-1 truncate" }, sub),
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between mt-2.5" },
+      React.createElement("span", { className: "text-lg font-bold text-[#1E1A13]" }, formatPrice(total)),
+      q.status === "Draft" ? React.createElement("button", { type: "button", onClick: () => onEdit(q), className: "min-h-[40px] px-4 rounded-full bg-[#377249] text-white text-sm font-semibold" }, "Edit") : q.status === "Accepted" && !q.workOrderId ? React.createElement("button", { type: "button", onClick: () => onConvert(q), className: "min-h-[40px] px-4 rounded-full bg-[#377249] text-white text-sm font-semibold" }, "Start Work Order") : q.status === "Accepted" && q.workOrderId ? React.createElement("span", { className: "text-xs text-[#75716A] italic" }, "Converted") : React.createElement("button", { type: "button", onClick: () => onPrint(q), className: "min-h-[40px] px-4 rounded-full border border-[#E2DED5] text-[#4B4740] text-sm font-medium" }, "Print")
+    )
+  );
+}
+function FieldQuotesScreen({ db, persist, actor, saveQuote, saveWorkOrder, onBack, onGoToJobs, setToast }) {
+  const [filter, setFilter] = useState("");
+  const [modal, setModal] = useState(null);
+  const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const save = (quote) => {
+    const exists = db.quotes.some((q) => q.id === quote.id);
+    const activityLog = addLog(db, actor, exists ? `Updated quote "${quote.title}"` : `Created quote "${quote.title}"`);
+    persist({ ...db, activityLog });
+    saveQuote(quote);
+    setModal(null);
+    setToast(exists ? "Quote updated" : "Quote created");
+  };
+  const convertToWorkOrder = (quote) => {
+    const newId = uid();
+    const lineItemNotes = quote.lineItems.length ? "Line items:\n" + quote.lineItems.map((li) => `- ${li.description} (x${li.quantity})`).join("\n") : "";
+    const newWorkOrder = {
+      id: newId,
+      title: quote.title,
+      description: [quote.notes, lineItemNotes].filter(Boolean).join("\n\n"),
+      siteId: quote.siteId || null,
+      cottageId: quote.cottageId || null,
+      assignedTo: "",
+      status: "Open",
+      priority: "Medium",
+      date: todayISO(),
+      completedDate: null,
+      partsUsed: quote.lineItems.filter((li) => li.partId).map((li) => ({ partId: li.partId, quantity: li.quantity }))
+    };
+    const activityLog = addLog(db, actor, `Converted quote "${quote.title}" to a work order`);
+    persist({ ...db, activityLog });
+    saveQuote({ ...quote, workOrderId: newId });
+    saveWorkOrder(newWorkOrder);
+    setToast("Work order created");
+    if (onGoToJobs) onGoToJobs();
+  };
+  const filtered = db.quotes.filter((q) => {
+    if (!filter) return true;
+    const site = db.sites.find((s) => s.id === q.siteId);
+    const cottage = db.cottages.find((c) => c.id === q.cottageId);
+    const customer = db.customers.find((c) => c.id === q.customerId);
+    const hay = `${q.title} ${(site == null ? void 0 : site.number) || ""} ${(cottage == null ? void 0 : cottage.name) || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  }).slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  return React.createElement(
+    React.Fragment,
+    null,
+    modal && React.createElement(
+      Modal,
+      { title: modal.mode === "new" ? "New Quote" : "Edit Quote", onClose: () => setModal(null), wide: true },
+      React.createElement(QuoteForm, {
+        initial: modal.data,
+        sites: db.sites,
+        cottages: db.cottages,
+        customers: db.customers,
+        parts: db.parts,
+        quotes: db.quotes,
+        taxRate,
+        defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
+        templates: db.quoteTemplates,
+        onSave: save,
+        onCancel: () => setModal(null),
+        onDirtyChange: () => {
+        }
+      })
+    ),
+    React.createElement("button", { type: "button", onClick: onBack, className: "text-[13px] font-semibold text-[#377249] mb-3" }, "← More"),
+    React.createElement("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Quote"),
+    React.createElement("input", { className: inputCls + " mb-4", placeholder: "Search quotes…", value: filter, onChange: (e) => setFilter(e.target.value) }),
+    db.quotes.length === 0 ? React.createElement(EmptyState, { text: "No quotes yet." }) : filtered.length === 0 ? React.createElement(EmptyState, { text: "No quotes match your search." }) : filtered.map((q) => React.createElement(FieldQuoteCard, {
+      key: q.id,
+      q,
+      db,
+      taxRate,
+      onEdit: (qq) => setModal({ mode: "edit", data: qq }),
+      onPrint: (qq) => downloadPrintableItems([qq], (quote) => buildQuoteHtml(quote, db, taxRate), `quote-${qq.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`),
+      onConvert: convertToWorkOrder
+    }))
+  );
+}
+function FieldInvoicesScreen({ db, persist, actor, saveInvoice, onBack, setToast }) {
+  const [filter, setFilter] = useState("");
+  const [modal, setModal] = useState(null);
+  const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
+  const [emailStatus, setEmailStatus] = useState({});
+  const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const invoices = db.invoices || [];
+  const save = (invoice) => {
+    const exists = invoices.some((i) => i.id === invoice.id);
+    const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
+    const activityLog = addLog(db, actor, exists ? `Updated invoice ${invoice.invoiceNumber}` : `Created invoice ${invoice.invoiceNumber} for ${(customer == null ? void 0 : customer.name) || "unassigned"}`);
+    persist({ ...db, activityLog });
+    saveInvoice(invoice);
+    setModal(null);
+    setToast(exists ? "Invoice updated" : "Invoice created");
+  };
+  const markPaidInFull = (invoice, paidMethod) => {
+    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
+    const updated = { ...invoice, depositAmount: total, paidInFullDate: todayISO(), paidMethod };
+    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Full via ${paidMethod}`);
+    persist({ ...db, activityLog });
+    saveInvoice(updated);
+    setToast("Marked paid in full");
+  };
+  const setPaidInAdvance = (invoice, paidInAdvanceMethod) => {
+    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
+    const updated = {
+      ...invoice,
+      paidInAdvanceMethod,
+      paidInAdvanceDate: todayISO(),
+      depositAmount: total,
+      paidInFullDate: invoice.paidInFullDate || todayISO(),
+      paidMethod: paidInAdvanceMethod
+    };
+    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Advance via ${paidInAdvanceMethod} (also marked Paid in Full)`);
+    persist({ ...db, activityLog });
+    saveInvoice(updated);
+  };
+  const sendInvoice = (invoice) => {
+    const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
+    if (!customer || !customer.email) return;
+    const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
+    setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
+    const sends = [sendEmail({
+      toEmail: customer.email,
+      toName: customer.name,
+      subject: `Invoice ${invoice.invoiceNumber}`,
+      message: buildInvoiceEmailText(invoice, db, taxRate),
+      department: "service",
+      source: "Invoice email"
+    })];
+    if (accountingEmail) {
+      sends.push(sendEmail({
+        toEmail: accountingEmail,
+        toName: "Accounting",
+        subject: `Invoice ${invoice.invoiceNumber} — ${customer.name}`,
+        message: buildInvoiceEmailText(invoice, db, taxRate),
+        department: "service",
+        source: "Invoice email"
+      }));
+    }
+    Promise.all(sends).then(() => {
+      setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
+      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO() };
+      const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
+      persist({ ...db, activityLog });
+      saveInvoice(updated);
+      setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
+    }).catch(() => {
+      setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
+    });
+  };
+  const filtered = invoices.filter((inv) => {
+    if (!filter) return true;
+    const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
+    const hay = `${inv.invoiceNumber} ${inv.title || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  }).slice().sort((a, b) => (b.invoiceNumber || "").localeCompare(a.invoiceNumber || ""));
+  return React.createElement(
+    React.Fragment,
+    null,
+    modal && React.createElement(
+      Modal,
+      { title: modal.mode === "new" ? "New Invoice" : "Edit Invoice", onClose: () => setModal(null), wide: true },
+      React.createElement(InvoiceForm, {
+        initial: modal.data,
+        sites: db.sites,
+        cottages: db.cottages,
+        customers: db.customers,
+        parts: db.parts,
+        invoiceNumber: nextInvoiceNumber(db),
+        taxRate,
+        onSave: save,
+        onCancel: () => setModal(null)
+      })
+    ),
+    paidMethodPrompt && React.createElement(PaymentMethodModal, {
+      title: `Mark invoice ${paidMethodPrompt.invoiceNumber} paid in full`,
+      methods: INVOICE_PAYMENT_METHODS,
+      onConfirm: (method) => {
+        markPaidInFull(paidMethodPrompt, method);
+        setPaidMethodPrompt(null);
+      },
+      onCancel: () => setPaidMethodPrompt(null)
+    }),
+    React.createElement("button", { type: "button", onClick: onBack, className: "text-[13px] font-semibold text-[#377249] mb-3" }, "← More"),
+    React.createElement("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Invoice"),
+    React.createElement("input", { className: inputCls + " mb-4", placeholder: "Search invoices…", value: filter, onChange: (e) => setFilter(e.target.value) }),
+    invoices.length === 0 ? React.createElement(EmptyState, { text: "No invoices yet." }) : filtered.length === 0 ? React.createElement(EmptyState, { text: "No invoices match your search." }) : filtered.map((inv) => React.createElement(InvoiceCard, {
+      key: inv.id,
+      inv,
+      db,
+      taxRate,
+      emailStatus,
+      onEdit: (i) => setModal({ mode: "edit", data: i }),
+      onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
+      onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
+      onEmail: (i) => sendInvoice(i),
+      onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
+      onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
+      onDelete: () => setToast("Delete invoices from the desktop view for now")
+    }))
+  );
+}
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -13075,7 +13304,9 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
     more: ["More", null],
     hydro: ["Hydro Readings", null],
     hydropad: ["Enter Reading", null],
-    parts: ["Parts", null]
+    parts: ["Parts", null],
+    quotes: ["Quotes", null],
+    invoices: ["Invoices", null]
   };
   const [title, subtitle] = titles[screen] || ["QIC Field", null];
   const wo = jobId ? db.workOrders.find((w) => w.id === jobId) : null;
@@ -13141,7 +13372,18 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onSaved: () => setScreen("hydro"),
         onBack: () => setScreen("hydro")
       }),
-      screen === "parts" && React.createElement(FieldPartsScreen, { db, onBack: () => selectTab("more") })
+      screen === "parts" && React.createElement(FieldPartsScreen, { db, onBack: () => selectTab("more") }),
+      screen === "quotes" && React.createElement(FieldQuotesScreen, {
+        db,
+        persist,
+        actor,
+        saveQuote,
+        saveWorkOrder,
+        onBack: () => selectTab("more"),
+        onGoToJobs: () => selectTab("jobs"),
+        setToast
+      }),
+      screen === "invoices" && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, onBack: () => selectTab("more"), setToast })
     ),
     toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
     React.createElement(FieldTabBar, { screen, onSelect: selectTab })
@@ -13422,6 +13664,7 @@ function AppContent() {
       savePropaneRequest,
       saveWinterizingRequest,
       saveInvoice,
+      saveQuote,
       saveCottage,
       saveSite,
       pendingSignups,
