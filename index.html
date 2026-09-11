@@ -12396,6 +12396,7 @@ function FieldPropaneRow({ request, db, onComplete, onExpired, onMoveRun }) {
 }
 function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) {
   const [expiring, setExpiring] = useState(null);
+  const [newOpen, setNewOpen] = useState(false);
   const requests = db.propaneRequests || [];
   const today = todayISO();
   const active = requests.filter((r) => !r.completed && !r.expiredTank);
@@ -12494,6 +12495,14 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
     setExpiring(null);
     setToast("Flagged for review");
   };
+  const saveNew = (request) => {
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const activityLog = addLog(db, actor, `Added propane request for ${cottage ? cottage.name : "unassigned"}`);
+    persist({ ...db, activityLog });
+    savePropaneRequest(request);
+    setNewOpen(false);
+    setToast("Request added");
+  };
   const section = (title, list, tone) => React.createElement(
     "div",
     { className: "mb-5" },
@@ -12514,6 +12523,12 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
         React.createElement("button", { onClick: () => flagExpired(expiring), className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Yes, Flag for Review")
       )
     ),
+    newOpen && React.createElement(
+      Modal,
+      { title: "New Propane Request", onClose: () => setNewOpen(false), wide: true },
+      React.createElement(PropaneRequestForm, { initial: null, db, onSave: saveNew, onCancel: () => setNewOpen(false) })
+    ),
+    React.createElement("button", { type: "button", onClick: () => setNewOpen(true), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Propane Request"),
     overdue.length > 0 && section("Overdue", overdue, "text-[#a8532a]"),
     section("10:00 AM Run", tenAm),
     section("4:00 PM Run", fourPm)
