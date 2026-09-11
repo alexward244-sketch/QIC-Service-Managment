@@ -9938,7 +9938,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
       return next;
     });
   };
-  const allLocalChecked = gateItems.length > 0 && gateItems.every((opt) => checkedLocal.has(opt.key));
+  const allLocalChecked = gateItems.every((opt) => checkedLocal.has(opt.key));
   const confirmModal = confirming ? /* @__PURE__ */ React.createElement(Modal, { title: `Confirm Winterizing \u2014 ${cottage ? cottage.name : "Cottage"}`, onClose: () => setConfirming(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Check off each item as you complete it. This is for your reference only \u2014 the customer never sees it."), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-4" }, gateItems.map((opt) => /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -9975,20 +9975,19 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
   const canEmail = isDone && customer && customer.email && !readOnly;
   const nameBlock = /* @__PURE__ */ React.createElement("span", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: `block text-base sm:text-sm font-medium truncate ${isDone ? "text-[#28633C]" : "text-[#1E1A13]"}` }, cottage ? cottage.name : "Unknown cottage"), /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-xs text-[#75716A] flex flex-wrap gap-x-2" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), customer && !customer.email && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "No email on file")), inlineOptions.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "flex flex-wrap gap-1.5 sm:gap-1 mt-1.5 sm:mt-1" }, inlineOptions.map((opt) => {
       if (opt.key === "anodeRod") {
-        const replaced = Boolean(request.anodeRodReplacedAt);
         return /* @__PURE__ */ React.createElement(
           "button",
           {
             key: opt.key,
             type: "button",
-            disabled: replaced || readOnly,
+            disabled: anodeRodReplaced || readOnly,
             onClick: (e) => {
               e.preventDefault();
               onAnodeRodReplaced(request);
             },
-            className: `flex items-center gap-1 text-xs sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium whitespace-nowrap ${replaced ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F] hover:bg-[#F5E3D9]"}`
+            className: `flex items-center gap-1 text-xs sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium whitespace-nowrap ${anodeRodReplaced ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F] hover:bg-[#F5E3D9]"}`
           },
-          replaced ? "\u2713 Anode rod replaced \u2014 invoiced" : "Replace the anode rod \u2014 tap when done"
+          anodeRodReplaced ? "\u2713 Anode rod replaced \u2014 invoiced" : "Replace the anode rod \u2014 tap when done"
         );
       }
       return /* @__PURE__ */ React.createElement("span", {
@@ -9996,7 +9995,18 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
         className: `text-xs sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium ${opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}`
       }, opt.label);
     })));
-  const toggleArea = isMobile ? /* @__PURE__ */ React.createElement("div", { onClick: readOnly ? void 0 : handleToggleChange, className: `flex items-center gap-4 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, nameBlock) : /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-3 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
+  const toggleArea = isMobile ? /* @__PURE__ */ React.createElement("div", {
+    onClick: readOnly ? void 0 : handleToggleChange,
+    role: "button",
+    tabIndex: readOnly ? -1 : 0,
+    onKeyDown: readOnly ? void 0 : (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handleToggleChange();
+      }
+    },
+    className: `flex items-center gap-4 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}`
+  }, nameBlock) : /* @__PURE__ */ React.createElement("label", { className: `flex items-center gap-3 min-w-0 flex-1 py-0.5 ${readOnly ? "" : "cursor-pointer"}` }, /* @__PURE__ */ React.createElement(
       "input",
       {
         type: "checkbox",
