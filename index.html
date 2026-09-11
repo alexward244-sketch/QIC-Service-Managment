@@ -5937,6 +5937,8 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </table>` : ""}
       ${infoSheet && laborHours ? `<div class="label" style="margin-top:16px;">Labour</div><p class="desc" style="min-height:0;border:none;">${laborHours} hr \u2014 ${escapeHtml(invoice.laborRateType || "Rate")}</p>` : ""}
       ${summaryTable}
+      ${!infoSheet && getPaymentInstructions(db) ? `<p style="font-size:13px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${!infoSheet ? `<p style="font-size:12px;color:#75716A;margin:14px 0 0;">If you have any questions, please don't hesitate to reach out.</p>` : ""}
     </div>`;
 }
 function buildInvoiceEmailText(invoice, db, taxRate) {
