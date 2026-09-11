@@ -12795,6 +12795,110 @@ function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizi
     runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, onGoToDesktopTab, setToast })
   );
 }
+function fieldParkResults(db, term) {
+  const q = term.trim().toLowerCase();
+  if (!q) return [];
+  const out = [];
+  for (const s of db.sites) {
+    const hay = `${s.number} ${s.section || ""} ${(s.tags || []).join(" ")}`.toLowerCase();
+    if (hay.includes(q)) out.push({ kind: "Site", id: s.id, title: `Site ${s.number}`, sub: s.section || "", ref: s });
+  }
+  for (const c of db.cottages) {
+    const hay = `${c.name} ${c.modelNumber || ""} ${c.serialNumber || ""}`.toLowerCase();
+    if (hay.includes(q)) out.push({ kind: "Cottage", id: c.id, title: c.name, sub: c.year || c.modelNumber || "", ref: c });
+  }
+  for (const cu of db.customers) {
+    const hay = `${cu.name} ${cu.name2 || ""} ${cu.phone || ""} ${cu.email || ""}`.toLowerCase();
+    if (hay.includes(q)) out.push({ kind: "Customer", id: cu.id, title: cu.name, sub: cu.phone || cu.email || "", ref: cu });
+  }
+  return out.slice(0, 20);
+}
+function fieldParkDetail(db, kind, ref) {
+  if (kind === "Site") {
+    const owner = db.customers.find((c) => customerSiteIds(c).includes(ref.id));
+    const openWO = db.workOrders.filter((w) => w.siteId === ref.id && w.status !== "Completed").length;
+    return [owner ? owner.name : null, openWO > 0 ? `${openWO} open job${openWO === 1 ? "" : "s"}` : null].filter(Boolean).join(" \xB7 ");
+  }
+  if (kind === "Cottage") {
+    const site = db.sites.find((s) => s.id === ref.siteId);
+    const owner = site ? db.customers.find((c) => customerSiteIds(c).includes(site.id)) : null;
+    return [site ? `Site ${site.number}` : null, owner ? owner.name : null].filter(Boolean).join(" \xB7 ");
+  }
+  if (kind === "Customer") {
+    const siteIds = customerSiteIds(ref);
+    const sites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
+    return sites.length ? `Site ${sites.map((s) => s.number).join(", ")}` : "Unassigned";
+  }
+  return "";
+}
+function FieldParkScreen({ db, persist, saveWorkOrder, saveCottage, saveSite }) {
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(null);
+  const results = fieldParkResults(db, query);
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement("input", {
+      className: inputCls + " min-h-[50px] text-base mb-4",
+      placeholder: "Site #, customer, or cottage…",
+      value: query,
+      onChange: (e) => setQuery(e.target.value)
+    }),
+    query.trim() === "" ? React.createElement("p", { className: "text-xs text-[#9A968D] text-center mt-6" }, "Start typing to search sites, cottages, and customers.") : results.length === 0 ? React.createElement(EmptyState, { text: "No matches." }) : results.map((r) => React.createElement(
+      "button",
+      {
+        key: `${r.kind}-${r.id}`,
+        type: "button",
+        onClick: () => setSelected({ kind: r.kind, id: r.id }),
+        className: "w-full text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3.5 mb-2.5"
+      },
+      React.createElement(
+        "div",
+        { className: "flex items-start justify-between gap-2" },
+        React.createElement("span", { className: "text-base font-bold text-[#1E1A13]" }, r.title),
+        React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F1EEE9] text-[#75716A] flex-shrink-0" }, r.kind)
+      ),
+      r.sub && React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-0.5" }, r.sub),
+      React.createElement("div", { className: "text-[12px] text-[#75716A] mt-1" }, fieldParkDetail(db, r.kind, r.ref) || "—")
+    )),
+    selected && selected.kind === "Site" && React.createElement(SiteDetailModal, {
+      site: db.sites.find((s) => s.id === selected.id),
+      db,
+      persist,
+      saveWorkOrder,
+      saveCottage,
+      readOnly: true,
+      onClose: () => setSelected(null),
+      onEdit: () => {
+      }
+    }),
+    selected && selected.kind === "Cottage" && React.createElement(CottageDetailModal, {
+      cottage: db.cottages.find((c) => c.id === selected.id),
+      db,
+      persist,
+      saveWorkOrder,
+      saveCottage,
+      saveSite,
+      readOnly: true,
+      canTransfer: false,
+      nested: false,
+      onClose: () => setSelected(null),
+      onEdit: () => {
+      }
+    }),
+    selected && selected.kind === "Customer" && React.createElement(CustomerDetailModal, {
+      customer: db.customers.find((c) => c.id === selected.id),
+      db,
+      persist,
+      saveWorkOrder,
+      saveCottage,
+      nested: true,
+      onClose: () => setSelected(null),
+      onEdit: () => {
+      }
+    })
+  );
+}
 function FieldComingSoon({ label }) {
   return React.createElement(
     "div",
@@ -12803,7 +12907,7 @@ function FieldComingSoon({ label }) {
     React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Coming in a later update. Use the desktop view for this for now.")
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -12883,7 +12987,8 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onGoToDesktopTab,
         setToast
       }),
-      (screen === "park" || screen === "more") && React.createElement(FieldComingSoon, { label: FIELD_TABS.find((t) => t.key === screen).label })
+      screen === "park" && React.createElement(FieldParkScreen, { db, persist, saveWorkOrder, saveCottage, saveSite }),
+      screen === "more" && React.createElement(FieldComingSoon, { label: FIELD_TABS.find((t) => t.key === screen).label })
     ),
     toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
     React.createElement(FieldTabBar, { screen, onSelect: selectTab })
@@ -13164,6 +13269,8 @@ function AppContent() {
       savePropaneRequest,
       saveWinterizingRequest,
       saveInvoice,
+      saveCottage,
+      saveSite,
       pendingSignups,
       confirmPendingSignup,
       removePendingSignup,
