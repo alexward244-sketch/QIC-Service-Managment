@@ -1131,7 +1131,7 @@ function useDb() {
       unsubCottages();
     };
   }, []);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: sitesList || [], cottages: cottagesList || [] } : null;
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [] } : null;
   const persist = useCallback(async (next) => {
     const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, sites, cottages, ...rest } = next;
     setMainData(rest);
