@@ -8714,7 +8714,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
         onDrop: handleDropOnStatus(status),
         className: `min-h-[60px] rounded-lg transition ${dragOverStatus === status ? "bg-[#DDF1E1]/50 ring-2 ring-[#377249]/30" : ""}`
       },
-      list.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, "Nothing here") : list.slice().sort((a, b) => a.date < b.date ? 1 : -1).map((wo) => status === "Completed" ? /* @__PURE__ */ React.createElement(CompletedWorkOrderRow, {
+      list.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, "Nothing here") : list.slice().sort((a, b) => status === "Completed" ? (b.completedDate || "").localeCompare(a.completedDate || "") : a.date < b.date ? 1 : -1).map((wo) => status === "Completed" ? /* @__PURE__ */ React.createElement(CompletedWorkOrderRow, {
         key: wo.id,
         wo,
         db,
@@ -12330,6 +12330,7 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
 function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, onOpenJob, setToast }) {
   const [newOpen, setNewOpen] = useState(false);
   const filtered = db.workOrders.filter((w) => w.status === filter).sort((a, b) => {
+    if (filter === "Completed") return (b.completedDate || "").localeCompare(a.completedDate || "");
     const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
     const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
     if (aFlag !== bFlag) return aFlag - bFlag;
