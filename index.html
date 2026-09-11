@@ -1648,7 +1648,16 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compact
   ))));
 }
 function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Send invoice?", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Email invoice ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, invoice.invoiceNumber), " to:"), /* @__PURE__ */ React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-5 space-y-0.5" }, /* @__PURE__ */ React.createElement("li", null, "\u2022 ", customer.name, " \u2014 ", customer.email), accountingEmail && /* @__PURE__ */ React.createElement("li", null, "\u2022 Accounting \u2014 ", accountingEmail)), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
+  const emailOptions = [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean);
+  const [to, setTo] = useState(emailOptions[0] || "");
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Send invoice?", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Email invoice ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, invoice.invoiceNumber), " to:"), /* @__PURE__ */ React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-5 space-y-1.5" }, /* @__PURE__ */ React.createElement(
+    "li",
+    { className: "flex items-center gap-2 flex-wrap" },
+    "\u2022 ",
+    customer.name,
+    " \u2014 ",
+    emailOptions.length > 1 ? /* @__PURE__ */ React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-sm border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => /* @__PURE__ */ React.createElement("option", { key: e, value: e }, e))) : to
+  ), accountingEmail && /* @__PURE__ */ React.createElement("li", null, "\u2022 Accounting \u2014 ", accountingEmail)), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: onCancel,
@@ -1658,14 +1667,24 @@ function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: onConfirm,
-      style: { padding: "8px 16px", fontSize: 14, borderRadius: 6, color: "#ffffff", backgroundColor: "#377249", fontWeight: 600, border: "none" }
+      onClick: () => onConfirm(to),
+      disabled: !to,
+      style: { padding: "8px 16px", fontSize: 14, borderRadius: 6, color: "#ffffff", backgroundColor: "#377249", fontWeight: 600, border: "none", opacity: to ? 1 : 0.5 }
     },
     "Yes, send"
   )));
 }
 function SendQuoteConfirmModal({ quote, customer, onConfirm, onCancel }) {
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Send quote?", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Email quote ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, quote.title), " to:"), /* @__PURE__ */ React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-5 space-y-0.5" }, /* @__PURE__ */ React.createElement("li", null, "\u2022 ", customer.name, " \u2014 ", customer.email)), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
+  const emailOptions = [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean);
+  const [to, setTo] = useState(emailOptions[0] || "");
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Send quote?", onClose: onCancel }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Email quote ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, quote.title), " to:"), /* @__PURE__ */ React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-5 space-y-0.5" }, /* @__PURE__ */ React.createElement(
+    "li",
+    { className: "flex items-center gap-2 flex-wrap" },
+    "\u2022 ",
+    customer.name,
+    " \u2014 ",
+    emailOptions.length > 1 ? /* @__PURE__ */ React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-sm border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => /* @__PURE__ */ React.createElement("option", { key: e, value: e }, e))) : to
+  )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: onCancel,
@@ -1675,8 +1694,9 @@ function SendQuoteConfirmModal({ quote, customer, onConfirm, onCancel }) {
   ), /* @__PURE__ */ React.createElement(
     "button",
     {
-      onClick: onConfirm,
-      style: { padding: "8px 16px", fontSize: 14, borderRadius: 6, color: "#ffffff", backgroundColor: "#377249", fontWeight: 600, border: "none" }
+      onClick: () => onConfirm(to),
+      disabled: !to,
+      style: { padding: "8px 16px", fontSize: 14, borderRadius: 6, color: "#ffffff", backgroundColor: "#377249", fontWeight: 600, border: "none", opacity: to ? 1 : 0.5 }
     },
     "Yes, send"
   )));
@@ -4299,13 +4319,14 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     persist({ ...db, activityLog });
     saveInvoice(updated);
   };
-  const sendInvoice = (invoice) => {
+  const sendInvoice = (invoice, toEmail) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
-    if (!customer || !customer.email) return;
+    const recipientEmail = toEmail || (customer == null ? void 0 : customer.email);
+    if (!customer || !recipientEmail) return;
     const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
     setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
     const sends = [sendEmail({
-      toEmail: customer.email,
+      toEmail: recipientEmail,
       toName: customer.name,
       subject: `Invoice ${invoice.invoiceNumber}`,
       message: buildInvoiceEmailText(invoice, db, taxRate),
@@ -4426,8 +4447,8 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     invoice: sendConfirm,
     customer: db.customers.find((c) => c.id === sendConfirm.customerId) || {},
     accountingEmail: ((db.settings || {}).accountingEmail || "").trim(),
-    onConfirm: () => {
-      sendInvoice(sendConfirm);
+    onConfirm: (email) => {
+      sendInvoice(sendConfirm, email);
       setSendConfirm(null);
     },
     onCancel: () => setSendConfirm(null)
@@ -4999,10 +5020,10 @@ function QuotesView({ db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoTo
     setModal(null);
     setToast(exists ? "Quote updated" : "Quote created");
   };
-  const emailToCustomer = (quote, customer) => {
+  const emailToCustomer = (quote, customer, toEmail) => {
     setEmailStatus((s) => ({ ...s, [quote.id]: "sending" }));
     sendEmail({
-      toEmail: customer.email,
+      toEmail: toEmail || customer.email,
       toName: customer.name,
       subject: `Quote: ${quote.title}`,
       message: buildQuoteEmailText(quote, db, taxRate),
@@ -5162,8 +5183,8 @@ function QuotesView({ db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoTo
   ), sendConfirm && /* @__PURE__ */ React.createElement(SendQuoteConfirmModal, {
     quote: sendConfirm.quote,
     customer: sendConfirm.customer || {},
-    onConfirm: () => {
-      emailToCustomer(sendConfirm.quote, sendConfirm.customer);
+    onConfirm: (email) => {
+      emailToCustomer(sendConfirm.quote, sendConfirm.customer, email);
       setSendConfirm(null);
     },
     onCancel: () => setSendConfirm(null)
@@ -11485,7 +11506,7 @@ function HydroReviewView({ db, persist }) {
     if (!site) return;
     setPendingConfirm({ reading, final, site });
   };
-  const confirmAndInvoice = () => {
+  const confirmAndInvoice = (toEmail) => {
     if (!pendingConfirm) return;
     const { reading, final, site } = pendingConfirm;
     const subtotal = Math.round(final.usage * rate) / 100;
@@ -11496,10 +11517,11 @@ function HydroReviewView({ db, persist }) {
     let activityLog = addLog(db, actor, `Confirmed hydro reading and sent invoice for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`);
     persist({ ...db, hydroReadings, activityLog });
     const owner = getSiteOwner(db, site.id);
+    const recipientEmail = toEmail || (owner == null ? void 0 : owner.email);
     const copyEmail = getAccountingCopyEmail(db);
-    if (EMAIL_ENABLED && owner && owner.email) {
+    if (EMAIL_ENABLED && owner && recipientEmail) {
       sendEmail({
-        toEmail: owner.email,
+        toEmail: recipientEmail,
         toName: owner.name,
         subject: `Hydro Bill \u2014 Site ${site.number}`,
         message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
@@ -11507,7 +11529,7 @@ function HydroReviewView({ db, persist }) {
         source: "Hydro invoice email"
       }).catch(() => {
       });
-    } else if (!owner || !owner.email) {
+    } else if (!owner || !recipientEmail) {
       logSystemError(db, persist, "Hydro invoice email", `No customer email on file for site ${site.number} \u2014 invoice recorded but not emailed`);
     }
     if (EMAIL_ENABLED && copyEmail) {
@@ -13147,6 +13169,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
   const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
+  const [sendConfirm, setSendConfirm] = useState(null);
   const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
   const invoices = db.invoices || [];
   const save = (invoice) => {
@@ -13180,13 +13203,14 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     persist({ ...db, activityLog });
     saveInvoice(updated);
   };
-  const sendInvoice = (invoice) => {
+  const sendInvoice = (invoice, toEmail) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
-    if (!customer || !customer.email) return;
+    const recipientEmail = toEmail || (customer == null ? void 0 : customer.email);
+    if (!customer || !recipientEmail) return;
     const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
     setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
     const sends = [sendEmail({
-      toEmail: customer.email,
+      toEmail: recipientEmail,
       toName: customer.name,
       subject: `Invoice ${invoice.invoiceNumber}`,
       message: buildInvoiceEmailText(invoice, db, taxRate),
@@ -13261,6 +13285,16 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
       onConfirm: () => remove(confirmDeleteId),
       onCancel: () => setConfirmDeleteId(null)
     }),
+    sendConfirm && React.createElement(SendInvoiceConfirmModal, {
+      invoice: sendConfirm,
+      customer: db.customers.find((c) => c.id === sendConfirm.customerId) || {},
+      accountingEmail: ((db.settings || {}).accountingEmail || "").trim(),
+      onConfirm: (email) => {
+        sendInvoice(sendConfirm, email);
+        setSendConfirm(null);
+      },
+      onCancel: () => setSendConfirm(null)
+    }),
     React.createElement("button", { type: "button", onClick: onBack, className: "text-[13px] font-semibold text-[#377249] mb-3" }, "← More"),
     React.createElement("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Invoice"),
     React.createElement("input", { className: inputCls + " mb-4", placeholder: "Search invoices…", value: filter, onChange: (e) => setFilter(e.target.value) }),
@@ -13273,7 +13307,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
       onEdit: (i) => setModal({ mode: "edit", data: i }),
       onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
       onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
-      onEmail: (i) => sendInvoice(i),
+      onEmail: (i) => setSendConfirm(i),
       onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
       onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
       onDelete: (i) => setConfirmDeleteId(i.id)
