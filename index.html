@@ -13141,10 +13141,11 @@ function FieldQuotesScreen({ db, persist, actor, saveQuote, saveWorkOrder, onBac
     }))
   );
 }
-function FieldInvoicesScreen({ db, persist, actor, saveInvoice, onBack, setToast }) {
+function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, onBack, setToast }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
   const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
   const invoices = db.invoices || [];
@@ -13213,6 +13214,15 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, onBack, setToast
       setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
     });
   };
+  const remove = (id) => {
+    const invoice = invoices.find((i) => i.id === id);
+    const activityLog = addLog(db, actor, `Removed invoice ${(invoice == null ? void 0 : invoice.invoiceNumber) || ""} (moved to trash)`);
+    const entry = { id: uid(), type: "invoice", data: invoice, label: `Invoice — ${(invoice == null ? void 0 : invoice.invoiceNumber) || ""}`, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteInvoice(id);
+    setConfirmDeleteId(null);
+    setToast("Invoice deleted");
+  };
   const filtered = invoices.filter((inv) => {
     if (!filter) return true;
     const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
@@ -13246,6 +13256,11 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, onBack, setToast
       },
       onCancel: () => setPaidMethodPrompt(null)
     }),
+    confirmDeleteId && React.createElement(ConfirmDeleteModal, {
+      label: `invoice ${((invoices.find((i) => i.id === confirmDeleteId) || {}).invoiceNumber) || ""}`,
+      onConfirm: () => remove(confirmDeleteId),
+      onCancel: () => setConfirmDeleteId(null)
+    }),
     React.createElement("button", { type: "button", onClick: onBack, className: "text-[13px] font-semibold text-[#377249] mb-3" }, "← More"),
     React.createElement("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Invoice"),
     React.createElement("input", { className: inputCls + " mb-4", placeholder: "Search invoices…", value: filter, onChange: (e) => setFilter(e.target.value) }),
@@ -13261,11 +13276,11 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, onBack, setToast
       onEmail: (i) => sendInvoice(i),
       onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
       onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
-      onDelete: () => setToast("Delete invoices from the desktop view for now")
+      onDelete: (i) => setConfirmDeleteId(i.id)
     }))
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -13383,7 +13398,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onGoToJobs: () => selectTab("jobs"),
         setToast
       }),
-      screen === "invoices" && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, onBack: () => selectTab("more"), setToast })
+      screen === "invoices" && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, deleteInvoice, onBack: () => selectTab("more"), setToast })
     ),
     toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
     React.createElement(FieldTabBar, { screen, onSelect: selectTab })
@@ -13664,6 +13679,7 @@ function AppContent() {
       savePropaneRequest,
       saveWinterizingRequest,
       saveInvoice,
+      deleteInvoice,
       saveQuote,
       saveCottage,
       saveSite,
