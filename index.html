@@ -87,6 +87,8 @@ const CUSTOMERS_REF = db_.collection("customers");
 const QUOTES_REF = db_.collection("quotes");
 const INVOICES_REF = db_.collection("invoices");
 const CORRESPONDENCE_REF = db_.collection("correspondence");
+const SITES_REF = db_.collection("sites");
+const COTTAGES_REF = db_.collection("cottages");
 const storage_ = firebase.storage();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
@@ -972,6 +974,8 @@ function useDb() {
   const [quotesList, setQuotesList] = useState(null);
   const [invoicesList, setInvoicesList] = useState(null);
   const [correspondenceList, setCorrespondenceList] = useState(null);
+  const [sitesList, setSitesList] = useState(null);
+  const [cottagesList, setCottagesList] = useState(null);
   const [pendingSignups, setPendingSignups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
@@ -1004,6 +1008,15 @@ function useDb() {
           const migratedDeals = buildDealsFromLegacyData(merged);
           if (migratedDeals) {
             DOC_REF.update({ deals: migratedDeals, prospects: [] }).catch(() => {
+            });
+          }
+          const legacySites = merged.sites || [];
+          const legacyCottages = merged.cottages || [];
+          if (legacySites.length > 0 || legacyCottages.length > 0) {
+            commitInChunks([
+              ...legacySites.map((s) => ({ type: "set", ref: SITES_REF.doc(s.id), data: s })),
+              ...legacyCottages.map((c) => ({ type: "set", ref: COTTAGES_REF.doc(c.id), data: c }))
+            ]).then(() => DOC_REF.update({ sites: [], cottages: [] })).catch(() => {
             });
           }
         }
@@ -1086,6 +1099,24 @@ function useDb() {
       () => {
       }
     );
+    const unsubSites = SITES_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setSitesList(list);
+      },
+      () => {
+      }
+    );
+    const unsubCottages = COTTAGES_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setCottagesList(list);
+      },
+      () => {
+      }
+    );
     return () => {
       unsub();
       unsubPending();
@@ -1096,11 +1127,13 @@ function useDb() {
       unsubQuotes();
       unsubInvoices();
       unsubCorrespondence();
+      unsubSites();
+      unsubCottages();
     };
   }, []);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [] } : null;
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: sitesList || [], cottages: cottagesList || [] } : null;
   const persist = useCallback(async (next) => {
-    const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, ...rest } = next;
+    const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, sites, cottages, ...rest } = next;
     setMainData(rest);
     const attempt = () => DOC_REF.set(rest);
     lastAttempt.current = attempt;
@@ -1276,13 +1309,63 @@ function useDb() {
       setSaveError(`Couldn't remove that correspondence${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
+  const saveSite = useCallback(async (site) => {
+    const attempt = () => SITES_REF.doc(site.id).set(site);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that site${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteSite = useCallback(async (id) => {
+    const attempt = () => SITES_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that site${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const saveCottage = useCallback(async (cottage) => {
+    const attempt = () => COTTAGES_REF.doc(cottage.id).set(cottage);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that cottage${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteCottage = useCallback(async (id) => {
+    const attempt = () => COTTAGES_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that cottage${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const bulkWriteSites = useCallback(async (sites) => {
+    const attempt = () => commitInChunks(sites.map((s) => ({ type: "set", ref: SITES_REF.doc(s.id), data: s })));
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save those site changes${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
   const error = saveError || connectionError;
   const retry = useCallback(() => {
     if (!lastAttempt.current) return;
     const attempt = lastAttempt.current;
     attempt().then(() => setSaveError(null)).catch((e) => setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
   }, []);
-  return { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, retry };
+  return { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry };
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
@@ -1598,7 +1681,7 @@ function SendQuoteConfirmModal({ quote, customer, onConfirm, onCancel }) {
     "Yes, send"
   )));
 }
-function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, onClose }) {
+function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
     site: "Site",
@@ -1642,6 +1725,12 @@ function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, s
     } else if (entry.type === "invoice") {
       persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
       saveInvoice(entry.data);
+    } else if (entry.type === "site") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveSite(entry.data);
+    } else if (entry.type === "cottage") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveCottage(entry.data);
     } else {
       persist({ ...restoreTrashItem(db, entry.id), activityLog });
     }
@@ -1806,7 +1895,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
-function SitesView({ db, persist, saveWorkOrder, readOnly, filterPrefill }) {
+function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -1829,9 +1918,9 @@ function SitesView({ db, persist, saveWorkOrder, readOnly, filterPrefill }) {
   };
   const save = (site) => {
     const exists = db.sites.some((s) => s.id === site.id);
-    const sites = exists ? db.sites.map((s) => s.id === site.id ? site : s) : [...db.sites, site];
     const activityLog = addLog(db, actor, exists ? `Updated site ${site.number}` : `Added site ${site.number}`);
-    persist({ ...db, sites, activityLog });
+    persist({ ...db, activityLog });
+    saveSite(site);
     setModal(null);
   };
   const bulkAdd = (numbers) => {
@@ -1849,7 +1938,8 @@ function SitesView({ db, persist, saveWorkOrder, readOnly, filterPrefill }) {
       return;
     }
     const activityLog = addLog(db, actor, `Bulk-added ${newSites.length} site${newSites.length === 1 ? "" : "s"}`);
-    persist({ ...db, sites: [...db.sites, ...newSites], activityLog });
+    persist({ ...db, activityLog });
+    bulkWriteSites(newSites);
     setBulkOpen(false);
   };
   const bulkEdit = (field, value, ids) => {
@@ -1876,15 +1966,19 @@ function SitesView({ db, persist, saveWorkOrder, readOnly, filterPrefill }) {
       sites = db.sites.map((s) => idSet.has(s.id) ? { ...s, [field]: value } : s);
       fieldLabel = { section: "section", hookups: "hookups", notes: "notes" }[field] || field;
     }
+    const changedSites = sites.filter((s) => idSet.has(s.id));
     const activityLog = addLog(db, actor, `Bulk-updated ${fieldLabel} for ${ids.length} site${ids.length === 1 ? "" : "s"}`);
-    persist({ ...db, sites, activityLog });
+    persist({ ...db, activityLog });
+    bulkWriteSites(changedSites);
     setBulkEditOpen(false);
   };
   const remove = (id) => {
-    var _a2, _b2;
+    var _a2;
     const site = db.sites.find((s) => s.id === id);
     const activityLog = addLog(db, actor, `Removed site ${(_a2 = site == null ? void 0 : site.number) != null ? _a2 : ""} (moved to trash)`);
-    persist({ ...trashItem(db, "site", site, `Site ${(_b2 = site == null ? void 0 : site.number) != null ? _b2 : ""}`), activityLog });
+    const entry = { id: uid(), type: "site", data: site, label: `Site ${(site == null ? void 0 : site.number) || ""}`, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteSite(id);
     confirm.clear();
   };
   const filtered = db.sites.filter((s) => {
@@ -1968,6 +2062,7 @@ function SitesView({ db, persist, saveWorkOrder, readOnly, filterPrefill }) {
       db,
       persist,
       saveWorkOrder,
+      saveCottage,
       readOnly,
       onClose: () => setDetailId(null),
       onEdit: (s) => {
@@ -2086,7 +2181,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
     selected.size === 1 ? "" : "s"
   )));
 }
-function SiteDetailModal({ site, db, persist, saveWorkOrder, readOnly, onClose, onEdit }) {
+function SiteDetailModal({ site, db, persist, saveWorkOrder, saveCottage, readOnly, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -2126,6 +2221,7 @@ function SiteDetailModal({ site, db, persist, saveWorkOrder, readOnly, onClose, 
       db,
       persist,
       saveWorkOrder,
+      saveCottage,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCottageId(null),
@@ -2139,6 +2235,7 @@ function SiteDetailModal({ site, db, persist, saveWorkOrder, readOnly, onClose, 
       db,
       persist,
       saveWorkOrder,
+      saveCottage,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCustomerId(null),
@@ -2319,7 +2416,7 @@ function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreate
   const body = /* @__PURE__ */ React.createElement("div", { className: "p-4" }, infoBlock, actions);
   return /* @__PURE__ */ React.createElement("div", { className: "fixed sm:absolute left-0 right-0 sm:left-auto sm:right-4 bottom-0 sm:bottom-auto sm:top-4 w-full sm:w-80 bg-[#FFFDFA] border border-[#E2DED5] rounded-t-xl sm:rounded-xl shadow-2xl z-30 max-h-[70vh] overflow-y-auto" }, header, body);
 }
-function CampgroundMapView({ db, persist, saveWorkOrder, isAdminOrManager, onCreateWorkOrder }) {
+function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder }) {
   const actor = useCurrentActor();
   const sites = db.sites || [];
   const mapInfo = db.campgroundMap;
@@ -2442,8 +2539,8 @@ function CampgroundMapView({ db, persist, saveWorkOrder, isAdminOrManager, onCre
     if (draggingRef.current) {
       const { siteId, pos } = draggingRef.current;
       draggingRef.current = null;
-      const nextSites = sites.map((s) => s.id === siteId ? { ...s, mapX: pos.xPct, mapY: pos.yPct } : s);
-      persist({ ...db, sites: nextSites });
+      const site = sites.find((s) => s.id === siteId);
+      if (site) saveSite({ ...site, mapX: pos.xPct, mapY: pos.yPct });
     }
   };
   const handleCanvasClick = (e) => {
@@ -2453,9 +2550,9 @@ function CampgroundMapView({ db, persist, saveWorkOrder, isAdminOrManager, onCre
     }
     const { xPct, yPct } = posFromEvent(e);
     const site = sites.find((s) => s.id === placingSiteId);
-    const nextSites = sites.map((s) => s.id === placingSiteId ? { ...s, mapX: xPct, mapY: yPct } : s);
     const activityLog = addLog(db, actor, `Placed Site ${site ? site.number : ""} on the campground map`);
-    persist({ ...db, sites: nextSites, activityLog });
+    persist({ ...db, activityLog });
+    if (site) saveSite({ ...site, mapX: xPct, mapY: yPct });
     setPlacingSiteId(null);
     setToast(`Site ${site ? site.number : ""} placed`);
   };
@@ -2466,9 +2563,9 @@ function CampgroundMapView({ db, persist, saveWorkOrder, isAdminOrManager, onCre
     viewportRef.current.setPointerCapture(e.pointerId);
   };
   const unpinSite = (site) => {
-    const nextSites = sites.map((s) => s.id === site.id ? { ...s, mapX: null, mapY: null } : s);
     const activityLog = addLog(db, actor, `Removed Site ${site.number} from the campground map`);
-    persist({ ...db, sites: nextSites, activityLog });
+    persist({ ...db, activityLog });
+    saveSite({ ...site, mapX: null, mapY: null });
     setSelectedSiteId(null);
   };
   const placedSites = sites.filter((s) => s.mapX != null && s.mapY != null);
@@ -2581,7 +2678,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, isAdminOrManager, onCre
       },
       onUnpin: unpinSite
     }
-  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, readOnly: true, onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
+  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, saveCottage, readOnly: true, onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
 }
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
@@ -2625,7 +2722,7 @@ function colorDot(name) {
   const key = Object.keys(COLOR_SWATCH).find((k) => k.toLowerCase() === (name || "").trim().toLowerCase());
   return key ? COLOR_SWATCH[key] : "#B7AC96";
 }
-function CottagesView({ db, persist, saveWorkOrder, saveCustomer, readOnly, canTransfer, filterPrefill }) {
+function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly, canTransfer, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -2638,7 +2735,6 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, readOnly, canT
   const save = (c, ownerAction) => {
     var _a2;
     const exists = db.cottages.some((x) => x.id === c.id);
-    const cottages = exists ? db.cottages.map((x) => x.id === c.id ? c : x) : [...db.cottages, c];
     let changedCustomer = null;
     let activityLog = addLog(db, actor, exists ? `Updated cottage ${c.name}` : `Added cottage ${c.name}`);
     if (!exists && ownerAction && c.siteId) {
@@ -2669,15 +2765,18 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, readOnly, canT
         activityLog = addLog({ activityLog }, actor, `Added ${newCustomer.name} as owner of ${c.name}`);
       }
     }
-    persist({ ...db, cottages, activityLog });
+    persist({ ...db, activityLog });
+    saveCottage(c);
     if (changedCustomer) saveCustomer(changedCustomer);
     setModal(null);
   };
   const remove = (id) => {
-    var _a2, _b2;
+    var _a2;
     const cottage = db.cottages.find((c) => c.id === id);
     const activityLog = addLog(db, actor, `Removed cottage ${(_a2 = cottage == null ? void 0 : cottage.name) != null ? _a2 : ""} (moved to trash)`);
-    persist({ ...trashItem(db, "cottage", cottage, (_b2 = cottage == null ? void 0 : cottage.name) != null ? _b2 : "Cottage"), activityLog });
+    const entry = { id: uid(), type: "cottage", data: cottage, label: (cottage == null ? void 0 : cottage.name) || "Cottage", deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteCottage(id);
     confirm.clear();
   };
   const filtered = db.cottages.filter((c) => {
@@ -2729,6 +2828,8 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, readOnly, canT
       db,
       persist,
       saveWorkOrder,
+      saveCottage,
+      saveSite,
       readOnly,
       canTransfer: canTransfer != null ? canTransfer : !readOnly,
       onClose: () => setDetailId(null),
@@ -2746,7 +2847,7 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, readOnly, canT
     }
   ));
 }
-function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onClose, linkedProspect, listing }) {
+function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, saveSite, saveCottage, onClose, linkedProspect, listing }) {
   const [takingOffSite, setTakingOffSite] = useState(false);
   const [offSiteNotes, setOffSiteNotes] = useState("");
   const [destination, setDestination] = useState("");
@@ -2806,9 +2907,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       const remainingSites = customerSiteIds(c).filter((sId) => sId !== site.id);
       return { ...c, siteIds: remainingSites, siteId: remainingSites[0] || null };
     });
-    const cottages = db.cottages.map(
-      (c) => c.id === cottage.id ? { ...c, siteId: null, offSiteInfo: composedOffSiteInfo } : c
-    );
+    const updatedCottage = { ...cottage, siteId: null, offSiteInfo: composedOffSiteInfo };
     const transferEntry = {
       id: uid(),
       date: todayISO(),
@@ -2817,11 +2916,11 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       cottageName: cottage.name,
       note: composedOffSiteInfo
     };
-    const sites = db.sites.map(
-      (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
-    );
+    const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
     const activityLog = addLog(db, actor, `${cottage.name} (Site ${site.number}) sold and taken off-site${listing ? ` (${formatPrice(soldPriceNum)})` : ""} \u2014 kept on file for future service`);
-    persist(applyListingPrice(closeDealForProspect({ ...db, cottages, sites, activityLog }, actor)));
+    persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
+    saveCottage(updatedCottage);
+    saveSite(updatedSite);
     commitInChunks(changedCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
     });
     onClose();
@@ -2854,11 +2953,10 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
         toCustomerName: target.name,
         cottageName: cottage.name
       };
-      const sites = db.sites.map(
-        (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
-      );
+      const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
       const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
-      persist(applyListingPrice(closeDealForProspect({ ...db, sites, activityLog }, actor)));
+      persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
+      saveSite(updatedSite);
       commitInChunks(changedCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
       });
       onClose();
@@ -2888,11 +2986,10 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
       toCustomerName: newCustomer.name,
       cottageName: cottage.name
     };
-    const sites = db.sites.map(
-      (s) => s.id === site.id ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
-    );
+    const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
     const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
-    persist(applyListingPrice(closeDealForProspect({ ...db, sites, activityLog }, actor)));
+    persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
+    saveSite(updatedSite);
     commitInChunks([...changedOldCustomers, newCustomer].map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
     });
     onClose();
@@ -2965,7 +3062,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, onCl
     takingOffSite ? "Complete Sale" : "Complete Transfer"
   )));
 }
-function ApplianceTransferModal({ appliance, cottage, cottages, db, persist, onClose, onTransferred }) {
+function ApplianceTransferModal({ appliance, cottage, cottages, db, persist, saveCottage, onClose, onTransferred }) {
   const [destCottageId, setDestCottageId] = useState("");
   const actor = useCurrentActor();
   const otherCottages = cottages.filter((c) => c.id !== cottage.id);
@@ -2981,13 +3078,10 @@ function ApplianceTransferModal({ appliance, cottage, cottages, db, persist, onC
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     const movedAppliance = { ...appliance, serviceLog: [transferNote, ...appliance.serviceLog || []] };
-    const nextCottages = db.cottages.map((c) => {
-      if (c.id === cottage.id) return { ...c, appliances: (c.appliances || []).filter((a) => a.id !== appliance.id) };
-      if (c.id === destCottage.id) return { ...c, appliances: [...c.appliances || [], movedAppliance] };
-      return c;
-    });
     const activityLog = addLog(db, actor, `Transferred ${appliance.type} (${appliance.serialNumber || "no serial"}) from ${cottage.name} to ${destCottage.name}`);
-    persist({ ...db, cottages: nextCottages, activityLog });
+    persist({ ...db, activityLog });
+    saveCottage({ ...cottage, appliances: (cottage.appliances || []).filter((a) => a.id !== appliance.id) });
+    saveCottage({ ...destCottage, appliances: [...destCottage.appliances || [], movedAppliance] });
     onTransferred();
   };
   return /* @__PURE__ */ React.createElement(Modal, { title: `Transfer ${appliance.type}`, onClose }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Moves this appliance \u2014 serial number, warranty date, and full service history \u2014 to another cottage. A record of the transfer is kept in its service log."), /* @__PURE__ */ React.createElement(Field, { label: "Destination Cottage" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
@@ -3074,7 +3168,7 @@ function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onT
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
 }
-function CottageDetailModal({ cottage, db, persist, saveWorkOrder, readOnly, canTransfer, nested, onClose, onEdit }) {
+function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, readOnly, canTransfer, nested, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -3094,8 +3188,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, readOnly, can
   const appliances = cottage.appliances || [];
   const viewingAppliance = viewingApplianceId ? appliances.find((a) => a.id === viewingApplianceId) : null;
   const updateCottageAppliances = (nextAppliances) => {
-    const cottages = db.cottages.map((c) => c.id === cottage.id ? { ...c, appliances: nextAppliances } : c);
-    persist({ ...db, cottages });
+    saveCottage({ ...cottage, appliances: nextAppliances });
   };
   const saveAppliance = (appliance) => {
     const exists = appliances.some((a) => a.id === appliance.id);
@@ -3185,6 +3278,8 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, readOnly, can
       oldCustomers: currentOwners,
       db,
       persist,
+      saveSite,
+      saveCottage,
       onClose: () => setTransferOpen(false)
     }
   ), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null) }), viewingCustomerId && /* @__PURE__ */ React.createElement(
@@ -3194,6 +3289,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, readOnly, can
       db,
       persist,
       saveWorkOrder,
+      saveCottage,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCustomerId(null),
@@ -3221,6 +3317,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, readOnly, can
     cottages: db.cottages,
     db,
     persist,
+    saveCottage,
     onClose: () => setApplianceTransferModal(null),
     onTransferred: () => {
       setApplianceTransferModal(null);
@@ -3308,7 +3405,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 
-function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, filterPrefill }) {
+function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -3420,6 +3517,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       persist,
       saveWorkOrder,
       saveCorrespondence,
+      saveCottage,
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -3494,7 +3592,7 @@ function CorrespondenceThread({ customer, db, saveCorrespondence }) {
   });
   return /* @__PURE__ */ React.createElement("div", null, rows);
 }
-function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, nested, onClose, onEdit }) {
+function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, saveCottage, nested, onClose, onEdit }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   if (!customer) return null;
@@ -3529,6 +3627,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
       db,
       persist,
       saveWorkOrder,
+      saveCottage,
       readOnly: true,
       nested: true,
       onClose: () => setViewingCottageId(null),
@@ -6407,7 +6506,7 @@ function SalesReportView({ db }) {
     className: inputCls + " w-auto"
   }, availableYears.map((y) => /* @__PURE__ */ React.createElement("option", { key: y, value: y }, y)))), summaryCards, categoryCards, monthlyChart);
 }
-function CottageOrdersView({ db, persist, saveCustomer }) {
+function CottageOrdersView({ db, persist, saveCustomer, saveCottage }) {
   var _a, _b;
   const customerOrders = db.cottageOrders.filter((o) => o.type === "Customer Order");
   const [modal, setModal] = useState(null);
@@ -6516,7 +6615,8 @@ function CottageOrdersView({ db, persist, saveCustomer }) {
       }
     }
     const activityLog = addLog(db, actor, `Created cottage record "${newCottage.name}" from delivered order`);
-    persist({ ...db, cottages: [...db.cottages, newCottage], activityLog });
+    persist({ ...db, activityLog });
+    saveCottage(newCottage);
     if (changedCustomer) saveCustomer(changedCustomer);
     setCreateCottageFor(null);
   };
@@ -6640,7 +6740,7 @@ function InventoryConditionPickModal({ onPick, onClose }) {
     /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "A trade-in, former rental, or unit already on hand.")
   )));
 }
-function InventoryView({ db, persist }) {
+function InventoryView({ db, persist, saveCottage }) {
   var _a, _b;
   const displayUnits = db.cottageOrders.filter((o) => o.type === "Display Model");
   const [modal, setModal] = useState(null);
@@ -6710,7 +6810,8 @@ function InventoryView({ db, persist }) {
       sunroom: order.sunroom || ""
     };
     const activityLog = addLog(db, actor, `Created cottage record "${newCottage.name}" from display unit`);
-    persist({ ...db, cottages: [...db.cottages, newCottage], activityLog });
+    persist({ ...db, activityLog });
+    saveCottage(newCottage);
     setCreateCottageFor(null);
   };
   const filtered = displayUnits.filter((o) => {
@@ -7421,7 +7522,7 @@ function MoveToDepositModal({ deal, db, onConvertOrder, onConvertDisplay, onConv
   const body = step === "pick-display" ? displayPicker : step === "pick-consignment" ? listingPicker : chooser;
   return /* @__PURE__ */ React.createElement(Modal, { title: `Move ${deal.name} to Deposit`, onClose }, step === "choose" && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "What are they buying?"), body);
 }
-function CloseUnitSaleModal({ deal, order, db, persist, onClose, allowTradeIn }) {
+function CloseUnitSaleModal({ deal, order, db, persist, saveCustomer, saveSite, saveCottage, deleteCottage, onClose, allowTradeIn }) {
   const initialStep = order.locationChoice === "offsite" ? "details" : order.locationChoice === "onsite" ? (allowTradeIn ? "trade-question" : order.siteId ? "details" : "site-only") : "location";
   const [step, setStep] = useState(initialStep);
   const [takingOffSite, setTakingOffSite] = useState(order.locationChoice === "offsite");
@@ -7466,12 +7567,13 @@ function CloseUnitSaleModal({ deal, order, db, persist, onClose, allowTradeIn })
   ].filter(Boolean).join("\n");
   const submit = () => {
     if (!canSubmitDetails) return;
-    let cottages = db.cottages;
     let cottageOrders = db.cottageOrders;
-    let sites = db.sites;
-    let customers = db.customers;
     let dbNext = db;
     let noteExtra = "";
+    let changedCustomers = [];
+    let changedSite = null;
+    let savedCottage = null;
+    let removedCottageId = null;
     if (!takingOffSite) {
       if (hasTradeIn && tradeInCottageId) {
         const oldCottage = db.cottages.find((c) => c.id === tradeInCottageId);
@@ -7501,8 +7603,8 @@ function CloseUnitSaleModal({ deal, order, db, persist, onClose, allowTradeIn })
           };
           cottageOrders = [...db.cottageOrders, usedEntry];
           dbNext = trashItem({ ...db, cottageOrders }, "cottage", oldCottage, oldCottage.name);
-          cottages = dbNext.cottages;
           cottageOrders = dbNext.cottageOrders;
+          removedCottageId = oldCottage.id;
           noteExtra = ` \u2014 traded in ${oldCottage.name} (${formatPrice(tradeInNum)} credit)`;
         }
       }
@@ -7521,17 +7623,13 @@ function CloseUnitSaleModal({ deal, order, db, persist, onClose, allowTradeIn })
         deckPorch: order.deckPorch || "",
         sunroom: order.sunroom || ""
       };
-      cottages = [...cottages, newCottage];
+      savedCottage = newCottage;
       if (buyer) {
-        customers = (dbNext.customers || db.customers).map((c) => {
-          if (c.id !== buyer.id) return c;
-          const ids = customerSiteIds(c);
-          if (ids.includes(siteId)) return c;
+        const ids = customerSiteIds(buyer);
+        if (!ids.includes(siteId)) {
           const nextIds = [...ids, siteId];
-          return { ...c, siteIds: nextIds, siteId: nextIds[0] };
-        });
-      } else {
-        customers = dbNext.customers || db.customers;
+          changedCustomers = [{ ...buyer, siteIds: nextIds, siteId: nextIds[0] }];
+        }
       }
       const transferEntry = {
         id: uid(),
@@ -7540,16 +7638,13 @@ function CloseUnitSaleModal({ deal, order, db, persist, onClose, allowTradeIn })
         toCustomerName: (buyer == null ? void 0 : buyer.name) || deal.name,
         cottageName: newCottage.name
       };
-      sites = (dbNext.sites || db.sites).map(
-        (s) => s.id === siteId ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
-      );
+      if (targetSite) {
+        changedSite = { ...targetSite, transferHistory: [transferEntry, ...targetSite.transferHistory || []] };
+      }
     } else if (existingCottageForOrder) {
-      cottages = cottages.map(
-        (c) => c.id === existingCottageForOrder.id ? { ...c, siteId: null, offSiteInfo: composedOffSiteInfo } : c
-      );
-      customers = (dbNext.customers || db.customers).map((c) => {
+      savedCottage = { ...existingCottageForOrder, siteId: null, offSiteInfo: composedOffSiteInfo };
+      changedCustomers = db.customers.filter((c) => customerSiteIds(c).includes(order.siteId)).map((c) => {
         const ids = customerSiteIds(c);
-        if (!ids.includes(order.siteId)) return c;
         const remaining = ids.filter((sId) => sId !== order.siteId);
         return { ...c, siteIds: remaining, siteId: remaining[0] || null };
       });
@@ -7561,18 +7656,23 @@ function CloseUnitSaleModal({ deal, order, db, persist, onClose, allowTradeIn })
         cottageName: existingCottageForOrder.name,
         note: composedOffSiteInfo
       };
-      sites = db.sites.map(
-        (s) => s.id === order.siteId ? { ...s, transferHistory: [transferEntry, ...s.transferHistory || []] } : s
-      );
+      const orderSite = db.sites.find((s) => s.id === order.siteId);
+      if (orderSite) {
+        changedSite = { ...orderSite, transferHistory: [transferEntry, ...orderSite.transferHistory || []] };
+      }
       noteExtra = " \u2014 kept on file for future service";
     }
-    cottageOrders = (takingOffSite ? cottageOrders : cottageOrders).map(
+    cottageOrders = cottageOrders.map(
       (o) => o.id === order.id ? { ...o, totalPrice: priceNum, depositAmount: priceNum, paidInFullDate: todayISO(), soldDate: o.soldDate || todayISO(), notes: takingOffSite ? composedOffSiteInfo : o.notes } : o
     );
     const entry = { id: uid(), text: `Deal closed \u2014 marked Sold and Paid in Full on ${todayISO()} (${formatPrice(priceNum)})${noteExtra}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Sold", commentLog: [entry, ...d.commentLog || []] } : d);
     const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold (${formatPrice(priceNum)})${takingOffSite ? " \u2014 taken off-site" : ` \u2014 Site ${(db.sites.find((s) => s.id === siteId) || {}).number || ""}`}${noteExtra}`);
-    persist({ ...dbNext, cottages, cottageOrders, sites, customers, deals, activityLog });
+    persist({ ...dbNext, cottageOrders, deals, activityLog });
+    if (savedCottage) saveCottage(savedCottage);
+    if (removedCottageId) deleteCottage(removedCottageId);
+    if (changedSite) saveSite(changedSite);
+    changedCustomers.forEach((c) => saveCustomer(c));
     onClose();
   };
   if (step === "location") {
@@ -7667,7 +7767,7 @@ function DealFellThroughModal({ deal, onResolve, onClose }) {
     "Confirm \u2014 Deal Fell Through"
   )));
 }
-function DealsView({ db, persist, saveWorkOrder, saveCustomer }) {
+function DealsView({ db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
   const [filter, setFilter] = useState("");
@@ -7991,6 +8091,8 @@ function DealsView({ db, persist, saveWorkOrder, saveCustomer }) {
     listing: closeDealTarget.listing,
     db,
     persist,
+    saveSite,
+    saveCottage,
     onClose: () => setCloseDealTarget(null)
   }), closeDisplayTarget && /* @__PURE__ */ React.createElement(CloseUnitSaleModal, {
     deal: closeDisplayTarget.deal,
@@ -7998,6 +8100,10 @@ function DealsView({ db, persist, saveWorkOrder, saveCustomer }) {
     allowTradeIn: closeDisplayTarget.allowTradeIn,
     db,
     persist,
+    saveCustomer,
+    saveSite,
+    saveCottage,
+    deleteCottage,
     onClose: () => setCloseDisplayTarget(null)
   }), closeDealPriceTarget && /* @__PURE__ */ React.createElement(SalePriceModal, {
     title: `Close Deal \u2014 ${closeDealPriceTarget.deal.name}`,
@@ -8249,7 +8355,7 @@ function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewN
     ))
   );
 }
-function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
+function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
   var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
   useEffect(() => {
@@ -8359,7 +8465,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, onCreateI
     const updated = { ...wo, status: newStatus };
     let parts = db.parts;
     let sunspaceOrders = db.sunspaceOrders;
-    let cottages = db.cottages;
+    let changedCottage = null;
     if (newStatus === "Completed" && wo.status !== "Completed") {
       updated.completedDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       updated.archived = false;
@@ -8381,18 +8487,18 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, onCreateI
         };
         sunspaceOrders = (db.sunspaceOrders || []).map((o) => o.id === linkedSunspaceOrder.id ? { ...o, items: nextItems } : o);
         if (linkedSunspaceOrder.cottageId && linkedSunspaceOrder.status === "Work Complete") {
-          cottages = db.cottages.map((c) => {
-            if (c.id !== linkedSunspaceOrder.cottageId) return c;
-            const current = c.sunspaceItems || emptySunspaceItems();
-            return {
-              ...c,
+          const cottageToUpdate = db.cottages.find((c) => c.id === linkedSunspaceOrder.cottageId);
+          if (cottageToUpdate) {
+            const current = cottageToUpdate.sunspaceItems || emptySunspaceItems();
+            changedCottage = {
+              ...cottageToUpdate,
               sunspaceItems: {
                 ...current,
                 sunroof: nextItems.sunroof && nextItems.sunroof.included ? { ...current.sunroof, warrantyExpiration } : current.sunroof,
                 sunroom: nextItems.sunroom && nextItems.sunroom.included ? { ...current.sunroom, warrantyExpiration } : current.sunroom
               }
             };
-          });
+          }
         }
       }
     } else if (wo.status === "Completed" && newStatus !== "Completed") {
@@ -8406,8 +8512,9 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, onCreateI
       }
     }
     const activityLog = addLog(db, actor, `Work order "${wo.title}" moved to ${newStatus}`);
-    persist({ ...db, parts, sunspaceOrders, cottages, activityLog });
+    persist({ ...db, parts, sunspaceOrders, activityLog });
     saveWorkOrder(updated);
+    if (changedCottage) saveCottage(changedCottage);
     if (newStatus === "Completed" && wo.status !== "Completed" && wo.cottageId) {
       const cottage = db.cottages.find((c) => c.id === wo.cottageId);
       if (cottage && (cottage.appliances || []).length > 0) {
@@ -8426,9 +8533,9 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, onCreateI
     };
     const nextAppliances = (cottage.appliances || []).map((a) => a.id === applianceId ? { ...a, serviceLog: [entry, ...a.serviceLog || []] } : a);
     const matched = nextAppliances.find((a) => a.id === applianceId);
-    const cottages = db.cottages.map((c) => c.id === cottage.id ? { ...c, appliances: nextAppliances } : c);
     const activityLog = addLog(db, actor, `Logged work order "${wo.title}" to ${(matched == null ? void 0 : matched.type) || "an appliance"} on ${cottage.name}`);
-    persist({ ...db, cottages, activityLog });
+    persist({ ...db, activityLog });
+    saveCottage({ ...cottage, appliances: nextAppliances });
     setApplianceLogPrompt(null);
   };
   const advance = (wo) => {
@@ -11537,7 +11644,7 @@ function SeasonalFeeInput({ value, onCommit }) {
     }
   );
 }
-function SeasonalFeesView({ db, persist }) {
+function SeasonalFeesView({ db, persist, saveSite, bulkWriteSites }) {
   const actor = useCurrentActor();
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(/* @__PURE__ */ new Set());
@@ -11575,15 +11682,17 @@ function SeasonalFeesView({ db, persist }) {
   const clearSelection = () => setSelected(/* @__PURE__ */ new Set());
   const updateFee = (siteId, value) => {
     if (value == null) return;
-    const nextSites = db.sites.map((s) => s.id === siteId ? { ...s, seasonalFeeHistory: upsertRateHistory(s, todayISO(), value), seasonalFee: value } : s);
-    persist({ ...db, sites: nextSites });
+    const site = db.sites.find((s) => s.id === siteId);
+    if (!site) return;
+    saveSite({ ...site, seasonalFeeHistory: upsertRateHistory(site, todayISO(), value), seasonalFee: value });
   };
   const applyBulkSet = () => {
     const amount = Number(bulkAmount);
     if (!Number.isFinite(amount) || amount < 0 || selected.size === 0 || !bulkEffectiveDate) return;
-    const nextSites = db.sites.map((s) => selected.has(s.id) ? { ...s, seasonalFeeHistory: upsertRateHistory(s, bulkEffectiveDate, amount), seasonalFee: bulkEffectiveDate <= todayISO() ? amount : s.seasonalFee != null ? s.seasonalFee : null } : s);
+    const changedSites = db.sites.filter((s) => selected.has(s.id)).map((s) => ({ ...s, seasonalFeeHistory: upsertRateHistory(s, bulkEffectiveDate, amount), seasonalFee: bulkEffectiveDate <= todayISO() ? amount : s.seasonalFee != null ? s.seasonalFee : null }));
     const activityLog = addLog(db, actor, `Set seasonal fee to ${React.createElement(Money, { value: amount })}/mo for ${selected.size} site(s), effective ${bulkEffectiveDate}`);
-    persist({ ...db, sites: nextSites, activityLog });
+    persist({ ...db, activityLog });
+    bulkWriteSites(changedSites);
     setBulkAmount("");
     setToast(`Updated ${selected.size} site(s)`);
   };
@@ -11592,24 +11701,23 @@ function SeasonalFeesView({ db, persist }) {
     if (!Number.isFinite(raw) || raw === 0 || !increaseEffectiveDate) return;
     const targetIds = selected.size > 0 ? selected : new Set(sitesWithFee.map((s) => s.id));
     if (targetIds.size === 0) return;
-    const nextSites = db.sites.map((s) => {
-      if (!targetIds.has(s.id)) return s;
+    const changedSites = db.sites.filter((s) => targetIds.has(s.id)).map((s) => {
       const current = getCurrentRate(s);
       const updated = Math.round((mode === "pct" ? current * (1 + raw / 100) : current + raw) * 100) / 100;
       return { ...s, seasonalFeeHistory: upsertRateHistory(s, increaseEffectiveDate, updated), seasonalFee: increaseEffectiveDate <= todayISO() ? updated : s.seasonalFee != null ? s.seasonalFee : null };
     });
     const label = mode === "pct" ? `${raw}%` : React.createElement(Money, { value: raw });
     const activityLog = addLog(db, actor, `Scheduled seasonal fee increase of ${label} for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
-    persist({ ...db, sites: nextSites, activityLog });
+    persist({ ...db, activityLog });
+    bulkWriteSites(changedSites);
     setIncreasePct("");
     setIncreaseFlat("");
     setToast(`Scheduled increase for ${targetIds.size} site(s), effective ${increaseEffectiveDate}`);
   };
   const bulkImportLotFees = (rows, year) => {
     if (!rows || rows.length === 0) return;
-    const nextSites = db.sites.map((s) => {
+    const changedSites = db.sites.filter((s) => rows.some((r) => r.siteId === s.id)).map((s) => {
       const row = rows.find((r) => r.siteId === s.id);
-      if (!row) return s;
       let history = (s.seasonalFeeHistory || []).filter((h) => h.date < `${year}-01-01` || h.date > `${year}-12-31`);
       if (row.months === 9) {
         history = upsertRateHistory({ ...s, seasonalFeeHistory: history }, `${year}-01-01`, 0);
@@ -11621,7 +11729,8 @@ function SeasonalFeesView({ db, persist }) {
       return { ...s, seasonalFeeHistory: history, seasonalFee: currentRate };
     });
     const activityLog = addLog(db, actor, `Bulk imported lot fees from spreadsheet for ${rows.length} site(s) (season ${year})`);
-    persist({ ...db, sites: nextSites, activityLog });
+    persist({ ...db, activityLog });
+    bulkWriteSites(changedSites);
     setBulkImportOpen(false);
     setToast(`Imported lot fees for ${rows.length} site(s)`);
   };
@@ -11874,7 +11983,7 @@ const TABS = [
   { key: "sites", label: "Sites", group: "accounting", hidden: true }
 ];
 function AppContent() {
-  const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, retry } = useDb();
+  const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
   const [tab, setTab] = useState("dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
   const [mode, setMode] = useState("service");
@@ -12073,9 +12182,12 @@ function AppContent() {
       const importedCustomers = next.customers || [];
       const importedQuotes = next.quotes || [];
       const importedInvoices = next.invoices || [];
+      const importedCorrespondence = next.correspondence || [];
+      const importedSites = next.sites || [];
+      const importedCottages = next.cottages || [];
       persist(next);
       try {
-        const [existingPropaneSnap, existingWinterizingSnap, existingWorkOrdersSnap, existingCustomersSnap, existingQuotesSnap, existingInvoicesSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get(), CUSTOMERS_REF.get(), QUOTES_REF.get(), INVOICES_REF.get()]);
+        const [existingPropaneSnap, existingWinterizingSnap, existingWorkOrdersSnap, existingCustomersSnap, existingQuotesSnap, existingInvoicesSnap, existingCorrespondenceSnap, existingSitesSnap, existingCottagesSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get(), CUSTOMERS_REF.get(), QUOTES_REF.get(), INVOICES_REF.get(), CORRESPONDENCE_REF.get(), SITES_REF.get(), COTTAGES_REF.get()]);
         const ops = [];
         existingPropaneSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingWinterizingSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
@@ -12083,12 +12195,18 @@ function AppContent() {
         existingCustomersSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingQuotesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingInvoicesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingCorrespondenceSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingSitesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingCottagesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         importedPropane.forEach((r) => ops.push({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWinterizing.forEach((r) => ops.push({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWorkOrders.forEach((w) => ops.push({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w }));
         importedCustomers.forEach((c) => ops.push({ type: "set", ref: CUSTOMERS_REF.doc(c.id || uid()), data: c }));
         importedQuotes.forEach((q) => ops.push({ type: "set", ref: QUOTES_REF.doc(q.id || uid()), data: q }));
         importedInvoices.forEach((i) => ops.push({ type: "set", ref: INVOICES_REF.doc(i.id || uid()), data: i }));
+        importedCorrespondence.forEach((c) => ops.push({ type: "set", ref: CORRESPONDENCE_REF.doc(c.id || uid()), data: c }));
+        importedSites.forEach((s) => ops.push({ type: "set", ref: SITES_REF.doc(s.id || uid()), data: s }));
+        importedCottages.forEach((c) => ops.push({ type: "set", ref: COTTAGES_REF.doc(c.id || uid()), data: c }));
         await commitInChunks(ops);
       } catch (e) {
       }
@@ -12188,7 +12306,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceQueueView, { db, saveCorrespondence, deleteCorrespondence, saveCustomer }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceQueueView, { db, saveCorrespondence, deleteCorrespondence, saveCustomer }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -12203,7 +12321,7 @@ function AppContent() {
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) })));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) })));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
