@@ -12094,7 +12094,69 @@ function FieldJobCard({ wo, db, onOpen }) {
     )
   );
 }
-function FieldTodayScreen({ db, actor, onOpenJob, onSeeAllJobs, onGoToRuns }) {
+const FIELD_SIGNUP_TYPE_META = {
+  winterizing: { label: "Winterizing", ref: WINTERIZING_REQUESTS_REF, Form: PendingSignupMatchForm },
+  propane: { label: "Propane", ref: PROPANE_REQUESTS_REF, Form: PendingPropaneMatchForm },
+  generalservice: { label: "General Service", ref: WORK_ORDERS_REF, Form: GeneralServiceMatchForm }
+};
+function FieldSignupsReviewModal({ entries, db, confirmPendingSignup, removePendingSignup, onClose, setToast }) {
+  const [reviewingEntry, setReviewingEntry] = useState(null);
+  const [unrecognizedOpen, setUnrecognizedOpen] = useState(false);
+  const recognized = entries.filter((e) => FIELD_SIGNUP_TYPE_META[e.type]);
+  const unrecognized = entries.filter((e) => !FIELD_SIGNUP_TYPE_META[e.type]);
+  const meta = reviewingEntry ? FIELD_SIGNUP_TYPE_META[reviewingEntry.type] : null;
+  return React.createElement(
+    React.Fragment,
+    null,
+    !reviewingEntry && !unrecognizedOpen && React.createElement(
+      Modal,
+      { title: "Sign-Ups Needing Review", onClose, wide: true },
+      recognized.length === 0 && unrecognized.length === 0 ? React.createElement(EmptyState, { text: "Nothing needs review right now." }) : React.createElement(
+        "div",
+        { className: "space-y-2" },
+        recognized.map((e) => React.createElement(
+          "button",
+          { key: e.id, type: "button", onClick: () => setReviewingEntry(e), className: "w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] text-left" },
+          React.createElement(
+            "span",
+            { className: "min-w-0" },
+            React.createElement("span", { className: "block text-sm font-medium text-[#1E1A13] truncate" }, e.submittedName || "(no name given)"),
+            React.createElement("span", { className: "block text-xs text-[#75716A]" }, FIELD_SIGNUP_TYPE_META[e.type].label, " \xB7 Site ", e.submittedSiteNumber || "?")
+          ),
+          React.createElement("span", { className: "text-xs font-semibold text-[#377249] flex-shrink-0" }, "Review")
+        )),
+        unrecognized.length > 0 && React.createElement("button", { type: "button", onClick: () => setUnrecognizedOpen(true), className: "w-full text-left px-4 py-3 rounded-lg border border-[#a8532a]/30 bg-[#F5E3D9] text-sm font-medium text-[#a8532a]" }, unrecognized.length, " sign-up", unrecognized.length === 1 ? "" : "s", " with an unrecognized type — tap to review")
+      )
+    ),
+    reviewingEntry && meta && React.createElement(
+      Modal,
+      { title: `Review ${meta.label} Sign-Up`, onClose: () => setReviewingEntry(null), wide: true },
+      React.createElement(meta.Form, {
+        entry: reviewingEntry,
+        db,
+        onConfirm: (built) => {
+          confirmPendingSignup(meta.ref, built, reviewingEntry.id);
+          setReviewingEntry(null);
+          setToast("Confirmed");
+        },
+        onDiscard: () => {
+          removePendingSignup(reviewingEntry.id);
+          setReviewingEntry(null);
+          setToast("Discarded");
+        },
+        onCancel: () => setReviewingEntry(null)
+      })
+    ),
+    unrecognizedOpen && React.createElement(UnrecognizedSignupsModal, {
+      entries: unrecognized,
+      onDiscard: (id) => removePendingSignup(id),
+      onClose: () => setUnrecognizedOpen(false)
+    })
+  );
+}
+function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const signupsNeedingReview = (pendingSignups || []).length;
   const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && (w.assignedTo || "").trim().toLowerCase() === (actor || "").trim().toLowerCase());
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
@@ -12144,6 +12206,30 @@ function FieldTodayScreen({ db, actor, onOpenJob, onSeeAllJobs, onGoToRuns }) {
       React.createElement("div", { className: `font-serif text-[44px] leading-none mt-1 ${pendingPropaneCount > 0 ? "text-[#a8532a]" : "text-[#1E1A13]"}` }, pendingPropaneCount),
       React.createElement("div", { className: "text-[13px] text-[#75716A] mt-1.5" }, pendingPropaneSubtitle)
     ),
+    reviewOpen && React.createElement(FieldSignupsReviewModal, {
+      entries: pendingSignups || [],
+      db,
+      confirmPendingSignup,
+      removePendingSignup,
+      setToast,
+      onClose: () => setReviewOpen(false)
+    }),
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setReviewOpen(true),
+        className: `w-full text-left rounded-[14px] border p-4 mb-4 ${signupsNeedingReview > 0 ? "border-[#e8d7b4] bg-[#FBEEDA]" : "border-[#E2DED5] bg-[#FFFDFA]"}`
+      },
+      React.createElement(
+        "div",
+        { className: "flex items-center justify-between" },
+        React.createElement("span", { className: "text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A]" }, "Sign-Ups Needing Review"),
+        React.createElement("span", { className: "text-[#75716A]" }, "→")
+      ),
+      React.createElement("div", { className: `font-serif text-[44px] leading-none mt-1 ${signupsNeedingReview > 0 ? "text-[#9A6B1F]" : "text-[#1E1A13]"}` }, signupsNeedingReview),
+      React.createElement("div", { className: "text-[13px] text-[#75716A] mt-1.5" }, signupsNeedingReview > 0 ? "From the online sign-up form" : "All caught up")
+    ),
     React.createElement(
       "div",
       { className: "flex items-center justify-between mb-2" },
@@ -12164,16 +12250,45 @@ function FieldTodayScreen({ db, actor, onOpenJob, onSeeAllJobs, onGoToRuns }) {
     )
   );
 }
-function FieldJobsScreen({ db, filter, onFilter, onOpenJob }) {
+function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, onOpenJob, setToast }) {
+  const [newOpen, setNewOpen] = useState(false);
   const filtered = db.workOrders.filter((w) => w.status === filter).sort((a, b) => {
     const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
     const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
     if (aFlag !== bFlag) return aFlag - bFlag;
     return (a.date || "").localeCompare(b.date || "");
   });
+  const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
+  const saveNew = (wo) => {
+    const activityLog = addLog(db, actor, `Created work order "${wo.title}"`);
+    persist({ ...db, activityLog });
+    saveWorkOrder(wo);
+    setNewOpen(false);
+    setToast("Work order created");
+  };
   return React.createElement(
     React.Fragment,
     null,
+    newOpen && React.createElement(
+      Modal,
+      { title: "New Work Order", onClose: () => setNewOpen(false), wide: true },
+      React.createElement(WorkOrderForm, {
+        initial: null,
+        sites: db.sites,
+        cottages: db.cottages,
+        staff: db.staff,
+        parts: db.parts,
+        customers: db.customers,
+        workGroups,
+        templates: db.workOrderTemplates,
+        taxRate: (db.settings || {}).taxRate != null ? db.settings.taxRate : 13,
+        onSave: saveNew,
+        onCancel: () => setNewOpen(false),
+        onDirtyChange: () => {
+        }
+      })
+    ),
+    React.createElement("button", { type: "button", onClick: () => setNewOpen(true), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Work Order"),
     React.createElement(
       "div",
       { className: "flex gap-2 mb-4" },
@@ -12688,7 +12803,7 @@ function FieldComingSoon({ label }) {
     React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Coming in a later update. Use the desktop view for this for now.")
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, onCreateInvoice, onGoToDesktopTab }) {
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -12734,8 +12849,18 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
     React.createElement(
       "div",
       { className: "flex-1 overflow-y-auto px-4 pt-3.5 pb-5" },
-      screen === "today" && React.createElement(FieldTodayScreen, { db, actor, onOpenJob: openJob, onSeeAllJobs: goToJobs, onGoToRuns: () => selectTab("runs") }),
-      screen === "jobs" && React.createElement(FieldJobsScreen, { db, filter: jobFilter, onFilter: setJobFilter, onOpenJob: openJob }),
+      screen === "today" && React.createElement(FieldTodayScreen, {
+        db,
+        actor,
+        pendingSignups,
+        confirmPendingSignup,
+        removePendingSignup,
+        setToast,
+        onOpenJob: openJob,
+        onSeeAllJobs: goToJobs,
+        onGoToRuns: () => selectTab("runs")
+      }),
+      screen === "jobs" && React.createElement(FieldJobsScreen, { db, persist, actor, saveWorkOrder, filter: jobFilter, onFilter: setJobFilter, onOpenJob: openJob, setToast }),
       screen === "job" && React.createElement(FieldJobDetailScreen, {
         db,
         persist,
@@ -13039,6 +13164,9 @@ function AppContent() {
       savePropaneRequest,
       saveWinterizingRequest,
       saveInvoice,
+      pendingSignups,
+      confirmPendingSignup,
+      removePendingSignup,
       onCreateInvoice: (order) => {
         createInvoiceFromSource(order, "workOrder");
         setFieldModeOverride("desktop");
