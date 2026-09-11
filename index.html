@@ -10605,6 +10605,46 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
         });
         activityLog = addLog({ ...db, activityLog }, actor, `Notified accounting of completed prepaid propane fill (${invoice.invoiceNumber})`);
       }
+    } else if (request.payment === "Invoice") {
+      const lineItems = (request.partsUsed || []).map((pu) => {
+        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        if (!part) return null;
+        return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+      }).filter(Boolean);
+      const taxRateVal = (db.settings && db.settings.taxRate) != null ? db.settings.taxRate : 13;
+      const invoice = {
+        id: uid(),
+        invoiceNumber: nextInvoiceNumber(db),
+        sourceType: "workOrder",
+        sourceId: wo.id,
+        title: "Propane Fill",
+        date: todayISO(),
+        siteId: wo.siteId,
+        cottageId: wo.cottageId,
+        customerId: wo.customerId,
+        notes: "",
+        lineItems,
+        laborHours: 0,
+        laborRate: 0,
+        laborRateType: "N/A",
+        laborAccount: "",
+        shopSuppliesMode: "percent",
+        shopSuppliesPercent: 0,
+        shopSuppliesAmount: 0,
+        serviceCallType: "None",
+        serviceCall: 0,
+        taxRate: taxRateVal,
+        depositAmount: 0,
+        depositDate: null,
+        paidInAdvanceMethod: null,
+        paidInAdvanceDate: null,
+        sentDate: null,
+        paidInFullDate: null,
+        paidMethod: null,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      saveInvoice(invoice);
+      activityLog = addLog({ ...db, activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for propane fill — ready to send`);
     }
     persist({ ...db, activityLog });
   };
@@ -12637,6 +12677,46 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
         });
         activityLog = addLog({ activityLog }, actor, `Notified accounting of completed prepaid propane fill (${invoice.invoiceNumber})`);
       }
+    } else if (request.payment === "Invoice") {
+      const lineItems = (request.partsUsed || []).map((pu) => {
+        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        if (!part) return null;
+        return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+      }).filter(Boolean);
+      const taxRateVal = db.settings && db.settings.taxRate != null ? db.settings.taxRate : 13;
+      const invoice = {
+        id: uid(),
+        invoiceNumber: nextInvoiceNumber(db),
+        sourceType: "workOrder",
+        sourceId: wo.id,
+        title: "Propane Fill",
+        date: todayISO(),
+        siteId: wo.siteId,
+        cottageId: wo.cottageId,
+        customerId: wo.customerId,
+        notes: "",
+        lineItems,
+        laborHours: 0,
+        laborRate: 0,
+        laborRateType: "N/A",
+        laborAccount: "",
+        shopSuppliesMode: "percent",
+        shopSuppliesPercent: 0,
+        shopSuppliesAmount: 0,
+        serviceCallType: "None",
+        serviceCall: 0,
+        taxRate: taxRateVal,
+        depositAmount: 0,
+        depositDate: null,
+        paidInAdvanceMethod: null,
+        paidInAdvanceDate: null,
+        sentDate: null,
+        paidInFullDate: null,
+        paidMethod: null,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      saveInvoice(invoice);
+      activityLog = addLog({ activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for propane fill — ready to send`);
     }
     persist({ ...db, activityLog });
     setToast("Marked delivered");
