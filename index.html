@@ -12364,6 +12364,307 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
     onCreateInvoice && React.createElement("button", { type: "button", onClick: () => onCreateInvoice(wo), className: "w-full min-h-[44px] rounded-xl text-sm font-semibold" + " bg-[rgba(193,101,47,.1)] border border-[rgba(193,101,47,.35)] text-[#C1652F]" }, "Create Invoice")
   );
 }
+function FieldPropaneRow({ request, db, onComplete, onExpired, onMoveRun }) {
+  const cottage = db.cottages.find((c) => c.id === request.cottageId);
+  const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
+  const otherRun = request.run === "10am" ? "4pm" : "10am";
+  const runAccent = request.completed ? "#377249" : request.run === "10am" ? "#C1652F" : "#3B6E91";
+  const paymentLabel = request.payment === "Paid" ? `Paid — ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
+  const tankSummary = (request.partsUsed || []).map((pu) => {
+    const part = (db.parts || []).find((p) => p.id === pu.partId);
+    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
+  }).filter(Boolean).join(", ");
+  return React.createElement(
+    "div",
+    { className: `rounded-xl border border-[#E2DED5] p-3.5 mb-2.5 ${request.completed ? "bg-[#F1EEE9]" : "bg-[#FFFDFA]"}`, style: { borderLeft: `4px solid ${runAccent}` } },
+    React.createElement(
+      "div",
+      { className: "flex items-start justify-between gap-2" },
+      React.createElement("span", { className: `text-[15px] font-semibold ${request.completed ? "text-[#75716A]" : "text-[#1E1A13]"}` }, site ? `Site ${site.number}` : "No site", request.completed ? " — done" : ""),
+      paymentLabel && React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel)
+    ),
+    React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-1 truncate" }, [customer ? customer.name : null, tankSummary || null].filter(Boolean).join(" \xB7 ") || "—"),
+    !request.completed && React.createElement(
+      "div",
+      { className: "grid grid-cols-2 gap-2 mt-3" },
+      React.createElement("button", { type: "button", onClick: () => onComplete(request), className: "min-h-[44px] rounded-lg bg-[#377249] active:bg-[#28633C] text-white text-sm font-semibold" }, "Mark Delivered"),
+      React.createElement("button", { type: "button", onClick: () => onMoveRun(request), className: "min-h-[44px] rounded-lg border border-[#E2DED5] text-[#4B4740] text-sm font-medium" }, "Move to ", otherRun)
+    ),
+    !request.completed && request.payment === "Paid" && React.createElement("button", { type: "button", onClick: () => onExpired(request), className: "w-full min-h-[38px] mt-2 rounded-lg text-[12.5px] font-medium text-[#a8532a] bg-[#a8532a]/10" }, "Expired Tank — Couldn't Fill")
+  );
+}
+function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) {
+  const [expiring, setExpiring] = useState(null);
+  const requests = db.propaneRequests || [];
+  const today = todayISO();
+  const active = requests.filter((r) => !r.completed && !r.expiredTank);
+  const overdue = active.filter((r) => r.requestedDate < today);
+  const tenAm = active.filter((r) => r.requestedDate === today && r.run === "10am");
+  const fourPm = active.filter((r) => r.requestedDate === today && r.run === "4pm");
+  const complete = (request) => {
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const paymentNote = request.payment === "Paid" ? `Paid — ${request.paymentMethod || "method not set"}` : request.payment === "Invoice" ? "To be invoiced by accounting" : "";
+    const description = [request.notes, paymentNote].filter(Boolean).join(paymentNote ? "\n\n" : "");
+    const wo = {
+      id: uid(),
+      title: "Propane Fill",
+      description,
+      siteId: cottage ? cottage.siteId : null,
+      cottageId: request.cottageId || null,
+      customerId: request.customerId || null,
+      assignedTo: "",
+      status: "Completed",
+      priority: "Medium",
+      workGroup: "",
+      date: todayISO(),
+      completedDate: todayISO(),
+      partsUsed: request.partsUsed || [],
+      laborHours: "",
+      laborRateType: "N/A",
+      paymentStatus: request.payment || "",
+      paymentMethod: request.payment === "Paid" ? request.paymentMethod || "" : ""
+    };
+    const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
+    let activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
+    saveWorkOrder(wo);
+    savePropaneRequest(updated);
+    if (request.payment === "Paid" && request.paymentMethod) {
+      const lineItems = (request.partsUsed || []).map((pu) => {
+        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        if (!part) return null;
+        return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+      }).filter(Boolean);
+      const taxRateVal = db.settings && db.settings.taxRate != null ? db.settings.taxRate : 13;
+      const { total } = computeQuoteTotals(
+        { lineItems, laborHours: 0, laborRate: 0, shopSuppliesMode: "percent", shopSuppliesPercent: 0, shopSuppliesAmount: 0, serviceCall: 0 },
+        taxRateVal
+      );
+      const invoice = {
+        id: uid(),
+        invoiceNumber: nextInvoiceNumber(db),
+        sourceType: "workOrder",
+        sourceId: wo.id,
+        title: "Propane Fill",
+        date: todayISO(),
+        siteId: wo.siteId,
+        cottageId: wo.cottageId,
+        customerId: wo.customerId,
+        notes: "",
+        lineItems,
+        laborHours: 0,
+        laborRate: 0,
+        laborRateType: "N/A",
+        laborAccount: "",
+        shopSuppliesMode: "percent",
+        shopSuppliesPercent: 0,
+        shopSuppliesAmount: 0,
+        serviceCallType: "None",
+        serviceCall: 0,
+        taxRate: taxRateVal,
+        depositAmount: total,
+        depositDate: todayISO(),
+        paidInAdvanceMethod: request.paymentMethod,
+        paidInAdvanceDate: todayISO(),
+        sentDate: null,
+        paidInFullDate: todayISO(),
+        paidMethod: request.paymentMethod,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      saveInvoice(invoice);
+      activityLog = addLog({ activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for prepaid propane fill (${request.paymentMethod})`);
+    }
+    persist({ ...db, activityLog });
+    setToast("Marked delivered");
+  };
+  const moveRun = (request) => {
+    const updated = { ...request, run: request.run === "10am" ? "4pm" : "10am" };
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const activityLog = addLog(db, actor, `Moved propane request for ${cottage ? cottage.name : "unassigned"} to the ${updated.run} run`);
+    persist({ ...db, activityLog });
+    savePropaneRequest(updated);
+    setToast(`Moved to ${updated.run}`);
+  };
+  const flagExpired = (request) => {
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const updated = { ...request, expiredTank: true, expiredFlaggedAt: (/* @__PURE__ */ new Date()).toISOString(), expiredFlaggedBy: actor };
+    const activityLog = addLog(db, actor, `Flagged expired tank — did not fill — for ${cottage ? cottage.name : "unassigned"} (needs manager review)`);
+    persist({ ...db, activityLog });
+    savePropaneRequest(updated);
+    setExpiring(null);
+    setToast("Flagged for review");
+  };
+  const section = (title, list, tone) => React.createElement(
+    "div",
+    { className: "mb-5" },
+    React.createElement("h3", { className: `text-[13px] font-bold mb-2 ${tone || "text-[#1E1A13]"}` }, title, " (", list.length, ")"),
+    list.length === 0 ? React.createElement("p", { className: "text-xs text-[#9A968D] italic px-1" }, "Nothing here.") : list.map((r) => React.createElement(FieldPropaneRow, { key: r.id, request: r, db, onComplete: complete, onExpired: setExpiring, onMoveRun: moveRun }))
+  );
+  return React.createElement(
+    React.Fragment,
+    null,
+    expiring && React.createElement(
+      Modal,
+      { title: "Mark Expired Tank — Did Not Fill?", onClose: () => setExpiring(null) },
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "This won't create a work order or invoice — nothing was filled. It flags this request for your service manager to review", expiring.payment === "Paid" ? ", since this customer already paid in advance." : "."),
+      React.createElement(
+        "div",
+        { className: "flex justify-end gap-2" },
+        React.createElement("button", { onClick: () => setExpiring(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+        React.createElement("button", { onClick: () => flagExpired(expiring), className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Yes, Flag for Review")
+      )
+    ),
+    overdue.length > 0 && section("Overdue", overdue, "text-[#a8532a]"),
+    section("10:00 AM Run", tenAm),
+    section("4:00 PM Run", fourPm)
+  );
+}
+function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, onGoToDesktopTab, setToast }) {
+  const [confirmComplete, setConfirmComplete] = useState(null);
+  const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
+  const cottageName = (id) => {
+    const c = db.cottages.find((x) => x.id === id);
+    return c ? c.name : "Unknown cottage";
+  };
+  const markAnodeRodReplaced = (request) => {
+    if (request.anodeRodReplacedAt) return;
+    const replacedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const part = (db.parts || []).find((p) => p.name.trim().toLowerCase() === "anode rod");
+    let activityLog = addLog(db, actor, `Marked anode rod replaced for ${cottageName(request.cottageId)}`);
+    if (part) {
+      const taxRateVal = db.settings && db.settings.taxRate != null ? db.settings.taxRate : 13;
+      const lineItems = [{ id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 25, account: part.salesAccount || "", partId: part.id }];
+      const invoice = {
+        id: uid(),
+        invoiceNumber: nextInvoiceNumber(db),
+        sourceType: "winterizing",
+        sourceId: request.id,
+        title: "Anode Rod Replacement",
+        date: todayISO(),
+        siteId: cottage ? cottage.siteId : null,
+        cottageId: request.cottageId || null,
+        customerId: request.customerId || null,
+        notes: "",
+        lineItems,
+        laborHours: 0,
+        laborRate: 0,
+        laborRateType: "N/A",
+        laborAccount: "",
+        shopSuppliesMode: "percent",
+        shopSuppliesPercent: 0,
+        shopSuppliesAmount: 0,
+        serviceCallType: "None",
+        serviceCall: 0,
+        taxRate: taxRateVal,
+        depositAmount: 0,
+        depositDate: null,
+        paidInAdvanceMethod: null,
+        paidInAdvanceDate: null,
+        sentDate: null,
+        paidInFullDate: null,
+        paidMethod: null,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      saveInvoice(invoice);
+      activityLog = addLog({ activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for anode rod replacement — ${cottageName(request.cottageId)}`);
+      setToast("Anode rod replaced — invoiced");
+    } else {
+      activityLog = addLog({ activityLog }, actor, `Anode rod replaced for ${cottageName(request.cottageId)} — no "Anode Rod" part found, so it wasn't auto-invoiced.`);
+      setToast("Anode rod replaced — add an “Anode Rod” part to auto-invoice");
+    }
+    persist({ ...db, activityLog });
+    saveWinterizingRequest({ ...request, anodeRodReplacedAt: replacedAt });
+  };
+  const pending = requests.filter((r) => !r.completed).sort((a, b) => (a.requestedDate || "").localeCompare(b.requestedDate || ""));
+  const doneCount = requests.length - pending.length;
+  const pct = requests.length > 0 ? Math.round(doneCount / requests.length * 100) : 0;
+  const toggleComplete = (request) => {
+    const cottage = db.cottages.find((c) => c.id === request.cottageId);
+    const willBeDone = !request.completed;
+    const updated = { ...request, completed: willBeDone, completedDate: willBeDone ? todayISO() : null };
+    const activityLog = addLog(db, actor, willBeDone ? `Marked winterizing complete for ${cottage ? cottage.name : "cottage"}` : `Reopened winterizing sign-up for ${cottage ? cottage.name : "cottage"}`);
+    persist({ ...db, activityLog });
+    saveWinterizingRequest(updated);
+    setToast(willBeDone ? "Marked winterized" : "Reopened");
+  };
+  const requestToggle = (request) => {
+    if (request.completed) {
+      toggleComplete(request);
+    } else {
+      setConfirmComplete(request);
+    }
+  };
+  return React.createElement(
+    React.Fragment,
+    null,
+    confirmComplete && React.createElement(
+      Modal,
+      { title: "Mark Winterizing Complete?", onClose: () => setConfirmComplete(null) },
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Confirm winterizing complete for this cottage?"),
+      React.createElement(
+        "div",
+        { className: "flex justify-end gap-2" },
+        React.createElement("button", { onClick: () => setConfirmComplete(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+        React.createElement("button", { onClick: () => {
+          toggleComplete(confirmComplete);
+          setConfirmComplete(null);
+        }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Yes, Mark Complete")
+      )
+    ),
+    requests.length > 0 && React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3.5 mb-4" },
+      React.createElement(
+        "div",
+        { className: "flex items-center justify-between mb-1.5" },
+        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-[0.06em] text-[#75716A]" }, "Winterized"),
+        React.createElement("span", { className: "text-[13px] font-semibold text-[#28633C]" }, doneCount, " / ", requests.length)
+      ),
+      React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, React.createElement("div", { className: "h-full bg-[#377249]", style: { width: `${pct}%` } }))
+    ),
+    requests.length === 0 ? React.createElement(EmptyState, { text: "No winterizing sign-ups yet." }) : requests.slice().sort((a, b) => Number(a.completed) - Number(b.completed) || (a.requestedDate || "").localeCompare(b.requestedDate || "")).map((r) => React.createElement(WinterizingRequestRow, {
+      key: r.id,
+      request: r,
+      db,
+      readOnly: false,
+      emailStatus: void 0,
+      selectMode: false,
+      selected: false,
+      onEdit: () => onGoToDesktopTab("winterizing"),
+      onDelete: () => onGoToDesktopTab("winterizing"),
+      onToggle: requestToggle,
+      onDirectComplete: toggleComplete,
+      onToggleSelect: () => {
+      },
+      onPrint: () => onGoToDesktopTab("winterizing"),
+      onEmailCustomer: () => onGoToDesktopTab("winterizing"),
+      onAnodeRodReplaced: markAnodeRodReplaced
+    }))
+  );
+}
+function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveInvoice, onGoToDesktopTab, setToast }) {
+  const [runTab, setRunTab] = useState("propane");
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "flex gap-2 mb-4" },
+      ["propane", "winter"].map((k) => React.createElement(
+        "button",
+        {
+          key: k,
+          type: "button",
+          onClick: () => setRunTab(k),
+          className: `flex-1 min-h-[40px] rounded-full text-[12.5px] font-semibold border ${runTab === k ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "bg-[#FFFDFA] text-[#4B4740] border-[#E2DED5]"}`
+        },
+        k === "propane" ? "Propane" : "Winterizing"
+      ))
+    ),
+    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, onGoToDesktopTab, setToast })
+  );
+}
 function FieldComingSoon({ label }) {
   return React.createElement(
     "div",
@@ -12372,7 +12673,7 @@ function FieldComingSoon({ label }) {
     React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Coming in a later update. Use the desktop view for this for now.")
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, onCreateInvoice, onGoToDesktopTab }) {
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, onCreateInvoice, onGoToDesktopTab }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -12431,7 +12732,18 @@ function FieldApp({ db, persist, actor, saveWorkOrder, onCreateInvoice, onGoToDe
         onCreateInvoice: (order) => onCreateInvoice(order),
         onGoToSiteMap: () => onGoToDesktopTab("map")
       }),
-      (screen === "runs" || screen === "park" || screen === "more") && React.createElement(FieldComingSoon, { label: FIELD_TABS.find((t) => t.key === screen).label })
+      screen === "runs" && React.createElement(FieldRunsScreen, {
+        db,
+        persist,
+        actor,
+        savePropaneRequest,
+        saveWinterizingRequest,
+        saveWorkOrder,
+        saveInvoice,
+        onGoToDesktopTab,
+        setToast
+      }),
+      (screen === "park" || screen === "more") && React.createElement(FieldComingSoon, { label: FIELD_TABS.find((t) => t.key === screen).label })
     ),
     toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
     React.createElement(FieldTabBar, { screen, onSelect: selectTab })
@@ -12709,6 +13021,9 @@ function AppContent() {
       persist,
       actor,
       saveWorkOrder,
+      savePropaneRequest,
+      saveWinterizingRequest,
+      saveInvoice,
       onCreateInvoice: (order) => {
         createInvoiceFromSource(order, "workOrder");
         setFieldModeOverride("desktop");
