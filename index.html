@@ -12500,6 +12500,12 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
       factRow("Assigned", wo.assignedTo),
       factRow("Scheduled", wo.date)
     ),
+    wo.description && React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" },
+      React.createElement("h3", { className: "text-sm font-bold text-[#1E1A13] mb-2" }, "Description"),
+      React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)
+    ),
     React.createElement(
       "div",
       { className: "grid grid-cols-2 gap-2 mb-3" },
