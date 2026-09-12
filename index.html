@@ -10780,7 +10780,24 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
     if (!siteId && !cottageId) return;
     const contactLines = [entry.submittedName ? `Submitted by: ${entry.submittedName}` : "", entry.submittedPhone ? `Phone: ${entry.submittedPhone}` : "", entry.submittedEmail ? `Email: ${entry.submittedEmail}` : ""].filter(Boolean).join("\n");
     const fullDescription = [description.trim(), contactLines].filter(Boolean).join("\n\n");
-    onConfirm({ siteId: siteId || null, cottageId: cottageId || null, customerId: customerId || null, title: title.trim() || "Service Request", description: fullDescription, priority });
+    onConfirm({
+      id: uid(),
+      title: title.trim() || "Service Request",
+      description: fullDescription,
+      siteId: siteId || null,
+      cottageId: cottageId || null,
+      customerId: customerId || null,
+      assignedTo: "",
+      status: "Open",
+      priority,
+      workGroup: "",
+      date: todayISO(),
+      completedDate: null,
+      partsUsed: [],
+      laborHours: "",
+      laborRateType: "N/A",
+      sourceType: "generalServiceRequest"
+    });
   };
   const contactInfoEl = /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessSite && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning));
   return /* @__PURE__ */ React.createElement("div", null, contactInfoEl, /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
@@ -10828,26 +10845,8 @@ function GeneralServiceView({ db, persist, saveWorkOrder, pendingSignups: pendin
     const cottage = cottageId ? (db.cottages || []).find((c) => c.id === cottageId) : null;
     return cottage ? cottage.name : null;
   };
-  const confirmEntry = (fields) => {
-    const wo = {
-      id: uid(),
-      title: fields.title,
-      description: fields.description,
-      siteId: fields.siteId,
-      cottageId: fields.cottageId,
-      customerId: fields.customerId,
-      assignedTo: "",
-      status: "Open",
-      priority: fields.priority,
-      workGroup: "",
-      date: todayISO(),
-      completedDate: null,
-      partsUsed: [],
-      laborHours: "",
-      laborRateType: "N/A",
-      sourceType: "generalServiceRequest"
-    };
-    const where = siteNumberFor(fields.siteId) ? `Site ${siteNumberFor(fields.siteId)}` : cottageNameFor(fields.cottageId) || "unassigned";
+  const confirmEntry = (wo) => {
+    const where = siteNumberFor(wo.siteId) ? `Site ${siteNumberFor(wo.siteId)}` : cottageNameFor(wo.cottageId) || "unassigned";
     const activityLog = addLog(db, actor, `Created work order from General Service Request submission (${where})`);
     persist({ ...db, activityLog });
     confirmPendingSignup(WORK_ORDERS_REF, wo, reviewingEntry.id);
