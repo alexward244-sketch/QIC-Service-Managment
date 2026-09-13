@@ -14155,6 +14155,102 @@ function SalesApp({ db, persist, actor, saveWorkOrder, saveCustomer, saveSite, s
     React.createElement(SalesTabBar, { screen, onSelect: selectTab })
   );
 }
+const ADMIN_FIELD_TABS = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "staff", label: "Staff" },
+  { key: "reports", label: "Reports" },
+  { key: "more", label: "More" }
+];
+function AdminTabBar({ screen, onSelect }) {
+  return React.createElement(
+    "div",
+    { className: "flex-shrink-0 bg-[#FFFDFA] border-t border-[#E2DED5] flex px-1.5 pt-2", style: { paddingBottom: "max(10px, env(safe-area-inset-bottom))" } },
+    ADMIN_FIELD_TABS.map((t) => {
+      const active = screen === t.key || t.key === "more" && ["seasonalfees", "systemhealth", "settings"].includes(screen);
+      return React.createElement(
+        "button",
+        { key: t.key, type: "button", onClick: () => onSelect(t.key), className: "flex-1 min-h-[52px] flex flex-col items-center justify-center gap-1" },
+        React.createElement("span", { className: `w-[9px] h-[9px] rounded-[3px] ${active ? "bg-[#5B4B8A]" : "bg-[#E2DED5]"}` }),
+        React.createElement("span", { className: `text-[10.5px] font-semibold ${active ? "text-[#5B4B8A]" : "text-[#75716A]"}` }, t.label)
+      );
+    })
+  );
+}
+function AdminMoreScreen({ onNavigate }) {
+  const rows = [
+    { key: "seasonalfees", label: "Seasonal Fees" },
+    { key: "systemhealth", label: "System Health" },
+    { key: "settings", label: "Settings" }
+  ];
+  return React.createElement(
+    "div",
+    { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
+    rows.map((r, i) => React.createElement(
+      "button",
+      { key: r.key, type: "button", onClick: () => onNavigate(r.key), className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < rows.length - 1 ? "border-b border-[#EEEBE5]" : ""}` },
+      React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
+      React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
+    ))
+  );
+}
+function AdminApp({ db, persist, actor, saveSite, bulkWriteSites }) {
+  const [screen, setScreen] = useState("dashboard");
+  const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine);
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+  const selectTab = (key) => setScreen(key);
+  const titles = {
+    dashboard: ["Admin", actor ? `Signed in as ${actor}` : null],
+    staff: ["Staff", null],
+    reports: ["Reports", null],
+    more: ["More", null],
+    seasonalfees: ["Seasonal Fees", null],
+    systemhealth: ["System Health", null],
+    settings: ["Settings", null]
+  };
+  const [title, subtitle] = titles[screen] || ["QIC Admin", null];
+  return React.createElement(
+    "div",
+    { className: "h-[100dvh] flex flex-col bg-[#F9F5EC] text-[#1E1A13]" },
+    React.createElement(FieldHeader, { title, subtitle, online }),
+    !online && React.createElement(FieldOfflineBanner, null),
+    React.createElement(
+      "div",
+      { className: "flex-1 overflow-y-auto px-4 pt-3.5 pb-5" },
+      screen === "dashboard" && React.createElement(AdminDashboardView, { db, persist }),
+      screen === "staff" && React.createElement(StaffView, { db, persist }),
+      screen === "reports" && React.createElement(AdminReportsView, { db }),
+      screen === "more" && React.createElement(AdminMoreScreen, { onNavigate: setScreen }),
+      screen === "seasonalfees" && React.createElement(
+        React.Fragment,
+        null,
+        React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#5B4B8A] mb-3" }, "← More"),
+        React.createElement(SeasonalFeesView, { db, persist, saveSite, bulkWriteSites })
+      ),
+      screen === "systemhealth" && React.createElement(
+        React.Fragment,
+        null,
+        React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#5B4B8A] mb-3" }, "← More"),
+        React.createElement(SystemHealthView, { db, persist })
+      ),
+      screen === "settings" && React.createElement(
+        React.Fragment,
+        null,
+        React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#5B4B8A] mb-3" }, "← More"),
+        React.createElement(SettingsView, { db, persist })
+      )
+    ),
+    React.createElement(AdminTabBar, { screen, onSelect: selectTab })
+  );
+}
 function AppContent() {
   const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
   const isMobileViewport = useIsMobile();
@@ -14426,6 +14522,15 @@ function AppContent() {
     setFieldModeOverride("desktop");
   };
   if (fieldMode) {
+    if (isAdmin) {
+      return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(AdminApp, {
+        db,
+        persist,
+        actor,
+        saveSite,
+        bulkWriteSites
+      }));
+    }
     if (isSalesManager) {
       return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(SalesApp, {
         db,
