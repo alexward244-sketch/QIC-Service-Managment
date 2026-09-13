@@ -14548,16 +14548,6 @@ function AppContent() {
     firebase.auth().signOut();
   };
   if (fieldMode) {
-    if (isAdmin) {
-      return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(AdminApp, {
-        db,
-        persist,
-        actor,
-        saveSite,
-        bulkWriteSites,
-        onSignOut: signOut
-      }));
-    }
     if (isSalesManager) {
       return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(SalesApp, {
         db,
