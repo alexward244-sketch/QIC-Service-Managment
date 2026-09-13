@@ -11995,7 +11995,7 @@ function HydroReviewView({ db, persist }) {
     setPendingConfirm(null);
     setToast(`Confirmed and invoiced site ${site.number}`);
   };
-  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13]" }, "Hydro Meter Review"), /* @__PURE__ */ React.createElement(HydroRateControl, { db, persist })), pending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "No hydro readings waiting for review.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#B5432E] font-semibold" }, "Hydro Meter Review"), /* @__PURE__ */ React.createElement(HydroRateControl, { db, persist })), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
     const site = db.sites.find((s) => s.id === r.siteId);
     const owner = getSiteOwner(db, r.siteId);
     return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm });
@@ -12465,8 +12465,12 @@ const SALES_NAV_GROUPS = [
   { label: "Other Lines", items: ["sunspace"] },
   { label: "Pipeline", items: ["deals", "salestransactions"] }
 ];
-const GROUPED_NAV_BY_MODE = { service: SERVICE_NAV_GROUPS, admin: ADMIN_NAV_GROUPS, sales: SALES_NAV_GROUPS };
-const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn" };
+const ACCOUNTING_NAV_GROUPS = [
+  { label: "Hydro Billing", items: ["hydroreview", "hydro"] },
+  { label: "The Park", items: ["sites", "customers", "cottages"] }
+];
+const GROUPED_NAV_BY_MODE = { service: SERVICE_NAV_GROUPS, admin: ADMIN_NAV_GROUPS, sales: SALES_NAV_GROUPS, accounting: ACCOUNTING_NAV_GROUPS };
+const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn", hydroreview: "warn" };
 const NAV_ICON_SHAPES = {
   dashboard: [
     React.createElement("rect", { key: "a", x: 3, y: 3, width: 7, height: 9 }),
@@ -12528,6 +12532,11 @@ const NAV_ICON_SHAPES = {
   ],
   hydro: [
     React.createElement("path", { key: "a", d: "M13 2 4 14h7l-1 8 9-12h-7z" })
+  ],
+  hydroreview: [
+    React.createElement("path", { key: "a", d: "M9 4.5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v.5" }),
+    React.createElement("rect", { key: "b", x: 5, y: 4, width: 14, height: 17, rx: 1.5 }),
+    React.createElement("path", { key: "c", d: "m8.5 12.5 2.5 2.5 5-5" })
   ],
   parts: [
     React.createElement("path", { key: "a", d: "M3 7l9-4 9 4v10l-9 4-9-4z" }),
@@ -15070,7 +15079,8 @@ function AppContent() {
     sites: (db.sites || []).length,
     propane: (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank).length,
     winterizing: (db.winterizingRequests || []).filter((r) => !r.archived && !r.completed).length,
-    hydro: (db.sites || []).filter((s) => !getLastHydroReading(db, s.id)).length
+    hydro: (db.sites || []).filter((s) => !getLastHydroReading(db, s.id)).length,
+    hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length
   };
   const createInvoiceFromSource = (source, sourceType) => {
     setInvoicePrefill({ source, sourceType });
