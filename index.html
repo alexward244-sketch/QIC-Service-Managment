@@ -13561,6 +13561,600 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
     React.createElement(FieldTabBar, { screen, onSelect: selectTab })
   );
 }
+const SALES_FIELD_TABS = [
+  { key: "today", label: "Today" },
+  { key: "deals", label: "Deals" },
+  { key: "listings", label: "Listings" },
+  { key: "more", label: "More" }
+];
+function SalesTabBar({ screen, onSelect }) {
+  return React.createElement(
+    "div",
+    { className: "flex-shrink-0 bg-[#FFFDFA] border-t border-[#E2DED5] flex px-1.5 pt-2", style: { paddingBottom: "max(10px, env(safe-area-inset-bottom))" } },
+    SALES_FIELD_TABS.map((t) => {
+      const active = screen === t.key || t.key === "more" && ["appointments", "cottageorders", "park"].includes(screen);
+      return React.createElement(
+        "button",
+        { key: t.key, type: "button", onClick: () => onSelect(t.key), className: "flex-1 min-h-[52px] flex flex-col items-center justify-center gap-1" },
+        React.createElement("span", { className: `w-[9px] h-[9px] rounded-[3px] ${active ? "bg-[#C1652F]" : "bg-[#E2DED5]"}` }),
+        React.createElement("span", { className: `text-[10.5px] font-semibold ${active ? "text-[#a8532a]" : "text-[#75716A]"}` }, t.label)
+      );
+    })
+  );
+}
+function SalesTodayScreen({ db, persist, actor, setToast, onGoToDeals }) {
+  const [apptModal, setApptModal] = useState(null);
+  const confirm = useConfirm();
+  const currentYear = (/* @__PURE__ */ new Date()).getFullYear();
+  const deals = db.deals || [];
+  const appointments = db.salesAppointments || [];
+  const activeDeals = deals.filter((d) => d.stage !== "Not Interested" && d.stage !== "Sold").length;
+  const today = todayISO();
+  const todaysAppointments = appointments.filter((a) => a.date === today).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  const cottageOrders = db.cottageOrders || [];
+  const listings = db.consignmentListings || [];
+  const cottageOrdersSoldThisYear = cottageOrders.filter((o) => {
+    if (!isOrderSold(o)) return false;
+    const dateStr = o.type === "Customer Order" ? o.orderedDate : o.soldDate;
+    return dateStr && dateStr.slice(0, 4) === String(currentYear);
+  }).length;
+  const listingsSoldThisYear = listings.filter((l) => l.status === "Sold" && l.soldDate && l.soldDate.slice(0, 4) === String(currentYear)).length;
+  const unitsSoldThisYear = cottageOrdersSoldThisYear + listingsSoldThisYear;
+  const saveAppointment = (appt) => {
+    const exists = appointments.some((a) => a.id === appt.id);
+    const next = exists ? appointments.map((a) => a.id === appt.id ? appt : a) : [...appointments, appt];
+    const activityLog = addLog(db, actor, exists ? `Updated sales appointment "${appt.title}"` : `Added sales appointment "${appt.title}"`);
+    persist({ ...db, salesAppointments: next, activityLog });
+    setApptModal(null);
+    setToast(exists ? "Appointment updated" : "Appointment added");
+  };
+  const removeAppointment = (id) => {
+    const appt = appointments.find((a) => a.id === id);
+    const activityLog = addLog(db, actor, `Removed sales appointment "${(appt && appt.title) || ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "salesAppointment", appt, (appt && appt.title) || ""), activityLog });
+    confirm.clear();
+    setToast("Appointment removed");
+  };
+  const recentActivity = (db.activityLog || []).slice(0, 6);
+  return React.createElement(
+    React.Fragment,
+    null,
+    apptModal && React.createElement(
+      Modal,
+      { title: apptModal.mode === "new" ? "New Appointment" : "Edit Appointment", onClose: () => setApptModal(null) },
+      React.createElement(AppointmentForm, { initial: apptModal.data, db, onSave: saveAppointment, onCancel: () => setApptModal(null) })
+    ),
+    confirm.target && React.createElement(ConfirmDeleteModal, { label: "this appointment", onConfirm: () => removeAppointment(confirm.target), onCancel: confirm.clear }),
+    React.createElement(
+      "div",
+      { className: "grid grid-cols-3 gap-2 mb-3.5" },
+      React.createElement(FieldStatCard, { label: "Active Deals", value: activeDeals, color: "#1E1A13", onClick: onGoToDeals }),
+      React.createElement(FieldStatCard, { label: "Today", value: todaysAppointments.length, color: "#1E1A13" }),
+      React.createElement(FieldStatCard, { label: `Sold ${currentYear}`, value: unitsSoldThisYear, color: "#28633C" })
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between mb-2" },
+      React.createElement("h2", { className: "text-[15px] font-bold text-[#1E1A13]" }, "Today's Appointments"),
+      React.createElement("button", { type: "button", onClick: () => setApptModal({ mode: "new" }), className: "text-xs font-semibold text-[#C1652F]" }, "+ New")
+    ),
+    todaysAppointments.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Nothing scheduled today.") : React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] mb-5 divide-y divide-[#EEEBE5] overflow-hidden" },
+      todaysAppointments.map((a) => React.createElement(AppointmentRow, { key: a.id, appt: a, db, onEdit: (appt) => setApptModal({ mode: "edit", data: appt }), onDelete: (appt) => confirm.ask(appt.id) }))
+    ),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" },
+      React.createElement("h3", { className: "text-[15px] font-bold text-[#1E1A13] mb-2" }, "Recent Activity"),
+      recentActivity.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A]" }, "Nothing yet.") : recentActivity.map((e) => React.createElement(
+        "div",
+        { key: e.id, className: "flex items-center justify-between gap-3 py-1.5 border-b border-[#EEEBE5] last:border-b-0" },
+        React.createElement("span", { className: "text-[12.5px] text-[#4B4740] truncate" }, e.summary),
+        React.createElement("span", { className: "text-[11px] text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))
+      ))
+    )
+  );
+}
+const SALES_DEAL_STAGE_FILTERS = [
+  { key: "active", label: "Active", match: (s) => s === "Interested" || s === "Deposit" },
+  { key: "Interested", label: "Interested", match: (s) => s === "Interested" },
+  { key: "Deposit", label: "Deposit", match: (s) => s === "Deposit" },
+  { key: "Sold", label: "Sold", match: (s) => s === "Sold" },
+  { key: "Not Interested", label: "Not Interested", match: (s) => s === "Not Interested" },
+  { key: "all", label: "All", match: () => true }
+];
+function SalesDealsScreen({ db, persist, actor, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage, setToast }) {
+  const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("");
+  const [stageFilter, setStageFilter] = useState("active");
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState(null);
+  const [closeDealTarget, setCloseDealTarget] = useState(null);
+  const [closeDisplayTarget, setCloseDisplayTarget] = useState(null);
+  const [closeDealPriceTarget, setCloseDealPriceTarget] = useState(null);
+  const [fellThroughTarget, setFellThroughTarget] = useState(null);
+  const formDirtyRef = useRef(false);
+  const confirm = useConfirm();
+  const requestCloseModal = () => {
+    if (formDirtyRef.current) {
+      setDiscardConfirmOpen(true);
+    } else {
+      setModal(null);
+    }
+  };
+  const confirmDiscard = () => {
+    formDirtyRef.current = false;
+    setDiscardConfirmOpen(false);
+    setModal(null);
+  };
+  const resolveDealSiteId = (dealRec) => {
+    if (dealRec.saleType === "order" || dealRec.saleType === "display") {
+      const order = db.cottageOrders.find((o) => o.id === dealRec.saleRefId);
+      return (order && order.siteId) || null;
+    }
+    if (dealRec.saleType === "consignment") {
+      const listing = db.consignmentListings.find((l) => l.id === dealRec.saleRefId);
+      const cottage = listing && db.cottages.find((c) => c.id === listing.cottageId);
+      return (cottage && cottage.siteId) || null;
+    }
+    return null;
+  };
+  const save = (deal) => {
+    const existingDeal = db.deals.find((d) => d.id === deal.id);
+    const closingDateChanged = deal.closingDate && deal.closingDate !== (existingDeal && existingDeal.closingDate);
+    let finalDeal = deal;
+    let gasTestNote = "";
+    let changedWorkOrder = null;
+    if (closingDateChanged) {
+      const siteId = resolveDealSiteId(deal);
+      const linkedWO = deal.gasTestWorkOrderId ? db.workOrders.find((w) => w.id === deal.gasTestWorkOrderId) : null;
+      if (linkedWO) {
+        changedWorkOrder = { ...linkedWO, date: deal.closingDate, siteId: siteId || linkedWO.siteId };
+        gasTestNote = " — gas test work order updated";
+      } else {
+        const newWO = {
+          id: uid(),
+          title: `Gas Test — ${deal.name}`,
+          description: `Gas safety test required ahead of closing on ${deal.closingDate} for ${deal.name}'s purchase.`,
+          siteId: siteId || null,
+          cottageId: null,
+          customerId: deal.customerId || null,
+          assignedTo: "",
+          status: "Open",
+          priority: "",
+          workGroup: "",
+          date: deal.closingDate,
+          completedDate: null,
+          laborHours: 0,
+          laborRate: 0,
+          laborRateType: "",
+          paymentStatus: "",
+          partsUsed: [],
+          salesSourced: true
+        };
+        changedWorkOrder = newWO;
+        finalDeal = { ...deal, gasTestWorkOrderId: newWO.id };
+        gasTestNote = " — gas test work order created";
+      }
+    }
+    const exists = !!existingDeal;
+    const deals = exists ? db.deals.map((d) => d.id === finalDeal.id ? finalDeal : d) : [...db.deals, finalDeal];
+    const activityLog = addLog(db, actor, (exists ? `Updated deal for ${finalDeal.name}` : `Added deal for ${finalDeal.name}`) + gasTestNote);
+    persist({ ...db, deals, activityLog });
+    if (changedWorkOrder) saveWorkOrder(changedWorkOrder);
+    formDirtyRef.current = false;
+    setModal(null);
+    setToast(exists ? "Deal updated" : "Deal added");
+  };
+  const remove = (id) => {
+    const deal = db.deals.find((d) => d.id === id);
+    const activityLog = addLog(db, actor, `Removed deal for ${(deal && deal.name) || ""} (moved to trash)`);
+    persist({ ...trashItem(db, "deal", deal, (deal && deal.name) || "Deal"), activityLog });
+    confirm.clear();
+  };
+  const convertToOrder = (details) => {
+    const deal = convertTarget;
+    let customerId = deal.customerId;
+    let newCustomer = null;
+    if (!customerId) {
+      newCustomer = buildCustomerFromContact(deal.name, deal.phone, deal.email);
+      customerId = newCustomer.id;
+    }
+    const newOrder = {
+      id: uid(),
+      type: "Customer Order",
+      status: "Ordered/Being Built",
+      customerId,
+      siteId: null,
+      model: "",
+      size: "",
+      bedrooms: null,
+      bathrooms: null,
+      deckPorch: "",
+      sunroom: "",
+      features: "",
+      orderedDate: todayISO(),
+      expectedDeliveryDate: "",
+      deliveredDate: null,
+      soldDate: null,
+      totalPrice: details.price,
+      depositAmount: details.depositAmount,
+      depositDate: details.depositDate,
+      notes: "",
+      commentLog: [],
+      dealId: deal.id,
+      locationChoice: details.locationChoice || null
+    };
+    const entry = { id: uid(), text: `Moved to Deposit as a New Custom Order (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Deposit", saleType: "order", saleRefId: newOrder.id, customerId, commentLog: [entry, ...d.commentLog || []] } : d);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal moved to Deposit — new Cottage Order created`);
+    persist({ ...db, cottageOrders: [...db.cottageOrders, newOrder], deals, activityLog });
+    if (newCustomer) saveCustomer(newCustomer);
+    setConvertTarget(null);
+    setToast("Moved to Deposit");
+  };
+  const convertToDisplay = (orderId, details) => {
+    if (!orderId) return;
+    const deal = convertTarget;
+    let customerId = deal.customerId;
+    let newCustomer = null;
+    if (!customerId) {
+      newCustomer = buildCustomerFromContact(deal.name, deal.phone, deal.email);
+      customerId = newCustomer.id;
+    }
+    const cottageOrders = db.cottageOrders.map((o) => o.id === orderId ? { ...o, customerId, totalPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, soldDate: todayISO(), dealId: deal.id, locationChoice: details.locationChoice || o.locationChoice || null } : o);
+    const entry = { id: uid(), text: `Moved to Deposit on an existing Display Model (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, total ${formatPrice(details.price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Deposit", saleType: "display", saleRefId: orderId, customerId, commentLog: [entry, ...d.commentLog || []] } : d);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal moved to Deposit — Display Model sale`);
+    persist({ ...db, cottageOrders, deals, activityLog });
+    if (newCustomer) saveCustomer(newCustomer);
+    setConvertTarget(null);
+    setToast("Moved to Deposit");
+  };
+  const convertToConsignment = (listingId, details) => {
+    if (!listingId) return;
+    const deal = convertTarget;
+    const consignmentListings = db.consignmentListings.map((l) => l.id === listingId ? { ...l, status: "Sold", soldDate: l.soldDate || todayISO(), soldPrice: details.price, depositAmount: details.depositAmount, depositDate: details.depositDate, dealId: deal.id } : l);
+    const entry = { id: uid(), text: `Moved to Deposit on a Consignment Listing (${formatPrice(details.depositAmount)} deposit on ${details.depositDate}, agreed price ${formatPrice(details.price)}). Ownership transfers when the deal closes.`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Deposit", saleType: "consignment", saleRefId: listingId, commentLog: [entry, ...d.commentLog || []] } : d);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal moved to Deposit — Consignment Listing sale`);
+    persist({ ...db, consignmentListings, deals, activityLog });
+    setConvertTarget(null);
+    setToast("Moved to Deposit");
+  };
+  const openCloseDeal = (deal) => {
+    if (deal.saleType === "order" || deal.saleType === "display") {
+      const order = db.cottageOrders.find((o) => o.id === deal.saleRefId);
+      if (!order) {
+        setToast("Couldn't find the linked unit — check it wasn't removed");
+        return;
+      }
+      setCloseDisplayTarget({ deal, order, allowTradeIn: true });
+      return;
+    }
+    const listing = db.consignmentListings.find((l) => l.id === deal.saleRefId);
+    const cottage = listing ? db.cottages.find((c) => c.id === listing.cottageId) : null;
+    const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+    if (!listing || !cottage || !site) {
+      setToast("Couldn't find the linked listing — check it wasn't removed");
+      return;
+    }
+    const oldCustomers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
+    setCloseDealTarget({ deal, cottage, site, listing, oldCustomers });
+  };
+  const confirmCloseDealPrice = (price) => {
+    const { deal, order } = closeDealPriceTarget;
+    let cottageOrders = db.cottageOrders;
+    if (order) {
+      cottageOrders = db.cottageOrders.map((o) => o.id === order.id ? { ...o, totalPrice: price, depositAmount: price, paidInFullDate: todayISO(), soldDate: o.soldDate || todayISO() } : o);
+    }
+    const entry = { id: uid(), text: `Deal closed — marked Sold and Paid in Full on ${todayISO()} (${formatPrice(price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Sold", commentLog: [entry, ...d.commentLog || []] } : d);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold (${formatPrice(price)})`);
+    persist({ ...db, cottageOrders, deals, activityLog });
+    setCloseDealPriceTarget(null);
+    setToast("Marked Sold");
+  };
+  const resolveFellThrough = (action) => {
+    const deal = fellThroughTarget;
+    let noteText = "Deal fell through";
+    let consignmentListings = db.consignmentListings;
+    let cottageOrders = db.cottageOrders;
+    if (deal.saleType === "consignment") {
+      consignmentListings = db.consignmentListings.map((l) => l.id === deal.saleRefId ? { ...l, status: "Listed", soldDate: null, soldPrice: null, dealId: null } : l);
+      noteText = "Deal fell through — listing reopened";
+    } else if (deal.saleType === "display") {
+      cottageOrders = db.cottageOrders.map((o) => o.id === deal.saleRefId ? { ...o, customerId: null, soldDate: null, dealId: null } : o);
+      noteText = "Deal fell through — display model reopened";
+    } else if (deal.saleType === "order") {
+      if (action === "convert-to-display") {
+        cottageOrders = db.cottageOrders.map((o) => o.id === deal.saleRefId ? { ...o, type: "Display Model", customerId: null, dealId: null } : o);
+        noteText = "Deal fell through — order converted to a display model";
+      } else if (action === "cancel-build") {
+        cottageOrders = db.cottageOrders.filter((o) => o.id !== deal.saleRefId);
+        noteText = "Deal fell through — build cancelled";
+      }
+    }
+    const entry = { id: uid(), text: `${noteText} on ${todayISO()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
+    const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Interested", saleType: null, saleRefId: null, commentLog: [entry, ...d.commentLog || []] } : d);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal: ${noteText.toLowerCase()}`);
+    persist({ ...db, consignmentListings, cottageOrders, deals, activityLog });
+    setFellThroughTarget(null);
+    setToast("Moved back to Interested");
+  };
+  const activeStage = SALES_DEAL_STAGE_FILTERS.find((s) => s.key === stageFilter) || SALES_DEAL_STAGE_FILTERS[0];
+  const filtered = db.deals.filter((d) => {
+    if (!activeStage.match(d.stage)) return false;
+    if (!filter) return true;
+    const hay = `${d.name} ${d.phone || ""} ${d.email || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  }).slice().sort((a, b) => (b.addedDate || "").localeCompare(a.addedDate || ""));
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between gap-2 mb-3" },
+      React.createElement("h2", { className: "font-serif text-2xl text-[#C1652F] font-semibold" }, "Deals"),
+      React.createElement("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "px-3.5 py-2 rounded-md bg-[#C1652F] text-[#F9F5EC] text-sm font-medium" }, "+ New")
+    ),
+    React.createElement("input", { className: inputCls + " mb-3", placeholder: "Search deals…", value: filter, onChange: (e) => setFilter(e.target.value) }),
+    React.createElement(
+      "div",
+      { className: "flex gap-1.5 mb-4 overflow-x-auto pb-1" },
+      SALES_DEAL_STAGE_FILTERS.map((s) => React.createElement(
+        "button",
+        {
+          key: s.key,
+          type: "button",
+          onClick: () => setStageFilter(s.key),
+          className: `flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${stageFilter === s.key ? "bg-[#C1652F] text-white" : "bg-[#F1EEE9] text-[#75716A]"}`
+        },
+        s.label,
+        " (",
+        db.deals.filter((d) => s.match(d.stage)).length,
+        ")"
+      ))
+    ),
+    db.deals.length === 0 ? React.createElement(EmptyState, {
+      text: "No deals yet.",
+      action: React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a deal")
+    }) : filtered.length === 0 ? React.createElement(EmptyState, { text: "No deals match." }) : filtered.map((deal) => React.createElement(DealTicket, {
+      key: deal.id,
+      deal,
+      db,
+      onEdit: (d) => setModal({ mode: "edit", data: d }),
+      onDelete: (d) => confirm.ask(d.id),
+      onMoveToDeposit: (d) => setConvertTarget(d),
+      onCloseDeal: openCloseDeal,
+      onFellThrough: (d) => setFellThroughTarget(d)
+    })),
+    modal && React.createElement(Modal, { title: modal.mode === "new" ? "New Deal" : "Edit Deal", onClose: requestCloseModal }, React.createElement(DealForm, {
+      initial: modal.data,
+      consignmentListings: db.consignmentListings,
+      cottages: db.cottages,
+      customers: db.customers,
+      sites: db.sites,
+      onSave: save,
+      onCancel: requestCloseModal,
+      onDirtyChange: (d) => {
+        formDirtyRef.current = d;
+      }
+    })),
+    discardConfirmOpen && React.createElement(
+      Modal,
+      { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) },
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this deal that haven't been saved. Discard them?"),
+      React.createElement(
+        "div",
+        { className: "flex justify-end gap-2" },
+        React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"),
+        React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard")
+      )
+    ),
+    convertTarget && React.createElement(MoveToDepositModal, {
+      deal: convertTarget,
+      db,
+      onConvertOrder: convertToOrder,
+      onConvertDisplay: convertToDisplay,
+      onConvertConsignment: convertToConsignment,
+      onClose: () => setConvertTarget(null)
+    }),
+    closeDealTarget && React.createElement(TransferOwnershipModal, {
+      cottage: closeDealTarget.cottage,
+      site: closeDealTarget.site,
+      oldCustomers: closeDealTarget.oldCustomers,
+      linkedProspect: closeDealTarget.deal,
+      listing: closeDealTarget.listing,
+      db,
+      persist,
+      saveSite,
+      saveCottage,
+      onClose: () => setCloseDealTarget(null)
+    }),
+    closeDisplayTarget && React.createElement(CloseUnitSaleModal, {
+      deal: closeDisplayTarget.deal,
+      order: closeDisplayTarget.order,
+      allowTradeIn: closeDisplayTarget.allowTradeIn,
+      db,
+      persist,
+      saveCustomer,
+      saveSite,
+      saveCottage,
+      deleteCottage,
+      onClose: () => setCloseDisplayTarget(null)
+    }),
+    closeDealPriceTarget && React.createElement(SalePriceModal, {
+      title: `Close Deal — ${closeDealPriceTarget.deal.name}`,
+      priceLabel: "Final Sale Price",
+      initialPrice: closeDealPriceTarget.order ? closeDealPriceTarget.order.totalPrice : null,
+      onConfirm: confirmCloseDealPrice,
+      onCancel: () => setCloseDealPriceTarget(null)
+    }),
+    fellThroughTarget && React.createElement(DealFellThroughModal, {
+      deal: fellThroughTarget,
+      onResolve: resolveFellThrough,
+      onClose: () => setFellThroughTarget(null)
+    }),
+    confirm.target && React.createElement(ConfirmDeleteModal, {
+      label: (() => {
+        const d = db.deals.find((x) => x.id === confirm.target);
+        return (d && d.name) || "this deal";
+      })(),
+      onConfirm: () => remove(confirm.target),
+      onCancel: confirm.clear
+    })
+  );
+}
+function SalesListingsScreen({ db, persist, saveCottage }) {
+  const [tab, setTab] = useState("consignment");
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "flex gap-1 mb-4 p-1 rounded-[10px] bg-[#F1EEE9]" },
+      React.createElement(
+        "button",
+        { type: "button", onClick: () => setTab("consignment"), className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${tab === "consignment" ? "bg-[#C1652F] text-[#F9F5EC] shadow-sm" : "text-[#75716A]"}` },
+        "Consignment"
+      ),
+      React.createElement(
+        "button",
+        { type: "button", onClick: () => setTab("inventory"), className: `flex-1 py-1.5 rounded-[8px] text-[13px] font-bold text-center transition ${tab === "inventory" ? "bg-[#C1652F] text-[#F9F5EC] shadow-sm" : "text-[#75716A]"}` },
+        "QIC Inventory"
+      )
+    ),
+    tab === "consignment" ? React.createElement(ConsignmentListingsView, { db, persist }) : React.createElement(InventoryView, { db, persist, saveCottage })
+  );
+}
+function SalesAppointmentsScreen({ db, persist, actor, onBack, setToast }) {
+  const [modal, setModal] = useState(null);
+  const confirm = useConfirm();
+  const appointments = db.salesAppointments || [];
+  const sorted = appointments.slice().sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+  const save = (appt) => {
+    const exists = appointments.some((a) => a.id === appt.id);
+    const next = exists ? appointments.map((a) => a.id === appt.id ? appt : a) : [...appointments, appt];
+    const activityLog = addLog(db, actor, exists ? `Updated sales appointment "${appt.title}"` : `Added sales appointment "${appt.title}"`);
+    persist({ ...db, salesAppointments: next, activityLog });
+    setModal(null);
+    setToast(exists ? "Appointment updated" : "Appointment added");
+  };
+  const remove = (id) => {
+    const appt = appointments.find((a) => a.id === id);
+    const activityLog = addLog(db, actor, `Removed sales appointment "${(appt && appt.title) || ""}" (moved to trash)`);
+    persist({ ...trashItem(db, "salesAppointment", appt, (appt && appt.title) || ""), activityLog });
+    confirm.clear();
+    setToast("Appointment removed");
+  };
+  return React.createElement(
+    React.Fragment,
+    null,
+    modal && React.createElement(Modal, { title: modal.mode === "new" ? "New Appointment" : "Edit Appointment", onClose: () => setModal(null) }, React.createElement(AppointmentForm, { initial: modal.data, db, onSave: save, onCancel: () => setModal(null) })),
+    confirm.target && React.createElement(ConfirmDeleteModal, { label: "this appointment", onConfirm: () => remove(confirm.target), onCancel: confirm.clear }),
+    React.createElement("button", { type: "button", onClick: onBack, className: "text-[13px] font-semibold text-[#C1652F] mb-3" }, "← More"),
+    React.createElement("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#C1652F]" }, "+ New Appointment"),
+    sorted.length === 0 ? React.createElement(EmptyState, { text: "No appointments yet." }) : React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] divide-y divide-[#EEEBE5] overflow-hidden" },
+      sorted.map((a) => React.createElement(AppointmentRow, { key: a.id, appt: a, db, onEdit: (appt) => setModal({ mode: "edit", data: appt }), onDelete: (appt) => confirm.ask(appt.id) }))
+    )
+  );
+}
+function SalesMoreScreen({ onNavigate, onGoToDesktopTab }) {
+  const rows = [
+    { key: "appointments", label: "Appointments" },
+    { key: "cottageorders", label: "New Cottage Orders" },
+    { key: "park", label: "The Park" }
+  ];
+  const desktopRows = [
+    { key: "salesreport", label: "Sales Report" },
+    { key: "sunspace", label: "Sunspace Accessories" },
+    { key: "salestransactions", label: "Sales Transactions" }
+  ];
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden mb-5" },
+      rows.map((r, i) => React.createElement(
+        "button",
+        { key: r.key, type: "button", onClick: () => onNavigate(r.key), className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < rows.length - 1 ? "border-b border-[#EEEBE5]" : ""}` },
+        React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
+        React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
+      ))
+    ),
+    React.createElement("p", { className: "text-xs text-[#9A968D] font-semibold uppercase tracking-wider mb-2 px-1" }, "On Desktop"),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
+      desktopRows.map((r, i) => React.createElement(
+        "button",
+        { key: r.key, type: "button", onClick: () => onGoToDesktopTab(r.key), className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < desktopRows.length - 1 ? "border-b border-[#EEEBE5]" : ""}` },
+        React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
+        React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
+      ))
+    )
+  );
+}
+function SalesApp({ db, persist, actor, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage, onGoToDesktopTab }) {
+  const [screen, setScreen] = useState("today");
+  const [toast, setToast] = useState(null);
+  const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine);
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+  const selectTab = (key) => setScreen(key);
+  const titles = {
+    today: ["Sales", new Date().toLocaleDateString(void 0, { weekday: "long", day: "2-digit", month: "long" }) + (actor ? ` \xB7 ${actor}` : "")],
+    deals: ["Deals", null],
+    listings: ["Listings", null],
+    more: ["More", null],
+    appointments: ["Appointments", null],
+    cottageorders: ["New Cottage Orders", null],
+    park: ["The Park", null]
+  };
+  const [title, subtitle] = titles[screen] || ["QIC Sales", null];
+  return React.createElement(
+    "div",
+    { className: "h-[100dvh] flex flex-col bg-[#F9F5EC] text-[#1E1A13]" },
+    React.createElement(FieldHeader, { title, subtitle, online }),
+    !online && React.createElement(FieldOfflineBanner, null),
+    React.createElement(
+      "div",
+      { className: "flex-1 overflow-y-auto px-4 pt-3.5 pb-5" },
+      screen === "today" && React.createElement(SalesTodayScreen, { db, persist, actor, setToast, onGoToDeals: () => selectTab("deals") }),
+      screen === "deals" && React.createElement(SalesDealsScreen, { db, persist, actor, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage, setToast }),
+      screen === "listings" && React.createElement(SalesListingsScreen, { db, persist, saveCottage }),
+      screen === "more" && React.createElement(SalesMoreScreen, { onNavigate: setScreen, onGoToDesktopTab }),
+      screen === "appointments" && React.createElement(SalesAppointmentsScreen, { db, persist, actor, onBack: () => selectTab("more"), setToast }),
+      screen === "cottageorders" && React.createElement(
+        React.Fragment,
+        null,
+        React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#C1652F] mb-3" }, "← More"),
+        React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage })
+      ),
+      screen === "park" && React.createElement(
+        React.Fragment,
+        null,
+        React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#C1652F] mb-3" }, "← More"),
+        React.createElement(FieldParkScreen, { db, persist, saveWorkOrder, saveCottage, saveSite })
+      )
+    ),
+    toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
+    React.createElement(SalesTabBar, { screen, onSelect: selectTab })
+  );
+}
 function AppContent() {
   const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
   const isMobileViewport = useIsMobile();
@@ -13827,7 +14421,24 @@ function AppContent() {
     setMobileNavOpen(false);
   };
   const fieldMode = fieldModeOverride === "field" ? true : fieldModeOverride === "desktop" ? false : isMobileViewport;
+  const goToDesktopTab = (key) => {
+    setTab(key);
+    setFieldModeOverride("desktop");
+  };
   if (fieldMode) {
+    if (isSalesManager) {
+      return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(SalesApp, {
+        db,
+        persist,
+        actor,
+        saveWorkOrder,
+        saveCustomer,
+        saveSite,
+        saveCottage,
+        deleteCottage,
+        onGoToDesktopTab: goToDesktopTab
+      }));
+    }
     return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(FieldApp, {
       db,
       persist,
@@ -13847,10 +14458,7 @@ function AppContent() {
         createInvoiceFromSource(order, "workOrder");
         setFieldModeOverride("desktop");
       },
-      onGoToDesktopTab: (key) => {
-        setTab(key);
-        setFieldModeOverride("desktop");
-      }
+      onGoToDesktopTab: goToDesktopTab
     }));
   }
   return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 py-3" }, /* @__PURE__ */ React.createElement(
