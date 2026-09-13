@@ -2108,6 +2108,7 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
       saveWorkOrder,
       saveCottage,
       readOnly,
+      variant: "drawer",
       onClose: () => setDetailId(null),
       onEdit: (s) => {
         setDetailId(null);
@@ -2225,7 +2226,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
     selected.size === 1 ? "" : "s"
   )));
 }
-function SiteDetailModal({ site, db, persist, saveWorkOrder, saveCottage, readOnly, onClose, onEdit }) {
+function SiteDetailModal({ site, db, persist, saveWorkOrder, saveCottage, readOnly, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -2234,7 +2235,10 @@ function SiteDetailModal({ site, db, persist, saveWorkOrder, saveCottage, readOn
   const customers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
   const workOrders = db.workOrders.filter((w) => w.siteId === site.id);
   const quotes = db.quotes.filter((q) => q.siteId === site.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Site ${site.number}`, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, site.section && /* @__PURE__ */ React.createElement("div", null, "Section: ", site.section), (site.tags || []).length > 0 && /* @__PURE__ */ React.createElement("div", null, "Tags: ", site.tags.join(", ")), site.hookups && /* @__PURE__ */ React.createElement("div", null, "Hookups: ", site.hookups), site.notes && /* @__PURE__ */ React.createElement("div", null, "Notes: ", site.notes)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages on this site." }, cottages.map((c) => /* @__PURE__ */ React.createElement(
+  const isDrawer = variant === "drawer";
+  const Wrap = isDrawer ? DrawerShell : Modal;
+  const wrapProps = isDrawer ? { title: `Site ${site.number}`, eyebrow: "Site", onClose } : { title: `Site ${site.number}`, onClose, wide: true };
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, site.section && /* @__PURE__ */ React.createElement("div", null, "Section: ", site.section), (site.tags || []).length > 0 && /* @__PURE__ */ React.createElement("div", null, "Tags: ", site.tags.join(", ")), site.hookups && /* @__PURE__ */ React.createElement("div", null, "Hookups: ", site.hookups), site.notes && /* @__PURE__ */ React.createElement("div", null, "Notes: ", site.notes)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages on this site." }, cottages.map((c) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: c.id,
@@ -2725,7 +2729,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
       },
       onUnpin: unpinSite
     }
-  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, saveCottage, readOnly: true, onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
+  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, saveCottage, readOnly: true, variant: "drawer", onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
 }
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
@@ -2879,6 +2883,7 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, d
       saveSite,
       readOnly,
       canTransfer: canTransfer != null ? canTransfer : !readOnly,
+      variant: "drawer",
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -3215,7 +3220,7 @@ function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onT
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
 }
-function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, readOnly, canTransfer, nested, onClose, onEdit }) {
+function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, readOnly, canTransfer, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
@@ -3264,7 +3269,10 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
     const next = appliances.map((a) => a.id === applianceId ? { ...a, serviceLog: (a.serviceLog || []).filter((l) => l.id !== entryId) } : a);
     updateCottageAppliances(next);
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: cottage.name, onClose, wide: true }, cottage.offSiteInfo && !site && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] border border-[#E2DED5] px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Sold Off-Site"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740]" }, cottage.offSiteInfo)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#DDF1E1] border border-[#377249]/20 px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#28633C] font-semibold mb-1" }, "Current Owner"), currentOwners.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] italic" }, "No owner on file") : currentOwners.map(
+  const isDrawer = variant === "drawer" && !nested;
+  const Wrap = isDrawer ? DrawerShell : Modal;
+  const wrapProps = isDrawer ? { title: cottage.name, eyebrow: "Cottage", onClose } : { title: cottage.name, onClose, wide: true };
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, cottage.offSiteInfo && !site && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] border border-[#E2DED5] px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Sold Off-Site"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740]" }, cottage.offSiteInfo)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#DDF1E1] border border-[#377249]/20 px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#28633C] font-semibold mb-1" }, "Current Owner"), currentOwners.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] italic" }, "No owner on file") : currentOwners.map(
     (c) => nested ? /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] font-medium" }, c.name, (c.phone || c.email) && /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-normal" }, " \xB7 ", [c.phone, c.email].filter(Boolean).join(" \xB7 "))) : /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -3565,6 +3573,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       saveWorkOrder,
       saveCorrespondence,
       saveCottage,
+      variant: "drawer",
       onClose: () => setDetailId(null),
       onEdit: (c) => {
         setDetailId(null);
@@ -3639,7 +3648,7 @@ function CorrespondenceThread({ customer, db, saveCorrespondence }) {
   });
   return /* @__PURE__ */ React.createElement("div", null, rows);
 }
-function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, saveCottage, nested, onClose, onEdit }) {
+function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, saveCottage, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   if (!customer) return null;
@@ -3648,7 +3657,10 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
   const cottages = db.cottages.filter((c) => siteIds.includes(c.siteId));
   const workOrders = db.workOrders.filter((w) => w.customerId === customer.id || siteIds.includes(w.siteId));
   const quotes = db.quotes.filter((q) => q.customerId === customer.id);
-  return /* @__PURE__ */ React.createElement(Modal, { title: customer.name, onClose, wide: true }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, customer.companyName && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.companyName), customer.phone && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone, customer.phoneType ? ` (${customer.phoneType})` : ""), customer.email && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email), customer.customerLanguage && /* @__PURE__ */ React.createElement("div", null, "Language: ", customer.customerLanguage), (customer.name2 || customer.phone2 || customer.email2) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, customer.name2 && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.name2), customer.phone2 && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone2), customer.email2 && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email2)), customer.billingAddress && formatCustomerAddress(customer.billingAddress) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Billing Address: ", formatCustomerAddress(customer.billingAddress)), !((customer.billingAddress && formatCustomerAddress(customer.billingAddress))) && customer.address && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Address: ", customer.address), customer.shippingAddress && !customer.shippingSameAsBilling && formatCustomerAddress(customer.shippingAddress) && /* @__PURE__ */ React.createElement("div", null, "Shipping Address: ", formatCustomerAddress(customer.shippingAddress)), /* @__PURE__ */ React.createElement("div", null, linkedSites.length > 1 ? "Sites" : "Site", ":", " ", linkedSites.length ? linkedSites.map((s) => s.number).join(", ") : "Unassigned")), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages linked through their site." }, cottages.map((c) => {
+  const isDrawer = variant === "drawer" && !nested;
+  const Wrap = isDrawer ? DrawerShell : Modal;
+  const wrapProps = isDrawer ? { title: customer.name, eyebrow: "Customer", onClose } : { title: customer.name, onClose, wide: true };
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, customer.companyName && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.companyName), customer.phone && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone, customer.phoneType ? ` (${customer.phoneType})` : ""), customer.email && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email), customer.customerLanguage && /* @__PURE__ */ React.createElement("div", null, "Language: ", customer.customerLanguage), (customer.name2 || customer.phone2 || customer.email2) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, customer.name2 && /* @__PURE__ */ React.createElement("div", { className: "font-medium text-[#1E1A13]" }, customer.name2), customer.phone2 && /* @__PURE__ */ React.createElement("div", null, "Phone: ", customer.phone2), customer.email2 && /* @__PURE__ */ React.createElement("div", null, "Email: ", customer.email2)), customer.billingAddress && formatCustomerAddress(customer.billingAddress) && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Billing Address: ", formatCustomerAddress(customer.billingAddress)), !((customer.billingAddress && formatCustomerAddress(customer.billingAddress))) && customer.address && /* @__PURE__ */ React.createElement("div", { className: "pt-1.5" }, "Address: ", customer.address), customer.shippingAddress && !customer.shippingSameAsBilling && formatCustomerAddress(customer.shippingAddress) && /* @__PURE__ */ React.createElement("div", null, "Shipping Address: ", formatCustomerAddress(customer.shippingAddress)), /* @__PURE__ */ React.createElement("div", null, linkedSites.length > 1 ? "Sites" : "Site", ":", " ", linkedSites.length ? linkedSites.map((s) => s.number).join(", ") : "Unassigned")), /* @__PURE__ */ React.createElement(DetailSection, { title: "Cottages", empty: "No cottages linked through their site." }, cottages.map((c) => {
     const cSite = db.sites.find((s) => s.id === c.siteId);
     return /* @__PURE__ */ React.createElement(
       "button",
