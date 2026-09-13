@@ -13044,7 +13044,18 @@ function FieldParkScreen({ db, persist, saveWorkOrder, saveCottage, saveSite }) 
     })
   );
 }
-function FieldMoreScreen({ onNavigate }) {
+function MobileSignOutButton({ onSignOut }) {
+  return React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: onSignOut,
+      className: "w-full min-h-[52px] rounded-xl border border-[#E2DED5] bg-[#FFFDFA] text-[15px] font-semibold text-[#a8532a] mt-4"
+    },
+    "Sign Out"
+  );
+}
+function FieldMoreScreen({ onNavigate, onSignOut }) {
   const rows = [
     { key: "hydro", label: "Hydro Readings" },
     { key: "parts", label: "Parts" },
@@ -13052,20 +13063,25 @@ function FieldMoreScreen({ onNavigate }) {
     { key: "invoices", label: "Invoices" }
   ];
   return React.createElement(
-    "div",
-    { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
-    rows.map((r, i) => React.createElement(
-      "button",
-      {
-        key: r.key,
-        type: "button",
-        onClick: () => onNavigate(r.key),
-        className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < rows.length - 1 ? "border-b border-[#EEEBE5]" : ""}`
-      },
-      React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
-      React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
-    )),
-    React.createElement("div", { className: "px-4 py-3 border-t border-[#EEEBE5]" }, React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Push notifications and sync settings are coming in a later update — use the desktop view for those for now."))
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
+      rows.map((r, i) => React.createElement(
+        "button",
+        {
+          key: r.key,
+          type: "button",
+          onClick: () => onNavigate(r.key),
+          className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < rows.length - 1 ? "border-b border-[#EEEBE5]" : ""}`
+        },
+        React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
+        React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
+      )),
+      React.createElement("div", { className: "px-4 py-3 border-t border-[#EEEBE5]" }, React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Push notifications and sync settings are coming in a later update — use the desktop view for those for now."))
+    ),
+    onSignOut && React.createElement(MobileSignOutButton, { onSignOut })
   );
 }
 function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) {
@@ -13437,7 +13453,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     }))
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab }) {
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab, onSignOut }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -13525,7 +13541,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         setToast
       }),
       screen === "park" && React.createElement(FieldParkScreen, { db, persist, saveWorkOrder, saveCottage, saveSite }),
-      screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: setScreen }),
+      screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: setScreen, onSignOut }),
       screen === "hydro" && React.createElement(FieldHydroListScreen, {
         db,
         onEnterReading: (id) => {
@@ -14063,7 +14079,7 @@ function SalesAppointmentsScreen({ db, persist, actor, onBack, setToast }) {
     )
   );
 }
-function SalesMoreScreen({ onNavigate, onGoToDesktopTab }) {
+function SalesMoreScreen({ onNavigate, onGoToDesktopTab, onSignOut }) {
   const rows = [
     { key: "appointments", label: "Appointments" },
     { key: "cottageorders", label: "New Cottage Orders" },
@@ -14097,10 +14113,11 @@ function SalesMoreScreen({ onNavigate, onGoToDesktopTab }) {
         React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
         React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
       ))
-    )
+    ),
+    onSignOut && React.createElement(MobileSignOutButton, { onSignOut })
   );
 }
-function SalesApp({ db, persist, actor, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage, onGoToDesktopTab }) {
+function SalesApp({ db, persist, actor, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage, onGoToDesktopTab, onSignOut }) {
   const [screen, setScreen] = useState("today");
   const [toast, setToast] = useState(null);
   const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine);
@@ -14136,7 +14153,7 @@ function SalesApp({ db, persist, actor, saveWorkOrder, saveCustomer, saveSite, s
       screen === "today" && React.createElement(SalesTodayScreen, { db, persist, actor, setToast, onGoToDeals: () => selectTab("deals") }),
       screen === "deals" && React.createElement(SalesDealsScreen, { db, persist, actor, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage, setToast }),
       screen === "listings" && React.createElement(SalesListingsScreen, { db, persist, saveCottage }),
-      screen === "more" && React.createElement(SalesMoreScreen, { onNavigate: setScreen, onGoToDesktopTab }),
+      screen === "more" && React.createElement(SalesMoreScreen, { onNavigate: setScreen, onGoToDesktopTab, onSignOut }),
       screen === "appointments" && React.createElement(SalesAppointmentsScreen, { db, persist, actor, onBack: () => selectTab("more"), setToast }),
       screen === "cottageorders" && React.createElement(
         React.Fragment,
@@ -14176,24 +14193,29 @@ function AdminTabBar({ screen, onSelect }) {
     })
   );
 }
-function AdminMoreScreen({ onNavigate }) {
+function AdminMoreScreen({ onNavigate, onSignOut }) {
   const rows = [
     { key: "seasonalfees", label: "Seasonal Fees" },
     { key: "systemhealth", label: "System Health" },
     { key: "settings", label: "Settings" }
   ];
   return React.createElement(
-    "div",
-    { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
-    rows.map((r, i) => React.createElement(
-      "button",
-      { key: r.key, type: "button", onClick: () => onNavigate(r.key), className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < rows.length - 1 ? "border-b border-[#EEEBE5]" : ""}` },
-      React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
-      React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
-    ))
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
+      rows.map((r, i) => React.createElement(
+        "button",
+        { key: r.key, type: "button", onClick: () => onNavigate(r.key), className: `w-full flex items-center justify-between px-4 min-h-[56px] text-left ${i < rows.length - 1 ? "border-b border-[#EEEBE5]" : ""}` },
+        React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
+        React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
+      ))
+    ),
+    onSignOut && React.createElement(MobileSignOutButton, { onSignOut })
   );
 }
-function AdminApp({ db, persist, actor, saveSite, bulkWriteSites }) {
+function AdminApp({ db, persist, actor, saveSite, bulkWriteSites, onSignOut }) {
   const [screen, setScreen] = useState("dashboard");
   const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine);
   useEffect(() => {
@@ -14228,7 +14250,7 @@ function AdminApp({ db, persist, actor, saveSite, bulkWriteSites }) {
       screen === "dashboard" && React.createElement(AdminDashboardView, { db, persist }),
       screen === "staff" && React.createElement(StaffView, { db, persist }),
       screen === "reports" && React.createElement(AdminReportsView, { db }),
-      screen === "more" && React.createElement(AdminMoreScreen, { onNavigate: setScreen }),
+      screen === "more" && React.createElement(AdminMoreScreen, { onNavigate: setScreen, onSignOut }),
       screen === "seasonalfees" && React.createElement(
         React.Fragment,
         null,
@@ -14521,6 +14543,10 @@ function AppContent() {
     setTab(key);
     setFieldModeOverride("desktop");
   };
+  const signOut = () => {
+    pinIdentity.clearIdentity();
+    firebase.auth().signOut();
+  };
   if (fieldMode) {
     if (isAdmin) {
       return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(AdminApp, {
@@ -14528,7 +14554,8 @@ function AppContent() {
         persist,
         actor,
         saveSite,
-        bulkWriteSites
+        bulkWriteSites,
+        onSignOut: signOut
       }));
     }
     if (isSalesManager) {
@@ -14541,7 +14568,8 @@ function AppContent() {
         saveSite,
         saveCottage,
         deleteCottage,
-        onGoToDesktopTab: goToDesktopTab
+        onGoToDesktopTab: goToDesktopTab,
+        onSignOut: signOut
       }));
     }
     return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(FieldApp, {
@@ -14563,7 +14591,8 @@ function AppContent() {
         createInvoiceFromSource(order, "workOrder");
         setFieldModeOverride("desktop");
       },
-      onGoToDesktopTab: goToDesktopTab
+      onGoToDesktopTab: goToDesktopTab,
+      onSignOut: signOut
     }));
   }
   return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex bg-[#F9F5EC] text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 py-3" }, /* @__PURE__ */ React.createElement(
