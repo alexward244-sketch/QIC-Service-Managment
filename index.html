@@ -11938,22 +11938,6 @@ function SystemHealthView({ db, persist }) {
   };
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "System Health & Alerts"), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
 }
-function ParkSubNav({ active, onSelect, allowedTabKeys }) {
-  const items = [
-    { key: "customers", label: "Customers" },
-    { key: "sites", label: "Sites" },
-    { key: "cottages", label: "Cottages" }
-  ].filter((it) => !allowedTabKeys || allowedTabKeys.has(it.key));
-  return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-5 flex-wrap" }, items.map((it) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: it.key,
-      onClick: () => onSelect(it.key),
-      className: `px-4 py-1.5 rounded-full text-sm font-semibold border transition ${active === it.key ? "bg-[#377249] text-white border-[#377249]" : "bg-white text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
-    },
-    it.label
-  )));
-}
 const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders", "consignments", "sunspace", "admindashboard", "adminreports", "seasonalfees", "hydroreview", "salestransactions"]);
 function SettingsView({ db, persist }) {
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Settings"), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-4 space-y-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Invoicing"), /* @__PURE__ */ React.createElement(CompanyProfileControl, { db, persist }), /* @__PURE__ */ React.createElement(AccountingEmailControl, { db, persist }), /* @__PURE__ */ React.createElement(PaymentInstructionsControl, { db, persist })), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 space-y-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Hydro Billing"), /* @__PURE__ */ React.createElement(AccountingCopyEmailControl, { db, persist })));
@@ -12035,11 +12019,10 @@ const TABS = [
   { key: "invoices", label: "Invoices", group: "service" },
   { key: "propane", label: "Propane", group: "service" },
   { key: "parts", label: "Parts", group: "service" },
-  { key: "thepark", label: "The Park", group: "service" },
-  { key: "customers", label: "Customers", group: "service", hidden: true },
-  { key: "cottages", label: "Cottages", group: "service", hidden: true },
-  { key: "sites", label: "Sites", group: "service", hidden: true },
-  { key: "generalservice", label: "Service Requests", group: "service", hidden: true },
+  { key: "sites", label: "Sites", group: "service" },
+  { key: "customers", label: "Customers", group: "service" },
+  { key: "cottages", label: "Cottages", group: "service" },
+  { key: "generalservice", label: "Service Requests", group: "service" },
   { key: "correspondence", label: "Correspondence", group: "service" },
   { key: "map", label: "Site Map", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
@@ -12062,11 +12045,93 @@ const TABS = [
   { key: "staff", label: "Staff", group: "admin" },
   { key: "hydroreview", label: "Hydro Meter Review", group: "accounting" },
   { key: "hydro", label: "Hydro Readings", group: "accounting" },
-  { key: "thepark", label: "The Park", group: "accounting" },
-  { key: "customers", label: "Customers", group: "accounting", hidden: true },
-  { key: "cottages", label: "Cottages", group: "accounting", hidden: true },
-  { key: "sites", label: "Sites", group: "accounting", hidden: true }
+  { key: "sites", label: "Sites", group: "accounting" },
+  { key: "customers", label: "Customers", group: "accounting" },
+  { key: "cottages", label: "Cottages", group: "accounting" }
 ];
+const SERVICE_NAV_GROUPS = [
+  { label: "Today", items: ["dashboard", "workorders", "correspondence", "generalservice", "servicereports", "calendar"] },
+  { label: "Money", items: ["quotes", "invoices"] },
+  { label: "The Park", items: ["sites", "customers", "cottages", "map"] },
+  { label: "Seasonal", items: ["propane", "winterizing", "hydro", "parts"] }
+];
+const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn" };
+const NAV_ICON_SHAPES = {
+  dashboard: [
+    React.createElement("rect", { key: "a", x: 3, y: 3, width: 7, height: 9 }),
+    React.createElement("rect", { key: "b", x: 14, y: 3, width: 7, height: 5 }),
+    React.createElement("rect", { key: "c", x: 14, y: 12, width: 7, height: 9 }),
+    React.createElement("rect", { key: "d", x: 3, y: 16, width: 7, height: 5 })
+  ],
+  workorders: [
+    React.createElement("path", { key: "a", d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" }),
+    React.createElement("path", { key: "b", d: "M14 2v6h6M9 15h4" })
+  ],
+  correspondence: [
+    React.createElement("rect", { key: "a", x: 3, y: 5, width: 18, height: 14 }),
+    React.createElement("path", { key: "b", d: "m3 7 9 6 9-6" })
+  ],
+  generalservice: [
+    React.createElement("path", { key: "a", d: "M8 2h8l4 6-8 14L4 8z" }),
+    React.createElement("path", { key: "b", d: "M12 8v8" })
+  ],
+  servicereports: [
+    React.createElement("path", { key: "a", d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" }),
+    React.createElement("path", { key: "b", d: "M15 2v5h5M9 13h6M9 17h4" })
+  ],
+  calendar: [
+    React.createElement("rect", { key: "a", x: 3, y: 5, width: 18, height: 16 }),
+    React.createElement("path", { key: "b", d: "M8 2v4m8-4v4M3 10h18" })
+  ],
+  quotes: [
+    React.createElement("path", { key: "a", d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" }),
+    React.createElement("path", { key: "b", d: "M14 2v6h6M9 15h6" })
+  ],
+  invoices: [
+    React.createElement("path", { key: "a", d: "M4 3h16v18l-3-2-2 2-3-2-3 2-2-2-3 2z" }),
+    React.createElement("path", { key: "b", d: "M8 8h8M8 12h6" })
+  ],
+  sites: [
+    React.createElement("rect", { key: "a", x: 3, y: 3, width: 18, height: 18 }),
+    React.createElement("path", { key: "b", d: "M3 9h18M9 21V9" })
+  ],
+  customers: [
+    React.createElement("path", { key: "a", d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }),
+    React.createElement("circle", { key: "b", cx: 9, cy: 7, r: 4 }),
+    React.createElement("path", { key: "c", d: "M22 21v-2a4 4 0 0 0-3-3.9" })
+  ],
+  cottages: [
+    React.createElement("path", { key: "a", d: "m3 10 9-7 9 7v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" }),
+    React.createElement("path", { key: "b", d: "M9 21v-8h6v8" })
+  ],
+  map: [
+    React.createElement("path", { key: "a", d: "m9 4 6 2 6-2v14l-6 2-6-2-6 2V6z" }),
+    React.createElement("path", { key: "b", d: "M9 4v14M15 6v14" })
+  ],
+  propane: [
+    React.createElement("path", { key: "a", d: "M7 21h10V8a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3z" }),
+    React.createElement("path", { key: "b", d: "M10 5V3h4v2M7 12h10" })
+  ],
+  winterizing: [
+    React.createElement("path", { key: "a", d: "M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11" })
+  ],
+  hydro: [
+    React.createElement("path", { key: "a", d: "M13 2 4 14h7l-1 8 9-12h-7z" })
+  ],
+  parts: [
+    React.createElement("path", { key: "a", d: "M3 7l9-4 9 4v10l-9 4-9-4z" }),
+    React.createElement("path", { key: "b", d: "M3 7l9 4 9-4M12 21V11" })
+  ],
+  settings: [
+    React.createElement("circle", { key: "a", cx: 12, cy: 12, r: 3 }),
+    React.createElement("path", { key: "b", d: "M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.4-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 3a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.4l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z" })
+  ]
+};
+function NavIcon({ navKey, active }) {
+  const shapes = NAV_ICON_SHAPES[navKey];
+  if (!shapes) return null;
+  return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className: "w-4 h-4 flex-shrink-0", fill: "none", stroke: active ? "currentColor" : "#9A968D", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }, shapes);
+}
 const FIELD_TABS = [
   { key: "today", label: "Today" },
   { key: "jobs", label: "Jobs" },
@@ -13583,7 +13648,6 @@ function AppContent() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [manageRolesOpen, setManageRolesOpen] = useState(false);
-  const [parkTab, setParkTab] = useState("customers");
   const [searchPrefill, setSearchPrefill] = useState(null);
   const [notifStatus, setNotifStatus] = useState(
     typeof Notification !== "undefined" ? Notification.permission : "unsupported"
@@ -13735,7 +13799,7 @@ function AppContent() {
   const isSalesManager = role === "salesmanager";
   const isAccounting = role === "accounting";
   const isAdminOrManager = isAdmin || isManager || isAccounting;
-  const allowedTabKeys = isAdmin ? null : isSalesManager ? /* @__PURE__ */ new Set([...OFFICE_TAB_KEYS, ...SALES_TAB_KEYS]) : isAccounting ? /* @__PURE__ */ new Set([...MANAGER_TAB_KEYS, "hydroreview", "thepark"]) : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
+  const allowedTabKeys = isAdmin ? null : isSalesManager ? /* @__PURE__ */ new Set([...OFFICE_TAB_KEYS, ...SALES_TAB_KEYS]) : isAccounting ? /* @__PURE__ */ new Set([...MANAGER_TAB_KEYS, "hydroreview"]) : isManager ? MANAGER_TAB_KEYS : OFFICE_TAB_KEYS;
   const visibleGroup = isAdmin || isSalesManager || isAccounting ? mode : "service";
   const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : visibleGroup === "accounting" ? "hydroreview" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
@@ -13796,10 +13860,8 @@ function AppContent() {
     }
     setImportPending(null);
   };
-  const PARK_KEYS = ["customers", "sites", "cottages"];
   const selectTab = (key) => {
     setTab(key);
-    if (PARK_KEYS.includes(key)) setParkTab(key);
     setMobileNavOpen(false);
   };
   const jumpToSearchResult = (tabKey, term) => {
@@ -13815,6 +13877,21 @@ function AppContent() {
     setMode("service");
     setTab(key);
     setMobileNavOpen(false);
+  };
+  const goToSettings = () => {
+    setMode("admin");
+    setTab("settings");
+    setMobileNavOpen(false);
+  };
+  const navBadges = {
+    workorders: openCount,
+    correspondence: (db.correspondence || []).filter((c) => !c.customerId).length,
+    generalservice: (pendingSignups || []).filter((p) => p.type === "generalservice").length,
+    invoices: (db.invoices || []).filter((i) => !i.paidInFullDate).length,
+    sites: (db.sites || []).length,
+    propane: (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank).length,
+    winterizing: (db.winterizingRequests || []).filter((r) => !r.archived && !r.completed).length,
+    hydro: (db.sites || []).filter((s) => !getLastHydroReading(db, s.id)).length
   };
   const createInvoiceFromSource = (source, sourceType) => {
     setInvoicePrefill({ source, sourceType });
@@ -13872,13 +13949,38 @@ function AppContent() {
       options: ["service", ...isAdmin || isSalesManager ? ["sales"] : [], ...isAdmin ? ["admin"] : [], ...isAdmin || isAccounting ? ["accounting"] : []],
       onSelect: switchMode
     }),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1" }, TABS.filter((t) => t.group === visibleGroup).filter((t) => !t.hidden).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key === "thepark" ? parkTab : t.key)).map((t) => {
-      const isActive = t.key === "thepark" ? PARK_KEYS.includes(effectiveTab) : effectiveTab === t.key;
+    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1 overflow-y-auto" }, visibleGroup === "service" ? SERVICE_NAV_GROUPS.map((group) => {
+      const items = group.items.map((key) => TABS.find((t) => t.group === "service" && t.key === key)).filter((t) => t && (!allowedTabKeys || allowedTabKeys.has(t.key)));
+      if (items.length === 0) return null;
+      return /* @__PURE__ */ React.createElement("div", { key: group.label }, /* @__PURE__ */ React.createElement("div", { className: "px-3 pt-3.5 pb-1 text-[10px] font-bold tracking-[.09em] uppercase text-[#9A968D]" }, group.label), items.map((t) => {
+        const isActive = effectiveTab === t.key;
+        const badge = navBadges[t.key];
+        const badgeKind = NAV_BADGE_KIND[t.key];
+        return /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            key: t.key,
+            onClick: () => selectTab(t.key),
+            className: `w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${isActive ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
+          },
+          /* @__PURE__ */ React.createElement(NavIcon, { navKey: t.key, active: isActive }),
+          t.label,
+          badge > 0 && /* @__PURE__ */ React.createElement(
+            "span",
+            {
+              className: badgeKind === "warn" ? "ml-auto text-[10.5px] font-bold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a]" : badgeKind === "green" ? "ml-auto text-[10.5px] font-bold px-1.5 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" : "ml-auto text-[11px] font-semibold text-[#9A968D]"
+            },
+            badge
+          )
+        );
+      }));
+    }) : TABS.filter((t) => t.group === visibleGroup).filter((t) => !allowedTabKeys || allowedTabKeys.has(t.key)).map((t) => {
+      const isActive = effectiveTab === t.key;
       return /* @__PURE__ */ React.createElement(
         "button",
         {
           key: t.key,
-          onClick: () => selectTab(t.key === "thepark" ? parkTab : t.key),
+          onClick: () => selectTab(t.key),
           className: `flex items-center gap-2.5 px-3 py-2.5 rounded-[9px] text-[13.5px] font-semibold text-left transition ${isActive ? "bg-[#DDF1E1] text-[#28633C]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`
         },
         /* @__PURE__ */ React.createElement("span", { className: `w-[7px] h-[7px] rounded-[2px] flex-shrink-0 ${isActive ? "bg-[#28633C]" : "bg-[#E2DED5]"}` }),
@@ -13887,6 +13989,15 @@ function AppContent() {
         t.key === "correspondence" && (db.correspondence || []).filter((c) => !c.customerId).length > 0 && /* @__PURE__ */ React.createElement("span", { className: "ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#a8532a] text-white" }, (db.correspondence || []).filter((c) => !c.customerId).length)
       );
     })),
+    visibleGroup === "service" && isAdmin && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: goToSettings,
+        className: "flex items-center gap-2.5 px-3 py-2.5 mt-1.5 pt-3.5 border-t border-[#EDE9E0] rounded-[9px] text-[13.5px] font-semibold text-left text-[#4B4740] hover:bg-[#F1EEE9] transition"
+      },
+      /* @__PURE__ */ React.createElement(NavIcon, { navKey: "settings", active: false }),
+      "Settings"
+    ),
     /* @__PURE__ */ React.createElement("div", { className: "px-3 py-3 border-t border-[#E2DED5] mt-1.5 space-y-2" }, notifStatus !== "unsupported" && /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -13916,7 +14027,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), PARK_KEYS.includes(effectiveTab) && /* @__PURE__ */ React.createElement(ParkSubNav, { active: effectiveTab, onSelect: selectTab, allowedTabKeys }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceQueueView, { db, saveCorrespondence, deleteCorrespondence, saveCustomer }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceQueueView, { db, saveCorrespondence, deleteCorrespondence, saveCustomer }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
