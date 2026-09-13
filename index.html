@@ -12139,6 +12139,12 @@ const SERVICE_NAV_GROUPS = [
   { label: "The Park", items: ["sites", "customers", "cottages", "map"] },
   { label: "Seasonal", items: ["propane", "winterizing", "hydro", "parts"] }
 ];
+const ADMIN_NAV_GROUPS = [
+  { label: "Overview", items: ["admindashboard", "adminreports"] },
+  { label: "Park", items: ["seasonalfees"] },
+  { label: "People", items: ["staff"] },
+  { label: "System", items: ["systemhealth", "settings"] }
+];
 const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn" };
 const NAV_ICON_SHAPES = {
   dashboard: [
@@ -12209,6 +12215,28 @@ const NAV_ICON_SHAPES = {
   settings: [
     React.createElement("circle", { key: "a", cx: 12, cy: 12, r: 3 }),
     React.createElement("path", { key: "b", d: "M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.4-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 3a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.4l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z" })
+  ],
+  admindashboard: [
+    React.createElement("rect", { key: "a", x: 3, y: 3, width: 7, height: 9 }),
+    React.createElement("rect", { key: "b", x: 14, y: 3, width: 7, height: 5 }),
+    React.createElement("rect", { key: "c", x: 14, y: 12, width: 7, height: 9 }),
+    React.createElement("rect", { key: "d", x: 3, y: 16, width: 7, height: 5 })
+  ],
+  adminreports: [
+    React.createElement("path", { key: "a", d: "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" }),
+    React.createElement("path", { key: "b", d: "M15 2v5h5M9 13h6M9 17h4" })
+  ],
+  seasonalfees: [
+    React.createElement("circle", { key: "a", cx: 12, cy: 12, r: 9 }),
+    React.createElement("path", { key: "b", d: "M12 6v12M15 9.3c0-1.3-1.4-2.3-3-2.3s-3 .9-3 2.3S10.5 11.5 12 12s3 1 3 2.7-1.4 2.3-3 2.3-3-1-3-2.3" })
+  ],
+  systemhealth: [
+    React.createElement("path", { key: "a", d: "M3 12h4l2-8 4 16 2-8h6" })
+  ],
+  staff: [
+    React.createElement("path", { key: "a", d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }),
+    React.createElement("circle", { key: "b", cx: 9, cy: 7, r: 4 }),
+    React.createElement("path", { key: "c", d: "M22 21v-2a4 4 0 0 0-3-3.9" })
   ]
 };
 function NavIcon({ navKey, active }) {
@@ -14765,8 +14793,8 @@ function AppContent() {
       options: ["service", ...isAdmin || isSalesManager ? ["sales"] : [], ...isAdmin ? ["admin"] : [], ...isAdmin || isAccounting ? ["accounting"] : []],
       onSelect: switchMode
     }),
-    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1 overflow-y-auto" }, visibleGroup === "service" ? SERVICE_NAV_GROUPS.map((group) => {
-      const items = group.items.map((key) => TABS.find((t) => t.group === "service" && t.key === key)).filter((t) => t && (!allowedTabKeys || allowedTabKeys.has(t.key)));
+    /* @__PURE__ */ React.createElement("nav", { className: "flex flex-col gap-0.5 flex-1 overflow-y-auto" }, visibleGroup === "service" || visibleGroup === "admin" ? (visibleGroup === "service" ? SERVICE_NAV_GROUPS : ADMIN_NAV_GROUPS).map((group) => {
+      const items = group.items.map((key) => TABS.find((t) => t.group === visibleGroup && t.key === key)).filter((t) => t && (!allowedTabKeys || allowedTabKeys.has(t.key)));
       if (items.length === 0) return null;
       return /* @__PURE__ */ React.createElement("div", { key: group.label }, /* @__PURE__ */ React.createElement("div", { className: "px-3 pt-3.5 pb-1 text-[10px] font-bold tracking-[.09em] uppercase text-[#9A968D]" }, group.label), items.map((t) => {
         const isActive = effectiveTab === t.key;
