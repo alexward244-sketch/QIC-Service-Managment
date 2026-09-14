@@ -4274,7 +4274,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
 }
 
-function InvoiceCard({ inv, db, taxRate, emailStatus, onEdit, onPrint, onInfoSheet, onEmail, onMarkPaidInFull, onMarkPaidInAdvance, onDelete }) {
+function InvoiceCard({ inv, db, taxRate, emailStatus, onView, onEdit, onPrint, onInfoSheet, onEmail, onMarkPaidInFull, onMarkPaidInAdvance, onDelete }) {
   const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
   const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
   const { total } = computeQuoteTotals(inv, effectiveTaxRate);
@@ -4283,7 +4283,7 @@ function InvoiceCard({ inv, db, taxRate, emailStatus, onEdit, onPrint, onInfoShe
   const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
   const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
   const es = emailStatus[inv.id];
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, inv.invoiceNumber), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("button", { className: "font-semibold text-[#1E1A13] hover:underline text-left", onClick: () => onView(inv) }, inv.invoiceNumber), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
     isPaid: !!inv.paidInAdvanceMethod,
     method: inv.paidInAdvanceMethod,
     options: ADVANCE_PAYMENT_METHODS,
@@ -4298,15 +4298,77 @@ function InvoiceCard({ inv, db, taxRate, emailStatus, onEdit, onPrint, onInfoShe
       className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap disabled:opacity-50"
     },
     es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
-  ), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onInfoSheet(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Info Sheet"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(inv), className: "text-[#a8532a] hover:underline text-xs py-2" }, "Delete")));
+  ), /* @__PURE__ */ React.createElement("button", { onClick: () => onView(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "View"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onInfoSheet(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Info Sheet"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(inv), className: "text-[#a8532a] hover:underline text-xs py-2" }, "Delete")));
 }
-// TODO(design-handoff): 3b draws invoice rows collapsing into a read-only drawer, with
-// editing ruled full-page but not itself drawn. Row click still opens the edit form modal
-// directly here rather than a separate view drawer — building that read view is new work,
-// not a restyle, so it's left for a follow-up rather than guessed.
+function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, onInfoSheet }) {
+  if (!invoice) return null;
+  const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
+  const site = invoice.siteId ? db.sites.find((s) => s.id === invoice.siteId) : null;
+  const cottage = invoice.cottageId ? db.cottages.find((c) => c.id === invoice.cottageId) : null;
+  const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
+  const totals = computeQuoteTotals(invoice, effectiveTaxRate);
+  const status = invoiceStatus(invoice, taxRate);
+  const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
+  const statusLabel = status === "Paid" && invoice.paidMethod ? `Paid — ${invoice.paidMethod}` : status;
+  const balance = totals.total - (Number(invoice.depositAmount) || 0);
+  const badges = [
+    /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${statusTone}` }, statusLabel),
+    invoice.paidInAdvanceMethod && /* @__PURE__ */ React.createElement("span", { key: "a", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, `Paid in Advance — ${invoice.paidInAdvanceMethod}`)
+  ].filter(Boolean);
+  const lineItems = invoice.lineItems || [];
+  return /* @__PURE__ */ React.createElement(
+    DrawerShell,
+    { title: `Invoice ${invoice.invoiceNumber}`, eyebrow: invoice.title ? `Invoice · ${invoice.title}` : "Invoice", badges, onClose },
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "grid grid-cols-2 gap-x-4 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" },
+      /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), invoice.date),
+      /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer ? customer.name : "—"),
+      site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number),
+      cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name),
+      invoice.sentDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Sent: "), invoice.sentDate)
+    ),
+    /* @__PURE__ */ React.createElement(
+      DetailSection,
+      { title: "Line Items", empty: "No line items." },
+      lineItems.map((li) => /* @__PURE__ */ React.createElement(
+        "div",
+        { key: li.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" },
+        /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, li.description || "—", " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\xD7", li.quantity)),
+        /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0)))
+      ))
+    ),
+    (Number(invoice.laborHours) > 0 || totals.shopSupplies > 0 || totals.serviceCall > 0) && /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "mb-4 space-y-1 text-sm" },
+      Number(invoice.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, `Labor — ${invoice.laborHours} hrs × ${formatPrice(invoice.laborRate || 0)}`), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.laborCost))),
+      totals.shopSupplies > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Shop Supplies"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.shopSupplies))),
+      totals.serviceCall > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.serviceCall)))
+    ),
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "space-y-1 text-sm mb-5 pt-3 border-t border-[#EEEBE5]" },
+      /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.subtotal))),
+      /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Tax"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.tax))),
+      /* @__PURE__ */ React.createElement("div", { className: "flex justify-between font-semibold" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, formatPrice(totals.total))),
+      status !== "Paid" && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Collected"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(Number(invoice.depositAmount) || 0))),
+      status !== "Paid" && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between font-semibold" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "Balance"), /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, formatPrice(balance)))
+    ),
+    invoice.notes && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1.5" }, "Notes"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, invoice.notes)),
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "flex flex-wrap items-center justify-end gap-2 mt-2" },
+      /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(invoice), className: "text-xs text-[#75716A] hover:underline py-2" }, "Print"),
+      /* @__PURE__ */ React.createElement("button", { onClick: () => onInfoSheet(invoice), className: "text-xs text-[#75716A] hover:underline py-2" }, "Info Sheet"),
+      /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"),
+      /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(invoice), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Edit Invoice")
+    )
+  );
+}
 function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
+  const [detailInvoice, setDetailInvoice] = useState(null);
   const [filter, setFilter] = useState("");
   const [emailStatus, setEmailStatus] = useState({});
   const [sendConfirm, setSendConfirm] = useState(null);
@@ -4432,14 +4494,14 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
     const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
     const es = emailStatus[inv.id];
-    return /* @__PURE__ */ React.createElement("tr", { key: inv.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, inv.invoiceNumber), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+    return /* @__PURE__ */ React.createElement("tr", { key: inv.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailInvoice(inv) }, inv.invoiceNumber)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
       isPaid: !!inv.paidInAdvanceMethod,
       method: inv.paidInAdvanceMethod,
       options: ADVANCE_PAYMENT_METHODS,
       showLabel: true,
       compactLabel: true,
       onSelect: (m) => setPaidInAdvance(inv, m)
-    })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, customer ? customer.name : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, inv.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, status === "Paid" ? "\u2014" : formatPrice(balance)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: inv }) }, "Edit"), /* @__PURE__ */ React.createElement("button", {
+    })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, customer ? customer.name : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, inv.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, status === "Paid" ? "\u2014" : formatPrice(balance)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailInvoice(inv) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: inv }) }, "Edit"), /* @__PURE__ */ React.createElement("button", {
       className: "text-[#75716A] hover:underline",
       onClick: () => downloadPrintableItems([inv], (i) => buildInvoiceHtml(i, db, taxRate, false), `invoice-${inv.invoiceNumber}`)
     }, "Print"), /* @__PURE__ */ React.createElement("button", {
@@ -4461,6 +4523,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     db,
     taxRate,
     emailStatus,
+    onView: (i) => setDetailInvoice(i),
     onEdit: (i) => setModal({ mode: "edit", data: i }),
     onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
     onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
@@ -4506,12 +4569,23 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     },
     onCancel: () => setPaidMethodPrompt(null)
   }) : null;
-  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl, paidMethodEl);
+  const detailEl = detailInvoice ? /* @__PURE__ */ React.createElement(InvoiceDetailDrawer, {
+    invoice: invoices.find((i) => i.id === detailInvoice.id) || detailInvoice,
+    db,
+    taxRate,
+    onClose: () => setDetailInvoice(null),
+    onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
+    onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
+    onEdit: (i) => {
+      setDetailInvoice(null);
+      setModal({ mode: "edit", data: i });
+    }
+  }) : null;
+  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl, paidMethodEl, detailEl);
 }
 
-// TODO(design-handoff): the exact column set and drawer contents for this tab were left
-// open by the handoff ("still open" per the README). Row click still opens the edit form
-// directly rather than a separate read drawer, consistent with Invoices — see its TODO.
+// Decided: no view drawer here — the table (Name/SKU/Price/Price+tax/Qty, low-stock
+// flagging) already shows what a drawer would, so row click keeps opening the edit form.
 function PartsView({ db, persist }) {
   var _a, _b, _c, _d;
   const [modal, setModal] = useState(null);
@@ -4800,9 +4874,8 @@ function UnrecognizedSignupsModal({ entries, onDiscard, onClose }) {
     return /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-2" }, "Type on record: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono text-[#a8532a]" }, entry.type ? `"${entry.type}"` : "(missing)")), /* @__PURE__ */ React.createElement("div", { className: "space-y-1 mb-3" }, FIELD_ORDER.map((key) => renderField(key, entry[key])), extraKeys.map((key) => renderField(key, entry[key]))), /* @__PURE__ */ React.createElement("button", { onClick: () => onDiscard(entry.id), className: "px-3 py-1.5 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md font-medium border border-[#a8532a]/30" }, "Discard — handled manually"));
   })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
-// TODO(design-handoff): which dashboard figures should stay owner-only vs visible to every
-// role is an open decision the handoff flags explicitly ("do not guess"). All stat tiles are
-// currently shown to anyone who can reach this tab (gated only by existing tab permissions).
+// Decided: all stat tiles stay visible to anyone who can reach this tab, gated only by
+// existing tab permissions — no per-role hiding of individual figures.
 function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder }) {
   const actor = useCurrentActor();
   const [viewingWO, setViewingWO] = useState(null);
@@ -9760,11 +9833,11 @@ function ServiceAppointmentForm({ initial, defaultDate, onSave, onCancel }) {
     "Save"
   )));
 }
-// TODO(design-handoff): 9c redesigns this as a technician-by-day resource board with an
-// Unscheduled column, so unassigned work is visible rather than hidden in a day cell. Not
-// built here — the handoff explicitly flags "whether unassigned work blocks a week from
-// being published, and who assigns" as an open decision, so this needs that answer first
-// rather than a guessed drag-and-drop rebuild. Current month-grid view is unchanged.
+// TODO: 9c proposed redesigning this as a technician-by-day resource board with an
+// Unscheduled column, so unassigned work is visible rather than hidden in a day cell.
+// Reviewed and explicitly deferred (2026-09-13) — it's a real new feature (whether
+// unassigned work blocks a week from publishing, and who assigns, need answers first),
+// not a restyle, so left for its own focused task. Current month-grid view is unchanged.
 function CalendarView({ db, persist, onGoToTab }) {
   const [cursor, setCursor] = useState(() => {
     const d = /* @__PURE__ */ new Date();
@@ -13984,6 +14057,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
       db,
       taxRate,
       emailStatus,
+      onView: (i) => setModal({ mode: "edit", data: i }),
       onEdit: (i) => setModal({ mode: "edit", data: i }),
       onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
       onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
