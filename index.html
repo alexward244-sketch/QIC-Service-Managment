@@ -44,6 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -90,6 +91,7 @@ const CORRESPONDENCE_REF = db_.collection("correspondence");
 const SITES_REF = db_.collection("sites");
 const COTTAGES_REF = db_.collection("cottages");
 const storage_ = firebase.storage();
+const functions_ = firebase.functions();
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
 // One EmailJS "service" per sending identity. Each must be added under
@@ -1856,18 +1858,34 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("office");
   const [codesOpenFor, setCodesOpenFor] = useState(null);
+  const [busyEmail, setBusyEmail] = useState(null);
+  const [roleError, setRoleError] = useState(null);
   const roles = db.userRoles || {};
   const loginCodes = db.loginCodes || {};
   const entries = Object.entries(roles);
   const hasAnyAdmin = entries.some(([, r]) => r === "admin");
-  const setRole = (email, role) => {
-    const userRoles = { ...roles, [email.trim().toLowerCase()]: role };
-    persist({ ...db, userRoles });
+  const setRole = async (email, role) => {
+    const key = email.trim().toLowerCase();
+    setRoleError(null);
+    setBusyEmail(key);
+    try {
+      await functions_.httpsCallable("setUserRole")({ email: key, role });
+    } catch (e) {
+      setRoleError((e == null ? void 0 : e.message) || `Couldn't update the role for ${key}. Try again.`);
+    } finally {
+      setBusyEmail(null);
+    }
   };
-  const removeRole = (email) => {
-    const userRoles = { ...roles };
-    delete userRoles[email];
-    persist({ ...db, userRoles });
+  const removeRole = async (email) => {
+    setRoleError(null);
+    setBusyEmail(email);
+    try {
+      await functions_.httpsCallable("removeUserRole")({ email });
+    } catch (e) {
+      setRoleError((e == null ? void 0 : e.message) || `Couldn't remove ${email}. Try again.`);
+    } finally {
+      setBusyEmail(null);
+    }
   };
   const addNew = () => {
     if (!newEmail.trim()) return;
@@ -1902,11 +1920,12 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     const codes = (current.codes || []).filter((c) => c.id !== codeId);
     persist({ ...db, loginCodes: { ...loginCodes, [key]: { ...current, codes } } });
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Manage Access", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Assign Admin or Office access to specific logins \u2014 the email must match exactly what they sign in with. Anyone not listed here defaults to Office access", hasAnyAdmin ? "" : " (until at least one Admin is set)", "."), entries.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No roles assigned yet \u2014 everyone currently has full Admin access.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, entries.map(([email, role]) => /* @__PURE__ */ React.createElement("div", { key: email }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2 mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13] truncate" }, email, email === currentEmail ? " (you)" : "", (loginCodes[email] || {}).required && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#DDF1E1] text-[#28633C] px-1.5 py-0.5 rounded-full align-middle" }, "Code Required")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Manage Access", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Assign Admin or Office access to specific logins \u2014 the email must match exactly what they sign in with. Anyone not listed here defaults to Office access", hasAnyAdmin ? "" : " (until at least one Admin is set)", ". They need to have signed in at least once before you can set their role, and a change takes effect the next time they sign in."), roleError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2 mb-3" }, roleError), entries.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No roles assigned yet \u2014 everyone currently has full Admin access.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, entries.map(([email, role]) => /* @__PURE__ */ React.createElement("div", { key: email }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2 mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13] truncate" }, email, email === currentEmail ? " (you)" : "", (loginCodes[email] || {}).required && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#DDF1E1] text-[#28633C] px-1.5 py-0.5 rounded-full align-middle" }, "Code Required")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement(
     "select",
     {
-      className: "text-xs rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1",
+      className: "text-xs rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 disabled:opacity-50",
       value: role,
+      disabled: busyEmail === email,
       onChange: (e) => setRole(email, e.target.value)
     },
     /* @__PURE__ */ React.createElement("option", { value: "admin" }, "Admin"),
@@ -1914,7 +1933,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     /* @__PURE__ */ React.createElement("option", { value: "salesmanager" }, "Sales Manager"),
     /* @__PURE__ */ React.createElement("option", { value: "accounting" }, "Accounting"),
     /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")
-  ), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline whitespace-nowrap", onClick: () => setCodesOpenFor(codesOpenFor === email ? null : email) }, codesOpenFor === email ? "Hide codes" : "Login codes"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline", onClick: () => removeRole(email) }, "Remove"))), codesOpenFor === email && /* @__PURE__ */ React.createElement(LoginCodesPanel, {
+  ), busyEmail === email && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D]" }, "Saving…"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline whitespace-nowrap", onClick: () => setCodesOpenFor(codesOpenFor === email ? null : email) }, codesOpenFor === email ? "Hide codes" : "Login codes"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline disabled:opacity-50", disabled: busyEmail === email, onClick: () => removeRole(email) }, "Remove"))), codesOpenFor === email && /* @__PURE__ */ React.createElement(LoginCodesPanel, {
     email,
     config: loginCodes[email],
     onSetRequired: (required) => setLoginRequired(email, required),
@@ -1933,7 +1952,8 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     "button",
     {
       onClick: addNew,
-      className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium whitespace-nowrap"
+      disabled: !!busyEmail || !newEmail.trim(),
+      className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium whitespace-nowrap disabled:opacity-50"
     },
     "Add"
   )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
