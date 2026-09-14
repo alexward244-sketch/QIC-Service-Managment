@@ -3687,9 +3687,16 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
   ));
   const body = isDrawer ? /* @__PURE__ */ React.createElement(
     "div",
-    { className: "grid gap-6", style: { gridTemplateColumns: "320px minmax(0,1fr)" } },
-    /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, contactInfo, cottagesSection, workOrdersSection, quotesSection),
-    /* @__PURE__ */ React.createElement("div", { className: "min-w-0 border-l border-[#EEEBE5] pl-6" }, correspondenceSection)
+    null,
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "grid gap-6 mb-6 pb-6 border-b border-[#EEEBE5]", style: { gridTemplateColumns: "300px repeat(3, minmax(0,1fr))" } },
+      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, contactInfo),
+      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, cottagesSection),
+      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, workOrdersSection),
+      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, quotesSection)
+    ),
+    correspondenceSection
   ) : /* @__PURE__ */ React.createElement(React.Fragment, null, contactInfo, cottagesSection, workOrdersSection, quotesSection, correspondenceSection);
   return /* @__PURE__ */ React.createElement(Wrap, wrapProps, body, footer, viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" }), viewingCottageId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
