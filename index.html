@@ -12846,35 +12846,24 @@ const FIELD_SIGNUP_TYPE_META = {
   generalservice: { label: "General Service", ref: WORK_ORDERS_REF, Form: GeneralServiceMatchForm }
 };
 function FieldSignupsReviewModal({ entries, db, confirmPendingSignup, removePendingSignup, onClose, setToast }) {
-  const [reviewingEntry, setReviewingEntry] = useState(null);
-  const [unrecognizedOpen, setUnrecognizedOpen] = useState(false);
   const recognized = entries.filter((e) => FIELD_SIGNUP_TYPE_META[e.type]);
   const unrecognized = entries.filter((e) => !FIELD_SIGNUP_TYPE_META[e.type]);
+  const typeOptions = Object.keys(FIELD_SIGNUP_TYPE_META).map((type) => ({
+    type,
+    label: FIELD_SIGNUP_TYPE_META[type].label,
+    count: recognized.filter((e) => e.type === type).length
+  })).filter((opt) => opt.count > 0);
+  const hadChoice = typeOptions.length > 1;
+  // Only one type pending — nothing to choose between, so skip straight to it
+  // (matches desktop: the chooser only appears when it's genuinely ambiguous).
+  const [activeType, setActiveType] = useState(() => typeOptions.length === 1 ? typeOptions[0].type : null);
+  const [unrecognizedOpen, setUnrecognizedOpen] = useState(() => typeOptions.length === 0 && unrecognized.length > 0);
+  const [reviewingEntry, setReviewingEntry] = useState(null);
   const meta = reviewingEntry ? FIELD_SIGNUP_TYPE_META[reviewingEntry.type] : null;
-  return React.createElement(
-    React.Fragment,
-    null,
-    !reviewingEntry && !unrecognizedOpen && React.createElement(
-      Modal,
-      { title: "Sign-Ups Needing Review", onClose, wide: true },
-      recognized.length === 0 && unrecognized.length === 0 ? React.createElement(EmptyState, { text: "Nothing needs review right now." }) : React.createElement(
-        "div",
-        { className: "space-y-2" },
-        recognized.map((e) => React.createElement(
-          "button",
-          { key: e.id, type: "button", onClick: () => setReviewingEntry(e), className: "w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] text-left" },
-          React.createElement(
-            "span",
-            { className: "min-w-0" },
-            React.createElement("span", { className: "block text-sm font-medium text-[#1E1A13] truncate" }, e.submittedName || "(no name given)"),
-            React.createElement("span", { className: "block text-xs text-[#75716A]" }, FIELD_SIGNUP_TYPE_META[e.type].label, " \xB7 Site ", e.submittedSiteNumber || "?")
-          ),
-          React.createElement("span", { className: "text-xs font-semibold text-[#377249] flex-shrink-0" }, "Review")
-        )),
-        unrecognized.length > 0 && React.createElement("button", { type: "button", onClick: () => setUnrecognizedOpen(true), className: "w-full text-left px-4 py-3 rounded-lg border border-[#a8532a]/30 bg-[#F5E3D9] text-sm font-medium text-[#a8532a]" }, unrecognized.length, " sign-up", unrecognized.length === 1 ? "" : "s", " with an unrecognized type — tap to review")
-      )
-    ),
-    reviewingEntry && meta && React.createElement(
+  const listForActiveType = activeType ? recognized.filter((e) => e.type === activeType) : [];
+
+  if (reviewingEntry && meta) {
+    return React.createElement(
       Modal,
       { title: `Review ${meta.label} Sign-Up`, onClose: () => setReviewingEntry(null), wide: true },
       React.createElement(meta.Form, {
@@ -12892,12 +12881,55 @@ function FieldSignupsReviewModal({ entries, db, confirmPendingSignup, removePend
         },
         onCancel: () => setReviewingEntry(null)
       })
-    ),
-    unrecognizedOpen && React.createElement(UnrecognizedSignupsModal, {
+    );
+  }
+
+  if (unrecognizedOpen) {
+    return React.createElement(UnrecognizedSignupsModal, {
       entries: unrecognized,
       onDiscard: (id) => removePendingSignup(id),
-      onClose: () => setUnrecognizedOpen(false)
-    })
+      onClose: () => typeOptions.length > 0 ? setUnrecognizedOpen(false) : onClose()
+    });
+  }
+
+  if (typeOptions.length === 0 && unrecognized.length === 0) {
+    return React.createElement(
+      Modal,
+      { title: "Sign-Ups Needing Review", onClose },
+      React.createElement(EmptyState, { text: "Nothing needs review right now." })
+    );
+  }
+
+  if (activeType) {
+    const activeMeta = FIELD_SIGNUP_TYPE_META[activeType];
+    return React.createElement(
+      Modal,
+      { title: `${activeMeta.label} Sign-Ups`, onClose, wide: true },
+      hadChoice && React.createElement("button", { type: "button", onClick: () => setActiveType(null), className: "text-xs font-semibold text-[#377249] mb-3" }, "← All types"),
+      listForActiveType.length === 0 ? React.createElement(EmptyState, { text: "Nothing needs review right now." }) : React.createElement(
+        "div",
+        { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] overflow-hidden mb-3" },
+        listForActiveType.map((e) => React.createElement(PendingSignupRow, { key: e.id, entry: e, db, onReview: setReviewingEntry }))
+      ),
+      unrecognized.length > 0 && React.createElement("button", { type: "button", onClick: () => setUnrecognizedOpen(true), className: "w-full text-left px-4 py-3 rounded-lg border border-[#a8532a]/30 bg-[#F5E3D9] text-sm font-medium text-[#a8532a]" }, unrecognized.length, " sign-up", unrecognized.length === 1 ? "" : "s", " with an unrecognized type — tap to review")
+    );
+  }
+
+  // Chooser — reached only when more than one type has pending sign-ups.
+  return React.createElement(
+    Modal,
+    { title: "Which sign-ups would you like to review?", onClose },
+    React.createElement(
+      "div",
+      { className: "space-y-2" },
+      typeOptions.map((opt) => React.createElement(
+        "button",
+        { key: opt.type, type: "button", onClick: () => setActiveType(opt.type), className: "w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] text-left" },
+        React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, opt.label),
+        React.createElement("span", { className: "text-xs px-2 py-0.5 rounded-full font-semibold bg-[#FBEEDA] text-[#9A6B1F]" }, opt.count, " need", opt.count === 1 ? "s" : "", " review")
+      )),
+      unrecognized.length > 0 && React.createElement("button", { type: "button", onClick: () => setUnrecognizedOpen(true), className: "w-full text-left px-4 py-3 rounded-lg border border-[#a8532a]/30 bg-[#F5E3D9] text-sm font-medium text-[#a8532a]" }, unrecognized.length, " sign-up", unrecognized.length === 1 ? "" : "s", " with an unrecognized type — tap to review")
+    )
   );
 }
 function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
