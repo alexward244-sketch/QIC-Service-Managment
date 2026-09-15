@@ -3724,14 +3724,15 @@ function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder
   const markHandled = () => saveCorrespondence({ ...item, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString() });
   return /* @__PURE__ */ React.createElement("div", { className: `rounded-lg border p-3 mb-2 ${isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-[#E2DED5] bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, isOut ? "QIC Service" : item.fromEmail, /* @__PURE__ */ React.createElement("span", { className: `ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isOut ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#E4EEF2] text-[#2E6E8E]"}` }, isOut ? "Sent" : "Received"), isNew && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#B8752F] text-white" }, "NEW")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "")), item.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "\u21AA Forwarded by ", item.forwardedBy), item.subject && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1" }, "Subject: ", item.subject), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, item.body), item.attachmentUrl && /* @__PURE__ */ React.createElement("div", { className: "mt-2 flex items-center gap-2 border border-[#E2DED5] rounded-md p-2 bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("a", { href: item.attachmentUrl, target: "_blank", rel: "noreferrer", className: "text-xs text-[#377249] hover:underline font-medium flex-1 truncate" }, item.attachmentName || "View attachment"), /* @__PURE__ */ React.createElement("button", { onClick: clearAttachment, className: "text-xs text-[#a8532a] hover:underline flex-shrink-0" }, "Delete photo")), item.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F]" }, "\u26A1 ", item.suggestedFlag), !isOut && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2" }, onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "+ Create Work Order"), isNew && /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Mark Handled")));
 }
-function CorrespondenceThread({ customer, db, saveCorrespondence, saveWorkOrder }) {
+function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder }) {
   const [creatingFrom, setCreatingFrom] = useState(null);
+  const [viewingWO, setViewingWO] = useState(null);
   const items = (db.correspondence || []).filter((c) => c.customerId === customer.id).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""));
   const modal = creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
     db,
     saveWorkOrder: (wo) => {
       saveWorkOrder(wo);
-      if (saveCorrespondence) saveCorrespondence({ ...creatingFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString() });
+      if (saveCorrespondence) saveCorrespondence({ ...creatingFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString(), workOrderId: wo.id });
     },
     onClose: () => setCreatingFrom(null),
     initial: {
@@ -3740,20 +3741,21 @@ function CorrespondenceThread({ customer, db, saveCorrespondence, saveWorkOrder 
       ...correspondenceWorkOrderPrefill(db, customer.id)
     }
   });
+  const viewModal = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" });
   if (items.length === 0) {
-    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No correspondence yet."), modal);
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No correspondence yet."), modal, viewModal);
   }
   let lastWO = null;
   const rows = [];
   items.forEach((item) => {
     if (item.workOrderId && item.workOrderId !== lastWO) {
       const wo = (db.workOrders || []).find((w) => w.id === item.workOrderId);
-      rows.push(/* @__PURE__ */ React.createElement("div", { key: `wo-${item.id}`, className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] inline-block mt-3 mb-1.5" }, "WORK ORDER", wo ? ` \u2014 ${wo.title}` : ""));
+      rows.push(wo ? /* @__PURE__ */ React.createElement("button", { key: `wo-${item.id}`, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4] inline-block mt-3 mb-1.5" }, "WORK ORDER \u2014 ", wo.title) : /* @__PURE__ */ React.createElement("div", { key: `wo-${item.id}`, className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] inline-block mt-3 mb-1.5" }, "WORK ORDER"));
     }
     lastWO = item.workOrderId || null;
     rows.push(/* @__PURE__ */ React.createElement(CorrespondenceMessage, { key: item.id, item, db, saveCorrespondence, onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null }));
   });
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal);
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal, viewModal);
 }
 function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, saveCottage, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
@@ -3783,7 +3785,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
   }));
   const workOrdersSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this customer." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) })));
   const quotesSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this customer." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status))));
-  const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer, saveCorrespondence }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, saveCorrespondence, saveWorkOrder }));
+  const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer, saveCorrespondence }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder }));
   const footer = /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !nested && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -12678,6 +12680,7 @@ function CorrespondenceIsNew(c) {
 function CorrespondenceQueueView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, saveCottage }) {
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
+  const [viewingWO, setViewingWO] = useState(null);
   const all = (db.correspondence || []).filter((c) => c.direction !== "out");
   const needsAttention = all.filter(CorrespondenceIsNew).sort((a, b) => (b.receivedAt || "").localeCompare(a.receivedAt || ""));
   const recentlyHandled = all.filter((c) => c.status === "handled").sort((a, b) => (b.handledAt || b.receivedAt || "").localeCompare(a.handledAt || a.receivedAt || "")).slice(0, 8);
@@ -12704,12 +12707,13 @@ function CorrespondenceQueueView({ db, persist, saveCorrespondence, deleteCorres
     onViewCustomer: setViewingCustomerId
   }))), recentlyHandled.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Recently Handled"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, recentlyHandled.map((item) => {
     const cust = (db.customers || []).find((c) => c.id === item.customerId);
-    return /* @__PURE__ */ React.createElement("div", { key: item.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-white px-4 py-2.5 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 truncate" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, cust ? cust.name : item.fromEmail), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " \u2014 ", item.subject || "(no subject)")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap flex-shrink-0" }, item.handledAt ? new Date(item.handledAt).toLocaleDateString() : ""));
+    const wo = item.workOrderId ? (db.workOrders || []).find((w) => w.id === item.workOrderId) : null;
+    return /* @__PURE__ */ React.createElement("div", { key: item.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-white px-4 py-2.5 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 truncate" }, cust ? /* @__PURE__ */ React.createElement("button", { onClick: () => setViewingCustomerId(cust.id), className: "font-semibold text-[#377249] hover:underline" }, cust.name) : /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, item.fromEmail), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " \u2014 ", item.subject || "(no subject)"), wo && /* @__PURE__ */ React.createElement("button", { onClick: () => setViewingWO(wo), className: "ml-2 text-xs font-semibold text-[#B8752F] hover:underline whitespace-nowrap" }, "View Work Order")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap flex-shrink-0" }, item.handledAt ? new Date(item.handledAt).toLocaleDateString() : ""));
   }))), creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
     db,
     saveWorkOrder: (wo) => {
       saveWorkOrder(wo);
-      saveCorrespondence({ ...creatingFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString() });
+      saveCorrespondence({ ...creatingFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString(), workOrderId: wo.id });
     },
     onClose: () => setCreatingFrom(null),
     initial: {
@@ -12726,7 +12730,7 @@ function CorrespondenceQueueView({ db, persist, saveCorrespondence, deleteCorres
     saveCottage,
     nested: true,
     onClose: () => setViewingCustomerId(null)
-  }));
+  }), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" }));
 }
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
