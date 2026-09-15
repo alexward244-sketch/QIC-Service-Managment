@@ -2326,9 +2326,11 @@ function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, onClose, onEdit, o
         const part = (db.parts || []).find((p) => p.id === pu.partId);
         return part ? `${pu.quantity}x ${part.name}` : null;
       }).filter(Boolean);
+      const notesLog = [...(wo.notes || [])].reverse().map((n) => n.text).filter(Boolean);
       const rawNotes = [
         wo.title ? `Job: ${wo.title}` : "",
-        wo.description ? `Notes: ${wo.description}` : "",
+        wo.description ? `Description: ${wo.description}` : "",
+        notesLog.length ? `Notes log:\n${notesLog.map((t) => `- ${t}`).join("\n")}` : "",
         partsLines.length ? `Parts used: ${partsLines.join(", ")}` : "",
         wo.laborHours ? `Labor hours: ${wo.laborHours}` : ""
       ].filter(Boolean).join("\n");
@@ -9754,9 +9756,11 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
         const part = (parts || []).find((p) => p.id === pu.partId);
         return part ? `${pu.quantity}x ${part.name}` : null;
       }).filter(Boolean);
+      const notesLog = [...((initial == null ? void 0 : initial.notes) || [])].reverse().map((n) => n.text).filter(Boolean);
       const rawNotes = [
         title.trim() ? `Job: ${title.trim()}` : "",
-        description.trim() ? `Notes: ${description.trim()}` : "",
+        description.trim() ? `Description: ${description.trim()}` : "",
+        notesLog.length ? `Notes log:\n${notesLog.map((t) => `- ${t}`).join("\n")}` : "",
         partsLines.length ? `Parts used: ${partsLines.join(", ")}` : "",
         laborHours ? `Labor hours: ${laborHours}` : ""
       ].filter(Boolean).join("\n");
