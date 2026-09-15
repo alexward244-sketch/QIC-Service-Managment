@@ -8687,7 +8687,7 @@ function DealsView({ db, persist, saveWorkOrder, saveCustomer, saveSite, saveCot
         }
       ))
     ));
-  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Deal" : "Edit Deal", onClose: requestCloseModal }, /* @__PURE__ */ React.createElement(
+  })), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Deal" : "Edit Deal", onClose: requestCloseModal, wide: true }, /* @__PURE__ */ React.createElement(
     DealForm,
     {
       initial: modal.data,
@@ -14866,7 +14866,7 @@ function SalesDealsScreen({ db, persist, actor, saveWorkOrder, saveCustomer, sav
       onCloseDeal: openCloseDeal,
       onFellThrough: (d) => setFellThroughTarget(d)
     })),
-    modal && React.createElement(Modal, { title: modal.mode === "new" ? "New Deal" : "Edit Deal", onClose: requestCloseModal }, React.createElement(DealForm, {
+    modal && React.createElement(Modal, { title: modal.mode === "new" ? "New Deal" : "Edit Deal", onClose: requestCloseModal, wide: true }, React.createElement(DealForm, {
       initial: modal.data,
       consignmentListings: db.consignmentListings,
       cottages: db.cottages,
