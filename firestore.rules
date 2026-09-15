@@ -1,0 +1,81 @@
+rules_version = '2';
+
+// QIC Service Management — Firestore security rules.
+//
+// Before this file existed, the project's rules (managed only in the Firebase
+// console, never checked into this repo) were the default:
+//
+//   match /{document=**} {
+//     allow read, write: if request.auth != null;
+//   }
+//
+// i.e. any signed-in user could read or write every document in the database,
+// including the userRoles map that the app's own "Manage Access" screen uses
+// to decide who is Admin — so role assignment was not actually a privileged
+// operation. This file closes that specific hole: role changes now happen
+// exclusively through the setUserRole / removeUserRole Cloud Functions
+// (see functions/index.js), which stamp a `role` custom claim onto a user's
+// auth token — something no client, however it talks to Firestore, can set
+// on its own. These rules trust that claim, not any document field.
+//
+// Deploy with: firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // The role stamped onto this user's token by setUserRole. Defaults to
+    // the least-privileged tier if no claim has been set yet (e.g. before
+    // the very first admin is bootstrapped — see functions/README.md).
+    function role() {
+      return isSignedIn() && request.auth.token.role != null
+        ? request.auth.token.role
+        : 'office';
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    // The one shared document holding settings, deals, trash, the activity
+    // log, loginCodes (a per-device PIN convenience feature — not the
+    // authorization boundary, left as a normal client-writable field), and —
+    // the sensitive part — userRoles. Everyone signed in can still read and
+    // write this document, matching how the app has always worked, EXCEPT
+    // the userRoles field: that can no longer be written by any client at
+    // all, admin included. The setUserRole/removeUserRole Cloud Functions
+    // write it via the Admin SDK, which is trusted server-side code and
+    // bypasses these rules entirely — so this is intentionally NOT
+    // "if isAdmin()", it's a hard no from the client, full stop.
+    match /campground/data {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userRoles']);
+    }
+
+    // Every other top-level collection the app uses, listed explicitly
+    // rather than with a wildcard. Firestore allows a request if ANY
+    // matching rule allows it — a broad `match /{collection}/{id}` fallback
+    // would also match /campground/data and silently OR its way past the
+    // restriction above, so campground/data is deliberately left out of any
+    // wildcard here.
+    //
+    // These stay "any signed-in user" for now, matching today's behavior —
+    // tightening them to match each role's actual allowed tabs (Sales data
+    // hidden from Service-only staff, etc.) is real, separate follow-up
+    // work, not attempted in this pass.
+    match /pendingSignups/{id} { allow read, write: if isSignedIn(); }
+    match /propaneRequests/{id} { allow read, write: if isSignedIn(); }
+    match /winterizingRequests/{id} { allow read, write: if isSignedIn(); }
+    match /workOrders/{id} { allow read, write: if isSignedIn(); }
+    match /customers/{id} { allow read, write: if isSignedIn(); }
+    match /quotes/{id} { allow read, write: if isSignedIn(); }
+    match /invoices/{id} { allow read, write: if isSignedIn(); }
+    match /correspondence/{id} { allow read, write: if isSignedIn(); }
+    match /sites/{id} { allow read, write: if isSignedIn(); }
+    match /cottages/{id} { allow read, write: if isSignedIn(); }
+  }
+}
