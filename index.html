@@ -9713,7 +9713,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
         return;
       }
       const idToken = await firebase.auth().currentUser.getIdToken();
-      const resp = await fetch("https://generateworkordersummary-marv23kbhq-uc.a.run.app", {
+      const resp = await fetch("https://us-central1-qic-service-management-system.cloudfunctions.net/generateWorkOrderSummary", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
         body: JSON.stringify({ rawNotes })
