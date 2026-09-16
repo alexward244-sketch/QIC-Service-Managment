@@ -8917,10 +8917,16 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   ))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Deal")));
 }
 
-function CompletedWorkOrderRow({ wo, db, onViewNotes, onSetPayment, selectMode, selected, onToggleSelect }) {
+function WorkOrderRow({ wo, db, onOpen, onAdvance, onText, smsStatus, onCreateInvoice, onSetPayment, selectMode, selected, onToggleSelect }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
-  const dotColor = wo.priority === "High" || wo.priority === "Urgent" ? "#a8532a" : wo.priority === "Medium" ? "#9A6B1F" : "#377249";
+  const cottage = db.cottages.find((c) => c.id === wo.cottageId);
+  const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => customerSiteIds(c).includes(site.id)) : null;
+  const assignedStaff = wo.assignedTo ? (db.staff || []).find((s) => s.name.trim().toLowerCase() === wo.assignedTo.trim().toLowerCase()) : null;
+  const isDone = wo.status === "Completed";
+  const hasInvoice = (db.invoices || []).some((inv) => inv.sourceType === "workOrder" && inv.sourceId === wo.id);
+  const overdue = isOverdue(wo);
   const paymentTone = wo.paymentStatus === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : wo.paymentStatus === "Invoice" ? "bg-[#FBEEDA] text-[#9A6B1F]" : wo.paymentStatus === "Warranty" ? "bg-[#EAE6F5] text-[#5B4B8A]" : wo.paymentStatus === "No Charge" ? "bg-[#F1EEE9] text-[#75716A]" : "bg-[#F1EEE9] text-[#9A968D]";
+  const metaParts = [site && `Site ${site.number}`, cottage && cottage.name, customer && customer.name, wo.assignedTo && `Assigned: ${wo.assignedTo}`].filter(Boolean);
   return /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -8929,85 +8935,59 @@ function CompletedWorkOrderRow({ wo, db, onViewNotes, onSetPayment, selectMode, 
         e.dataTransfer.setData("text/plain", wo.id);
         e.dataTransfer.effectAllowed = "move";
       },
-      onClick: () => selectMode ? onToggleSelect(wo.id) : onViewNotes(wo),
-      className: `w-full flex items-center justify-between gap-2 text-left px-3 py-2 mb-1.5 rounded-lg border cursor-pointer ${selectMode && selected ? "bg-[#DDF1E1] border-[#377249]" : "bg-[#F1EEE9] border-[#EEEBE5] hover:bg-[#EEEBE5]"} ${selectMode ? "" : "cursor-grab active:cursor-grabbing"}`
+      onClick: () => selectMode ? onToggleSelect(wo.id) : onOpen(wo),
+      className: `flex items-center gap-3 px-3 py-2.5 mb-1.5 rounded-lg border cursor-pointer transition ${selectMode && selected ? "bg-[#DDF1E1] border-[#377249]" : isDone ? "bg-[#F1EEE9] border-[#EEEBE5] hover:bg-[#EEEBE5]" : "bg-[#FFFDFA] border-[#E2DED5] hover:bg-[#F1EEE9]"} ${selectMode ? "" : "cursor-grab active:cursor-grabbing"}`
     },
     selectMode && /* @__PURE__ */ React.createElement("span", {
       className: `w-4 h-4 rounded flex-shrink-0 border-2 flex items-center justify-center ${selected ? "bg-[#377249] border-[#377249]" : "bg-[#FFFDFA] border-[#C7C2B8]"}`
     }, selected && /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-2.5 h-2.5", fill: "none", stroke: "#F9F5EC", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))),
-    /* @__PURE__ */ React.createElement("span", { className: "text-[13px] text-[#75716A] truncate min-w-0" }, wo.title),
-    /* @__PURE__ */ React.createElement(
+    /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium truncate ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/50" : "text-[#1E1A13]"}` }, wo.title), wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), overdue && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white flex-shrink-0" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C] flex-shrink-0" }, wo.workGroup), wo.notes && wo.notes.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] flex-shrink-0" }, wo.notes.length, " note", wo.notes.length === 1 ? "" : "s")), metaParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate mt-0.5" }, metaParts.join(" \xB7 "))),
+    isDone ? /* @__PURE__ */ React.createElement(
       "select",
       {
         value: wo.paymentStatus || "",
         disabled: selectMode,
         onClick: (e) => e.stopPropagation(),
-        onChange: (e) => {
-          e.stopPropagation();
-          onSetPayment(wo, e.target.value);
-        },
+        onChange: (e) => onSetPayment(wo, e.target.value),
         className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium border-0 focus:outline-none focus:ring-2 focus:ring-[#C1652F]/40 flex-shrink-0 ${paymentTone}`
       },
       /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014"),
       PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))
-    ),
-    /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5 flex-shrink-0" }, site && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D]" }, "Site ", site.number), /* @__PURE__ */ React.createElement("span", { className: "w-1.5 h-1.5 rounded-full flex-shrink-0", style: { backgroundColor: dotColor } }))
-  );
-}
-function WorkOrderTicket({ wo, db, onEdit, onDelete, onAdvance, onPrint, onViewNotes, onText, smsStatus, onCreateInvoice }) {
-  const site = db.sites.find((s) => s.id === wo.siteId);
-  const cottage = db.cottages.find((c) => c.id === wo.cottageId);
-  const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => customerSiteIds(c).includes(site.id)) : null;
-  const assignedStaff = wo.assignedTo ? (db.staff || []).find((s) => s.name.trim().toLowerCase() === wo.assignedTo.trim().toLowerCase()) : null;
-  const isDone = wo.status === "Completed";
-  const hasInvoice = (db.invoices || []).some((inv) => inv.sourceType === "workOrder" && inv.sourceId === wo.id);
-  const priorityAccent = isDone ? "#377249" : isOverdue(wo) || wo.priority === "Urgent" ? "#a8532a" : wo.priority === "High" ? "#9A6B1F" : wo.priority === "Low" ? "#9A968D" : "#3E7A72";
-  return /* @__PURE__ */ React.createElement(
-    "div",
-    {
-      draggable: true,
-      onDragStart: (e) => {
-        e.dataTransfer.setData("text/plain", wo.id);
-        e.dataTransfer.effectAllowed = "move";
-      },
-      className: `relative rounded-xl sm:rounded-lg border p-5 sm:p-4 mb-4 sm:mb-3 shadow-sm cursor-grab active:cursor-grabbing border-l-4 sm:border-l border-l-[${priorityAccent}] sm:border-l-[${isDone ? "#EEEBE5" : "#E2DED5"}] ${isDone ? "bg-[#F1EEE9] border-[#EEEBE5]" : "bg-[#FFFDFA] border-[#E2DED5]"}`
-    },
-    /* @__PURE__ */ React.createElement("span", { className: "absolute -left-1.5 top-4 w-3 h-3 rounded-full bg-[#F9F5EC] border border-[#E2DED5]" }),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2" }, /* @__PURE__ */ React.createElement("h4", { className: `font-serif font-semibold text-base sm:text-[15px] ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/60" : "text-[#1E1A13]"}` }, wo.title), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#75716A] whitespace-nowrap pt-0.5" }, wo.date)),
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-1.5" }, wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), isOverdue(wo) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, wo.workGroup), wo.paymentStatus === "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Paid"), wo.paymentStatus === "Invoice" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Invoiced"), wo.paymentStatus === "No Charge" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F1EEE9] text-[#75716A]" }, "No Charge"), wo.paymentStatus === "Warranty" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#EAE6F5] text-[#5B4B8A]" }, "Warranty"), wo.salesSourced && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F1EEE9] text-[#75716A]" }, "Tracked in Sales")),
-    /* @__PURE__ */ React.createElement("div", { className: "text-sm sm:text-xs text-[#75716A] mt-1.5 flex flex-wrap gap-x-3" }, site && /* @__PURE__ */ React.createElement("span", null, "Site ", site.number), customer && /* @__PURE__ */ React.createElement("span", null, customer.name), cottage && /* @__PURE__ */ React.createElement("span", null, cottage.name), wo.assignedTo && /* @__PURE__ */ React.createElement("span", null, "Assigned: ", wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("span", null, wo.laborHours, " hrs \xB7 ", wo.laborRateType)),
-    wo.description && /* @__PURE__ */ React.createElement("p", { className: "text-sm sm:text-xs text-[#4B4740] mt-2 leading-relaxed line-clamp-2" }, wo.description),
-    isDone && wo.completedDate && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-2 italic" }, "Completed ", wo.completedDate),
-    /* @__PURE__ */ React.createElement("div", { className: "flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between mt-3 pt-2 border-t border-dashed border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement(
+    ) : /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] flex-shrink-0 whitespace-nowrap" }, wo.date),
+    !isDone && !selectMode && EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
       "button",
       {
-        onClick: () => onViewNotes(wo),
-        className: "px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-full bg-[#377249] text-white font-semibold hover:bg-[#135C30] whitespace-nowrap"
-      },
-      "View"
-    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1.5 sm:py-0", onClick: () => onEdit(wo) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onViewNotes(wo) }, "Notes", wo.notes && wo.notes.length > 0 ? ` (${wo.notes.length})` : ""), /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onPrint(wo) }, "Print"), EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        className: "text-[#377249] hover:underline disabled:opacity-50 py-1.5 sm:py-0",
+        onClick: (e) => {
+          e.stopPropagation();
+          onText(wo, assignedStaff);
+        },
         disabled: smsStatus === "sending",
-        onClick: () => onText(wo, assignedStaff)
+        className: "text-[11px] font-semibold text-[#377249] hover:underline disabled:opacity-50 flex-shrink-0 whitespace-nowrap"
       },
-      smsStatus === "sending" ? "Texting\u2026" : smsStatus === "sent" ? "Texted \u2713" : smsStatus === "error" ? "Failed \u2014 retry" : "Text"
-    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1.5 sm:py-0", onClick: () => onDelete(wo) }, "Delete")), !isDone ? /* @__PURE__ */ React.createElement(
+      smsStatus === "sending" ? "Texting\u2026" : smsStatus === "sent" ? "Texted \u2713" : smsStatus === "error" ? "Retry" : "Text"
+    ),
+    !isDone && !selectMode && /* @__PURE__ */ React.createElement(
       "button",
       {
-        onClick: () => onAdvance(wo),
-        className: "w-full sm:w-auto flex items-center justify-center min-h-[46px] sm:min-h-0 text-base sm:text-[11px] px-4 sm:px-2.5 py-3 sm:py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold sm:font-medium"
+        onClick: (e) => {
+          e.stopPropagation();
+          onAdvance(wo);
+        },
+        className: "flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 whitespace-nowrap"
       },
-      wo.status === "Open" ? "Start \u2192" : "Mark Complete \u2192"
-    ) : onCreateInvoice && !wo.salesSourced && !hasInvoice && /* @__PURE__ */ React.createElement(
+      wo.status === "Open" ? "Start \u2192" : "Complete \u2192"
+    ),
+    isDone && !selectMode && onCreateInvoice && !wo.salesSourced && !hasInvoice && /* @__PURE__ */ React.createElement(
       "button",
       {
-        onClick: () => onCreateInvoice(wo),
-        className: "w-full sm:w-auto flex items-center justify-center min-h-[46px] sm:min-h-0 text-base sm:text-[11px] px-4 sm:px-2.5 py-3 sm:py-1 rounded-full bg-[#C1652F]/10 text-[#C1652F] hover:bg-[#C1652F]/20 font-semibold sm:font-medium whitespace-nowrap"
+        onClick: (e) => {
+          e.stopPropagation();
+          onCreateInvoice(wo);
+        },
+        className: "flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#C1652F]/10 text-[#C1652F] hover:bg-[#C1652F]/20 whitespace-nowrap"
       },
-      "Create Invoice \u2192"
-    ))
+      "Invoice \u2192"
+    )
   );
 }
 function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice, workOrderPrefill, onConsumeWorkOrderPrefill, filterPrefill }) {
@@ -9311,10 +9291,10 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       text: "No work orders yet. Log your first job.",
       action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a work order")
     }
-  ) : /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4" }, STATUS.map((status) => {
+  ) : /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-5" }, STATUS.map((status) => {
     const rawList = filtered.filter((w) => w.status === status);
     const list = status === "Completed" ? rawList.filter((w) => !w.archived) : rawList;
-    return /* @__PURE__ */ React.createElement("div", { key: status }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement(IconTag, { className: "w-4 h-4 text-[#75716A]" }), /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, status), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] bg-[#F1EEE9] rounded-full px-1.5" }, list.length), status === "Completed" && list.length > 0 && (archiveSelectMode ? /* @__PURE__ */ React.createElement("div", { className: "ml-auto flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    return /* @__PURE__ */ React.createElement("div", { key: status }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${status === "Completed" ? "bg-[#28633C]" : status === "In Progress" ? "bg-[#3E7A72]" : "bg-[#9A968D]"}` }), /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, status), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] bg-[#F1EEE9] rounded-full px-1.5" }, list.length), status === "Completed" && list.length > 0 && (archiveSelectMode ? /* @__PURE__ */ React.createElement("div", { className: "ml-auto flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setArchiveSelectMode(false);
     setArchiveSelected(/* @__PURE__ */ new Set());
   }, className: "text-[10px] text-[#75716A] hover:underline font-medium whitespace-nowrap" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: confirmArchiveSelected, disabled: archiveSelected.size === 0, className: "text-[10px] text-[#377249] hover:underline font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed" }, "Confirm (", archiveSelected.size, ")")) : /* @__PURE__ */ React.createElement("button", { onClick: () => setArchiveSelectMode(true), className: "ml-auto text-[10px] text-[#377249] hover:underline font-medium whitespace-nowrap" }, "Select Work Orders to Archive"))), /* @__PURE__ */ React.createElement(
@@ -9326,31 +9306,23 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
         },
         onDragLeave: () => setDragOverStatus((s) => s === status ? null : s),
         onDrop: handleDropOnStatus(status),
-        className: `min-h-[60px] max-h-[70vh] overflow-y-auto pr-1 rounded-lg transition ${dragOverStatus === status ? "bg-[#DDF1E1]/50 ring-2 ring-[#377249]/30" : ""}`
+        className: `min-h-[60px] max-h-[45vh] overflow-y-auto pr-1 rounded-lg transition ${dragOverStatus === status ? "bg-[#DDF1E1]/50 ring-2 ring-[#377249]/30" : ""}`
       },
-      list.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, "Nothing here") : list.slice().sort((a, b) => status === "Completed" ? (b.completedDate || "").localeCompare(a.completedDate || "") : a.date < b.date ? 1 : -1).map((wo) => status === "Completed" ? /* @__PURE__ */ React.createElement(CompletedWorkOrderRow, {
-        key: wo.id,
-        wo,
-        db,
-        onViewNotes: (w) => setViewingWO(w),
-        onSetPayment: setPaymentStatus,
-        selectMode: archiveSelectMode,
-        selected: archiveSelected.has(wo.id),
-        onToggleSelect: toggleArchiveSelected
-      }) : /* @__PURE__ */ React.createElement(
-        WorkOrderTicket,
+      list.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, "Nothing here") : list.slice().sort((a, b) => status === "Completed" ? (b.completedDate || "").localeCompare(a.completedDate || "") : a.date < b.date ? 1 : -1).map((wo) => /* @__PURE__ */ React.createElement(
+        WorkOrderRow,
         {
           key: wo.id,
           wo,
           db,
-          onEdit: (w) => setModal({ mode: "edit", data: w }),
-          onDelete: (w) => confirm.ask(w.id),
+          onOpen: (w) => setViewingWO(w),
           onAdvance: advance,
-          onPrint: (w) => downloadPrintable([w], db, `work-order-${w.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`),
-          onViewNotes: (w) => setViewingWO(w),
           onText: textToStaff,
           smsStatus: smsStatus[wo.id],
-          onCreateInvoice
+          onCreateInvoice,
+          onSetPayment: setPaymentStatus,
+          selectMode: status === "Completed" && archiveSelectMode,
+          selected: archiveSelected.has(wo.id),
+          onToggleSelect: toggleArchiveSelected
         }
       ))
     ));
