@@ -11987,6 +11987,9 @@ function getLastHydroReading(db, siteId) {
   const history = getSiteHydroHistory(db, siteId);
   return history.length > 0 ? history[0] : null;
 }
+function isHydroTrackedSite(site) {
+  return (site.tags || []).some((t) => /^(seasonal|4 season)$/i.test(t.trim()));
+}
 function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
@@ -12109,7 +12112,7 @@ function HydroMeterView({ db, persist }) {
   const [historySiteId, setHistorySiteId] = useState(null);
   const [toast, setToast] = useState(null);
   const searchRef = useRef(null);
-  const sites = (db.sites || []).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
   const filteredSites = sites.filter((s) => {
     if (!filter) return true;
     const owner = getSiteOwner(db, s.id);
@@ -13998,7 +14001,7 @@ function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) 
   useEffect(() => {
     if (searchRef.current) searchRef.current.focus();
   }, []);
-  const sites = (db.sites || []).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
   const filteredSites = sites.filter((s) => {
     if (!filter) return true;
     const owner = getSiteOwner(db, s.id);
@@ -15447,7 +15450,7 @@ function AppContent() {
     sites: (db.sites || []).length,
     propane: (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank).length,
     winterizing: (db.winterizingRequests || []).filter((r) => !r.archived && !r.completed).length,
-    hydro: (db.sites || []).filter((s) => !getLastHydroReading(db, s.id)).length,
+    hydro: (db.sites || []).filter((s) => isHydroTrackedSite(s) && !getLastHydroReading(db, s.id)).length,
     hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length,
     systemhealth: (db.systemErrorLog || []).filter((e) => Date.now() - e.ts < 24 * 60 * 60 * 1e3).length
   };
