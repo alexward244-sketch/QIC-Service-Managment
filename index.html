@@ -11990,6 +11990,17 @@ function getLastHydroReading(db, siteId) {
 function isHydroTrackedSite(site) {
   return (site.tags || []).some((t) => /^(seasonal|4 season)$/i.test(t.trim()));
 }
+const HYDRO_PRIORITY_SITES = ["A", "B", "C", "D", "K1", "K2", "K3", "K4", "K5"];
+function hydroSiteSort(a, b) {
+  const ai = HYDRO_PRIORITY_SITES.indexOf(a.number.trim().toUpperCase());
+  const bi = HYDRO_PRIORITY_SITES.indexOf(b.number.trim().toUpperCase());
+  if (ai !== -1 || bi !== -1) {
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  }
+  return a.number.localeCompare(b.number, void 0, { numeric: true });
+}
 function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
@@ -12112,7 +12123,7 @@ function HydroMeterView({ db, persist }) {
   const [historySiteId, setHistorySiteId] = useState(null);
   const [toast, setToast] = useState(null);
   const searchRef = useRef(null);
-  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort(hydroSiteSort);
   const filteredSites = sites.filter((s) => {
     if (!filter) return true;
     const owner = getSiteOwner(db, s.id);
@@ -14001,7 +14012,7 @@ function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) 
   useEffect(() => {
     if (searchRef.current) searchRef.current.focus();
   }, []);
-  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort(hydroSiteSort);
   const filteredSites = sites.filter((s) => {
     if (!filter) return true;
     const owner = getSiteOwner(db, s.id);
@@ -14015,6 +14026,7 @@ function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) 
     React.createElement("input", {
       ref: searchRef,
       type: "text",
+      inputMode: "numeric",
       value: filter,
       onChange: (e) => setFilter(e.target.value),
       placeholder: "Type a site #…",
