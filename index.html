@@ -659,6 +659,22 @@ function todayISO() {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+function deductPartsUsed(parts, partsUsed) {
+  if (!partsUsed || !partsUsed.length) return parts;
+  return parts.map((p) => {
+    const used = partsUsed.find((pu) => pu.partId === p.id);
+    if (!used || p.trackQuantity === false) return p;
+    return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
+  });
+}
+function restorePartsUsed(parts, partsUsed) {
+  if (!partsUsed || !partsUsed.length) return parts;
+  return parts.map((p) => {
+    const used = partsUsed.find((pu) => pu.partId === p.id);
+    if (!used || p.trackQuantity === false) return p;
+    return { ...p, quantity: (Number(p.quantity) || 0) + (Number(used.quantity) || 0) };
+  });
+}
 function isThisMonth(dateStr) {
   if (!dateStr) return false;
   const d = new Date(dateStr);
@@ -2329,6 +2345,9 @@ function WorkOrderListRow({ wo, onClick }) {
   );
 }
 function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, onClose, onEdit, onDelete, onText, smsStatus, onCreateInvoice, variant }) {
+  const [linkedWO, setLinkedWO] = useState(null);
+  const relatedTo = wo.relatedWorkOrderId ? (db.workOrders || []).find((w) => w.id === wo.relatedWorkOrderId) : null;
+  const followUps = (db.workOrders || []).filter((w) => w.relatedWorkOrderId === wo.id);
   const [noteText, setNoteText] = useState("");
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summaryText, setSummaryText] = useState("");
@@ -2409,10 +2428,11 @@ function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, onClose, onEdit, o
   const invoiceSection = linkedInvoice ? /* @__PURE__ */ React.createElement("div", { className: "mb-5 p-3 rounded-md border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold" }, "Invoice"), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${invoiceStatusTone}` }, invoiceStatusLabel)), /* @__PURE__ */ React.createElement("div", { className: "text-[15px] text-[#1E1A13] font-medium mb-1" }, `Invoice #${linkedInvoice.invoiceNumber}`), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] flex flex-wrap gap-x-4" }, /* @__PURE__ */ React.createElement("span", null, "Total: ", formatPrice(invoiceTotals.total)), invoiceStatusVal !== "Paid" && /* @__PURE__ */ React.createElement("span", null, "Balance: ", formatPrice(invoiceTotals.total - (Number(linkedInvoice.depositAmount) || 0))), /* @__PURE__ */ React.createElement("span", null, "Date: ", linkedInvoice.date)), /* @__PURE__ */ React.createElement("div", { className: "mt-2" }, /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => downloadPrintableItems([linkedInvoice], (i) => buildInvoiceHtml(i, db, taxRate, false), `invoice-${linkedInvoice.invoiceNumber}`) }, "Print Invoice"))) : null;
   const quoteSection = originatingQuote ? /* @__PURE__ */ React.createElement("div", { className: "mb-4 flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "From Quote: "), originatingQuote.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${quoteStatusTone}` }, originatingQuote.status)) : null;
   const sourceLine = originatingWinterizing ? `Created from a winterizing sign-up requested ${originatingWinterizing.requestedDate || ""}` : originatingPropane ? `Created from a propane request requested ${originatingPropane.requestedDate || ""}` : null;
+  const relatedSection = (relatedTo || followUps.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-1 mb-4" }, relatedTo && /* @__PURE__ */ React.createElement("button", { className: "text-left text-xs text-[#377249] hover:underline", onClick: () => setLinkedWO(relatedTo) }, "↩ Comeback for: ", relatedTo.title, relatedTo.completedDate ? ` — completed ${relatedTo.completedDate}` : ""), followUps.map((f) => /* @__PURE__ */ React.createElement("button", { key: f.id, className: "text-left text-xs text-[#377249] hover:underline", onClick: () => setLinkedWO(f) }, "↪ Follow-up: ", f.title, " — ", f.status)));
   const isDrawer = variant === "drawer";
   const Wrap = isDrawer ? DrawerShell : Modal;
   const wrapProps = isDrawer ? { title: wo.title, eyebrow: `Work order${site ? " \xB7 Site " + site.number : cottage ? " \xB7 " + cottage.name : ""}`, badges: [wo.priority && /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)].filter(Boolean), onClose } : { title: wo.title, onClose, xl: true };
-  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), relatedSection, wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
     const part = db.parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "x", pu.quantity));
   })), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Notes"), notes.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No notes yet \u2014 handy for jobs that span more than one day.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-52 overflow-y-auto" }, notes.map((n) => /* @__PURE__ */ React.createElement("div", { key: n.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, n.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, n.author, " \xB7 ", new Date(n.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
@@ -2459,7 +2479,7 @@ function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, onClose, onEdit, o
       className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
     },
     "Print"
-  )))), summaryOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Customer Summary", onClose: () => setSummaryOpen(false) }, summaryLoading ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Generating\u2026") : summaryError ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a]" }, summaryError) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, readOnly: true, value: summaryText }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSummaryOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: copySummary, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, summaryCopied ? "Copied!" : "Copy")))));
+  )))), summaryOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Customer Summary", onClose: () => setSummaryOpen(false) }, summaryLoading ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Generating\u2026") : summaryError ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a]" }, summaryError) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, readOnly: true, value: summaryText }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSummaryOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: copySummary, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, summaryCopied ? "Copied!" : "Copy")))), linkedWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: linkedWO, db, persist, saveWorkOrder, onClose: () => setLinkedWO(null), onEdit, onDelete, onText, smsStatus, onCreateInvoice, variant: "drawer" }));
 }
 
 function QuoteCommentsModal({ quote, db, persist, saveQuote, onClose }) {
@@ -3663,13 +3683,20 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
   ));
 }
 
-function CorrespondenceComposeBox({ customer, saveCorrespondence }) {
-  const emailOptions = [customer.email, customer.email2, ...(customer.matchEmails || [])].filter(Boolean);
+function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onClearReply }) {
+  const emailOptions = Array.from(/* @__PURE__ */ new Set([customer.email, customer.email2, ...(customer.matchEmails || []), replyTo == null ? void 0 : replyTo.fromEmail].filter(Boolean)));
   const [to, setTo] = useState(emailOptions[0] || "");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!replyTo) return;
+    setTo(replyTo.fromEmail || emailOptions[0] || "");
+    setSubject(replyTo.subject && /^re:/i.test(replyTo.subject) ? replyTo.subject : `Re: ${replyTo.subject || "your message"}`);
+    if (boxRef.current) boxRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [replyTo]);
   if (emailOptions.length === 0) {
     return /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No email on file for this customer \u2014 add one to send correspondence.");
   }
@@ -3679,6 +3706,7 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence }) {
     setErrorMsg(null);
     try {
       await sendEmail({ toEmail: to, toName: customer.name, subject: subject || `Message from QIC`, message, department: "service", source: "Correspondence" });
+      if (onClearReply) onClearReply();
       await saveCorrespondence({
         id: uid(),
         customerId: customer.id,
@@ -3697,7 +3725,7 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence }) {
       setSending(false);
     }
   };
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs text-[#75716A] mb-2" }, "To:", /* @__PURE__ */ React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => /* @__PURE__ */ React.createElement("option", { key: e, value: e }, e))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto" }, "From: service@qicampark.com")), /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", placeholder: "Subject", value: subject, onChange: (e) => setSubject(e.target.value) }), /* @__PURE__ */ React.createElement("textarea", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", rows: 8, placeholder: "Write a message\u2026", value: message, onChange: (e) => setMessage(e.target.value) }), errorMsg && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, errorMsg), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: send, disabled: sending || !message.trim(), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, sending ? "Sending\u2026" : "Send")));
+  return /* @__PURE__ */ React.createElement("div", { ref: boxRef, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3 mb-4" }, replyTo && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 text-xs text-[#9A6B1F] bg-[#FBEEDA] rounded-md px-2 py-1 mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Replying to ", replyTo.fromEmail), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onClearReply && onClearReply(), className: "hover:underline" }, "Cancel")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs text-[#75716A] mb-2" }, "To:", /* @__PURE__ */ React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => /* @__PURE__ */ React.createElement("option", { key: e, value: e }, e))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto" }, "From: service@qicampark.com")), /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", placeholder: "Subject", value: subject, onChange: (e) => setSubject(e.target.value) }), /* @__PURE__ */ React.createElement("textarea", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", rows: 8, placeholder: "Write a message\u2026", value: message, onChange: (e) => setMessage(e.target.value) }), errorMsg && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, errorMsg), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: send, disabled: sending || !message.trim(), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, sending ? "Sending\u2026" : "Send")));
 }
 // Fills in site/cottage alongside the customer when there's no ambiguity -
 // same "single option, no need to ask" rule WorkOrderForm's own site
@@ -3733,20 +3761,21 @@ function QuickWorkOrderModal({ db, initial, saveWorkOrder, onClose }) {
     workGroups,
     templates: db.workOrderTemplates,
     taxRate,
+    workOrders: db.workOrders,
     onSave: save,
     onCancel: onClose,
     onDirtyChange: () => {
     }
   }));
 }
-function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder }) {
+function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder, onReply }) {
   const isOut = item.direction === "out";
   const isNew = !isOut && item.status === "new";
   const clearAttachment = () => saveCorrespondence({ ...item, attachmentUrl: null });
   const markHandled = () => saveCorrespondence({ ...item, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString() });
-  return /* @__PURE__ */ React.createElement("div", { className: `rounded-lg border p-3 mb-2 ${isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-[#E2DED5] bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, isOut ? "QIC Service" : item.fromEmail, /* @__PURE__ */ React.createElement("span", { className: `ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isOut ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#E4EEF2] text-[#2E6E8E]"}` }, isOut ? "Sent" : "Received"), isNew && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#B8752F] text-white" }, "NEW")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "")), item.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "\u21AA Forwarded by ", item.forwardedBy), item.subject && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1" }, "Subject: ", item.subject), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, item.body), item.attachmentUrl && /* @__PURE__ */ React.createElement("div", { className: "mt-2 flex items-center gap-2 border border-[#E2DED5] rounded-md p-2 bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("a", { href: item.attachmentUrl, target: "_blank", rel: "noreferrer", className: "text-xs text-[#377249] hover:underline font-medium flex-1 truncate" }, item.attachmentName || "View attachment"), /* @__PURE__ */ React.createElement("button", { onClick: clearAttachment, className: "text-xs text-[#a8532a] hover:underline flex-shrink-0" }, "Delete photo")), item.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F]" }, "\u26A1 ", item.suggestedFlag), !isOut && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2" }, onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "+ Create Work Order"), isNew && /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Mark Handled")));
+  return /* @__PURE__ */ React.createElement("div", { className: `rounded-lg border p-3 mb-2 ${isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-[#E2DED5] bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, isOut ? "QIC Service" : item.fromEmail, /* @__PURE__ */ React.createElement("span", { className: `ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isOut ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#E4EEF2] text-[#2E6E8E]"}` }, isOut ? "Sent" : "Received"), isNew && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#B8752F] text-white" }, "NEW")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "")), item.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "\u21AA Forwarded by ", item.forwardedBy), item.subject && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1" }, "Subject: ", item.subject), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, item.body), item.attachmentUrl && /* @__PURE__ */ React.createElement("div", { className: "mt-2 flex items-center gap-2 border border-[#E2DED5] rounded-md p-2 bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("a", { href: item.attachmentUrl, target: "_blank", rel: "noreferrer", className: "text-xs text-[#377249] hover:underline font-medium flex-1 truncate" }, item.attachmentName || "View attachment"), /* @__PURE__ */ React.createElement("button", { onClick: clearAttachment, className: "text-xs text-[#a8532a] hover:underline flex-shrink-0" }, "Delete photo")), item.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F]" }, "\u26A1 ", item.suggestedFlag), !isOut && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2" }, onReply && /* @__PURE__ */ React.createElement("button", { onClick: () => onReply(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Reply"), onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "+ Create Work Order"), isNew && /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Mark Handled")));
 }
-function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder }) {
+function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder, onReply }) {
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [viewingWO, setViewingWO] = useState(null);
   const items = (db.correspondence || []).filter((c) => c.customerId === customer.id).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""));
@@ -3775,13 +3804,14 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
       rows.push(wo ? /* @__PURE__ */ React.createElement("button", { key: `wo-${item.id}`, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4] inline-block mt-3 mb-1.5" }, "WORK ORDER \u2014 ", wo.title) : /* @__PURE__ */ React.createElement("div", { key: `wo-${item.id}`, className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] inline-block mt-3 mb-1.5" }, "WORK ORDER"));
     }
     lastWO = item.workOrderId || null;
-    rows.push(/* @__PURE__ */ React.createElement(CorrespondenceMessage, { key: item.id, item, db, saveCorrespondence, onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null }));
+    rows.push(/* @__PURE__ */ React.createElement(CorrespondenceMessage, { key: item.id, item, db, saveCorrespondence, onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onReply }));
   });
   return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal, viewModal);
 }
 function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, saveCottage, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
+  const [replyTo, setReplyTo] = useState(null);
   if (!customer) return null;
   const siteIds = customerSiteIds(customer);
   const linkedSites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
@@ -3807,7 +3837,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
   }));
   const workOrdersSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this customer." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) })));
   const quotesSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this customer." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status))));
-  const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer, saveCorrespondence }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder }));
+  const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null) }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder, onReply: setReplyTo }));
   const footer = /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !nested && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -9094,13 +9124,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     if (newStatus === "Completed" && wo.status !== "Completed") {
       updated.completedDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       updated.archived = false;
-      if (wo.partsUsed && wo.partsUsed.length) {
-        parts = db.parts.map((p) => {
-          const used = wo.partsUsed.find((pu) => pu.partId === p.id);
-          if (!used || p.trackQuantity === false) return p;
-          return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
-        });
-      }
+      parts = deductPartsUsed(db.parts, wo.partsUsed);
       const linkedSunspaceOrder = (db.sunspaceOrders || []).find((o) => o.workOrderId === wo.id);
       if (linkedSunspaceOrder) {
         const warrantyExpiration = new Date(Date.now() + 90 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
@@ -9128,13 +9152,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       }
     } else if (wo.status === "Completed" && newStatus !== "Completed") {
       updated.completedDate = null;
-      if (wo.partsUsed && wo.partsUsed.length) {
-        parts = db.parts.map((p) => {
-          const used = wo.partsUsed.find((pu) => pu.partId === p.id);
-          if (!used || p.trackQuantity === false) return p;
-          return { ...p, quantity: (Number(p.quantity) || 0) + (Number(used.quantity) || 0) };
-        });
-      }
+      parts = restorePartsUsed(db.parts, wo.partsUsed);
     }
     const activityLog = addLog(db, actor, `Work order "${wo.title}" moved to ${newStatus}`);
     persist({ ...db, parts, sunspaceOrders, activityLog });
@@ -9212,13 +9230,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       if (field === "status" && value === "Completed" && w.status !== "Completed") {
         updated.completedDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         updated.archived = false;
-        if (w.partsUsed && w.partsUsed.length) {
-          parts = parts.map((p) => {
-            const used = w.partsUsed.find((pu) => pu.partId === p.id);
-            if (!used) return p;
-            return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
-          });
-        }
+        parts = deductPartsUsed(parts, w.partsUsed);
       }
       changed.push(updated);
     });
@@ -9354,6 +9366,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       workGroups,
       templates: db.workOrderTemplates,
       taxRate: (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13,
+      workOrders: db.workOrders,
       onSave: save,
       onCancel: requestCloseModal,
       onDirtyChange: (d) => {
@@ -9735,7 +9748,7 @@ function QuoteTemplateForm({ initial, parts, onSave, onCancel }) {
     placeholder: "Add from parts\u2026"
   })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Template")));
 }
-function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, onSave, onCancel, onDirtyChange }) {
+function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, workOrders, onSave, onCancel, onDirtyChange }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
@@ -9751,6 +9764,8 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [laborHours, setLaborHours] = useState((_a = initial == null ? void 0 : initial.laborHours) != null ? _a : "");
   const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || "N/A");
   const [paymentStatus, setPaymentStatus] = useState((initial == null ? void 0 : initial.paymentStatus) || "");
+  const [relatedWorkOrderId, setRelatedWorkOrderId] = useState((initial == null ? void 0 : initial.relatedWorkOrderId) || "");
+  const [comebackSuggestionDismissed, setComebackSuggestionDismissed] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [summaryText, setSummaryText] = useState("");
@@ -9823,6 +9838,16 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   }, [title, description, siteId, cottageId, customerId, assignedTo, status, priority, workGroup, date, partsUsed, laborHours, laborRateType, paymentStatus]);
   const laborRate = (_c = (_b = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : RATE_OPTIONS[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
+  const relatedCandidates = (workOrders || []).filter((w) => {
+    if (initial && w.id === initial.id) return false;
+    if (w.status !== "Completed") return false;
+    return siteId && w.siteId === siteId || cottageId && w.cottageId === cottageId || customerId && w.customerId === customerId;
+  }).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || ""));
+  const comebackSuggestion = !initial && !relatedWorkOrderId && !comebackSuggestionDismissed ? relatedCandidates.find((w) => {
+    if (!w.completedDate) return false;
+    const days = (Date.now() - new Date(w.completedDate + "T00:00:00").getTime()) / (24 * 60 * 60 * 1e3);
+    return days >= 0 && days <= 14;
+  }) : null;
   const applyTemplate = (id) => {
     setTemplateId(id);
     const tpl = (templates || []).find((t) => t.id === id);
@@ -9894,12 +9919,13 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       laborRate,
       laborRateType,
       paymentStatus,
+      relatedWorkOrderId: relatedWorkOrderId || null,
       partsUsed: partsUsed.filter((pu) => (Number(pu.quantity) || 0) > 0).map((pu) => ({ partId: pu.partId, quantity: Number(pu.quantity) || 0 }))
     });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), !initial && /propane/i.test(`${title} ${workGroup}`) && /* @__PURE__ */ React.createElement("div", { className: "rounded-md border border-[#F5E3D9] bg-[#FBEEDA] px-3 py-2 mb-3 text-xs text-[#9A6B1F]" }, "Propane requests are tracked on the ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, "Propane tab"), " \u2014 it schedules the 10am/4pm run and tracks payment. Consider creating this there instead."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Set a future date to schedule work in advance (e.g. a gas test) \u2014 it'll show on the Calendar and Dashboard.")), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), !initial && /propane/i.test(`${title} ${workGroup}`) && /* @__PURE__ */ React.createElement("div", { className: "rounded-md border border-[#F5E3D9] bg-[#FBEEDA] px-3 py-2 mb-3 text-xs text-[#9A6B1F]" }, "Propane requests are tracked on the ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, "Propane tab"), " \u2014 it schedules the 10am/4pm run and tracks payment. Consider creating this there instead."), comebackSuggestion && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 rounded-md border border-[#E2DED5] bg-[#F1EEE9] px-3 py-2 mb-3 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("span", null, "Is this related to “", comebackSuggestion.title, "”, completed ", comebackSuggestion.completedDate, "?"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRelatedWorkOrderId(comebackSuggestion.id), className: "font-semibold text-[#377249] hover:underline" }, "Link it"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setComebackSuggestionDismissed(true), className: "text-[#9A968D] hover:underline" }, "Dismiss"))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Set a future date to schedule work in advance (e.g. a gas test) \u2014 it'll show on the Calendar and Dashboard.")), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
@@ -9923,7 +9949,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: handleCottageChange,
       placeholder: "Search cottages\u2026"
     }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
+  )), relatedCandidates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Related to a Previous Job (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: relatedWorkOrderId, onChange: (e) => setRelatedWorkOrderId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not related to a previous job"), relatedCandidates.map((w) => /* @__PURE__ */ React.createElement("option", { key: w.id, value: w.id }, w.title, " \u2014 completed ", w.completedDate)))), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -11216,6 +11242,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       paymentMethod: request.payment === "Paid" ? request.paymentMethod || "" : ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
+    const parts = deductPartsUsed(db.parts, wo.partsUsed);
     let activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
     saveWorkOrder(wo);
     savePropaneRequest(updated);
@@ -11317,7 +11344,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       saveInvoice(invoice);
       activityLog = addLog({ ...db, activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for propane fill — ready to send`);
     }
-    persist({ ...db, activityLog });
+    persist({ ...db, parts, activityLog });
   };
   const [expiring, setExpiring] = useState(null);
   const flagExpired = (request) => {
@@ -13287,6 +13314,7 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
         workGroups,
         templates: db.workOrderTemplates,
         taxRate: (db.settings || {}).taxRate != null ? db.settings.taxRate : 13,
+        workOrders: db.workOrders,
         onSave: saveNew,
         onCancel: () => setNewOpen(false),
         onDirtyChange: () => {
@@ -13351,22 +13379,10 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
     if (newStatus === "Completed" && wo.status !== "Completed") {
       updated.completedDate = todayISO();
       updated.archived = false;
-      if (wo.partsUsed && wo.partsUsed.length) {
-        parts = db.parts.map((p) => {
-          const used = wo.partsUsed.find((pu) => pu.partId === p.id);
-          if (!used || p.trackQuantity === false) return p;
-          return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
-        });
-      }
+      parts = deductPartsUsed(db.parts, wo.partsUsed);
     } else if (wo.status === "Completed" && newStatus !== "Completed") {
       updated.completedDate = null;
-      if (wo.partsUsed && wo.partsUsed.length) {
-        parts = db.parts.map((p) => {
-          const used = wo.partsUsed.find((pu) => pu.partId === p.id);
-          if (!used || p.trackQuantity === false) return p;
-          return { ...p, quantity: (Number(p.quantity) || 0) + (Number(used.quantity) || 0) };
-        });
-      }
+      parts = restorePartsUsed(db.parts, wo.partsUsed);
     }
     const activityLog = addLog(db, actor, `Work order "${wo.title}" moved to ${newStatus}`);
     persist({ ...db, parts, activityLog });
@@ -13553,6 +13569,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       paymentMethod: request.payment === "Paid" ? request.paymentMethod || "" : ""
     };
     const updated = { ...request, completed: true, completedDate: todayISO(), workOrderId: wo.id };
+    const parts = deductPartsUsed(db.parts, wo.partsUsed);
     let activityLog = addLog(db, actor, `Propane fill completed for ${cottage ? cottage.name : "site"}`);
     saveWorkOrder(wo);
     savePropaneRequest(updated);
@@ -13654,7 +13671,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       saveInvoice(invoice);
       activityLog = addLog({ activityLog }, actor, `Auto-generated invoice ${invoice.invoiceNumber} for propane fill — ready to send`);
     }
-    persist({ ...db, activityLog });
+    persist({ ...db, parts, activityLog });
     setToast("Marked delivered");
   };
   const moveRun = (request) => {
