@@ -3,7 +3,7 @@
   "description": "Cloud Functions for QIC Service Management — role assignment via Firebase Auth custom claims.",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "index.js",
   "dependencies": {
