@@ -11851,7 +11851,7 @@ function AdminDashboardView({ db, persist }) {
     { label: "Sunspace Accessories", value: stats.sunspaceSoldTotal, count: stats.paidSunspaceOrders.length, unit: "units sold" },
     { label: "Service (Invoices)", value: serviceSoldTotal, count: paidServiceInvoices.length, unit: "invoices paid" }
   ];
-  const sites = db.sites || [];
+  const sites = (db.sites || []).filter((s) => !isFacilitySite(s));
   const occupiedSites = sites.filter((s) => (db.customers || []).some((c) => customerSiteIds(c).includes(s.id)));
   const openWorkOrders = (db.workOrders || []).filter((w) => w.status !== "Completed");
   const overdueWorkOrders = (db.workOrders || []).filter(isOverdue);
@@ -11980,6 +11980,9 @@ function getLastHydroReading(db, siteId) {
 }
 function isHydroTrackedSite(site) {
   return (site.tags || []).some((t) => /^(seasonal|4 season)$/i.test(t.trim()));
+}
+function isFacilitySite(site) {
+  return (site.tags || []).some((t) => t.trim().toLowerCase() === "qic facility");
 }
 const HYDRO_PRIORITY_SITES = ["A", "B", "C", "D", "K1", "K2", "K3", "K4", "K5"];
 function hydroSiteSort(a, b) {
