@@ -11990,6 +11990,38 @@ function getLastHydroReading(db, siteId) {
 function isHydroTrackedSite(site) {
   return (site.tags || []).some((t) => /^(seasonal|4 season)$/i.test(t.trim()));
 }
+const HYDRO_PRIORITY_SITES = ["A", "B", "C", "D", "K1", "K2", "K3", "K4", "K5"];
+function hydroSiteSort(a, b) {
+  const ai = HYDRO_PRIORITY_SITES.indexOf(a.number.trim().toUpperCase());
+  const bi = HYDRO_PRIORITY_SITES.indexOf(b.number.trim().toUpperCase());
+  if (ai !== -1 || bi !== -1) {
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  }
+  return a.number.localeCompare(b.number, void 0, { numeric: true });
+}
+const HYDRO_RANGE_GROUPS = [
+  { label: "Front of Park", min: 1, max: 256, includePriority: true },
+  { label: "4 Season", min: 400, max: 470 },
+  { label: "Limestone South", min: 483, max: 575 },
+  { label: "Pebble Beach", min: 1000, max: 1207 },
+  { label: "By the Woods", min: 1300, max: 1336 }
+];
+function groupSitesByHydroRange(sites) {
+  const groups = HYDRO_RANGE_GROUPS.map((g) => ({ label: g.label, sites: [] }));
+  const other = [];
+  sites.forEach((s) => {
+    const isPriority = HYDRO_PRIORITY_SITES.includes(s.number.trim().toUpperCase());
+    const n = Number(s.number);
+    const idx = HYDRO_RANGE_GROUPS.findIndex((g) => isPriority && g.includePriority || !isNaN(n) && n >= g.min && n <= g.max);
+    if (idx === -1) other.push(s);
+    else groups[idx].sites.push(s);
+  });
+  groups.forEach((g) => g.sites.sort(hydroSiteSort));
+  if (other.length) groups.push({ label: "Other", sites: other.sort(hydroSiteSort) });
+  return groups.filter((g) => g.sites.length > 0);
+}
 function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
@@ -12111,14 +12143,37 @@ function HydroMeterView({ db, persist }) {
   const [entrySiteId, setEntrySiteId] = useState(null);
   const [historySiteId, setHistorySiteId] = useState(null);
   const [toast, setToast] = useState(null);
+  const [openGroups, setOpenGroups] = useState(() => /* @__PURE__ */ new Set());
+  const toggleGroup = (label) => setOpenGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    return next;
+  });
   const searchRef = useRef(null);
-  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort(hydroSiteSort);
   const filteredSites = sites.filter((s) => {
     if (!filter) return true;
     const owner = getSiteOwner(db, s.id);
     const hay = `${s.number} ${s.section || ""} ${(owner == null ? void 0 : owner.name) || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
+  const renderSitesBlock = (list) => /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden" }, list.map((s) => {
+    const owner = getSiteOwner(db, s.id);
+    const last = getLastHydroReading(db, s.id);
+    return /* @__PURE__ */ React.createElement(HydroSiteCard, {
+      key: s.id,
+      site: s,
+      owner,
+      last,
+      onEnterReading: () => setEntrySiteId(s.id),
+      onViewHistory: () => setHistorySiteId(s.id)
+    });
+  })), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Last Reading"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-44" }))), /* @__PURE__ */ React.createElement("tbody", null, list.map((s) => {
+    const owner = getSiteOwner(db, s.id);
+    const last = getLastHydroReading(db, s.id);
+    return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 font-semibold text-[#1E1A13]" }, s.number), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "—"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, last ? last.reading : "—"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, last ? last.date : "—"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-right whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setEntrySiteId(s.id), className: "text-xs font-semibold text-[#377249] hover:underline mr-3" }, "Enter Reading"), last && /* @__PURE__ */ React.createElement("button", { onClick: () => setHistorySiteId(s.id), className: "text-xs font-medium text-[#75716A] hover:underline" }, "History")));
+  })))));
   const submitReading = (siteId, readingValue, dateValue) => {
     const site = db.sites.find((s) => s.id === siteId);
     if (!site) return;
@@ -12163,22 +12218,19 @@ function HydroMeterView({ db, persist }) {
     placeholder: "Type a site #\u2026",
     autoFocus: true,
     className: "w-full mb-4 border border-[#E2DED5] rounded-lg px-4 py-3 text-lg bg-white"
-  }), filteredSites.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1" }, "No sites match \u201C", filter, "\u201D.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "sm:hidden" }, filteredSites.map((s) => {
-    const owner = getSiteOwner(db, s.id);
-    const last = getLastHydroReading(db, s.id);
-    return /* @__PURE__ */ React.createElement(HydroSiteCard, {
-      key: s.id,
-      site: s,
-      owner,
-      last,
-      onEnterReading: () => setEntrySiteId(s.id),
-      onViewHistory: () => setHistorySiteId(s.id)
-    });
-  })), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Last Reading"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-44" }))), /* @__PURE__ */ React.createElement("tbody", null, filteredSites.map((s) => {
-    const owner = getSiteOwner(db, s.id);
-    const last = getLastHydroReading(db, s.id);
-    return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 font-semibold text-[#1E1A13]" }, s.number), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, last ? last.reading : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, last ? last.date : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-right whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setEntrySiteId(s.id), className: "text-xs font-semibold text-[#377249] hover:underline mr-3" }, "Enter Reading"), last && /* @__PURE__ */ React.createElement("button", { onClick: () => setHistorySiteId(s.id), className: "text-xs font-medium text-[#75716A] hover:underline" }, "History")));
-  }))))), entrySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Enter Hydro Reading \u2014 Site ${(db.sites.find((s) => s.id === entrySiteId) || {}).number || ""}`, onClose: () => setEntrySiteId(null) }, /* @__PURE__ */ React.createElement(HydroReadingForm, { db, siteId: entrySiteId, onSave: submitReading, onCancel: () => setEntrySiteId(null) })), historySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Hydro History \u2014 Site ${(db.sites.find((s) => s.id === historySiteId) || {}).number || ""}`, onClose: () => setHistorySiteId(null), wide: true }, /* @__PURE__ */ React.createElement(HydroHistoryTable, { db, siteId: historySiteId })));
+  }), filter ? (filteredSites.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1" }, "No sites match \u201C", filter, "\u201D.") : renderSitesBlock(filteredSites)) : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, groupSitesByHydroRange(sites).map((group) => {
+    const isOpen = openGroups.has(group.label);
+    return /* @__PURE__ */ React.createElement("div", { key: group.label, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => toggleGroup(group.label),
+        className: "w-full flex items-center justify-between gap-2 px-4 py-3 text-left"
+      },
+      /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, group.label, " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#9A968D]" }, "(", group.sites.length, ")")),
+      /* @__PURE__ */ React.createElement("span", { className: `text-[#75716A] transition-transform ${isOpen ? "rotate-180" : ""}` }, "\u25BC")
+    ), isOpen && /* @__PURE__ */ React.createElement("div", { className: "px-4 pb-4 border-t border-[#E2DED5] pt-3" }, renderSitesBlock(group.sites)));
+  })), entrySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Enter Hydro Reading \u2014 Site ${(db.sites.find((s) => s.id === entrySiteId) || {}).number || ""}`, onClose: () => setEntrySiteId(null) }, /* @__PURE__ */ React.createElement(HydroReadingForm, { db, siteId: entrySiteId, onSave: submitReading, onCancel: () => setEntrySiteId(null) })), historySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Hydro History \u2014 Site ${(db.sites.find((s) => s.id === historySiteId) || {}).number || ""}`, onClose: () => setHistorySiteId(null), wide: true }, /* @__PURE__ */ React.createElement(HydroHistoryTable, { db, siteId: historySiteId })));
 }
 function getAccountingCopyEmail(db) {
   var _a;
@@ -13997,17 +14049,32 @@ function FieldMoreScreen({ onNavigate, onSignOut }) {
 }
 function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) {
   const [filter, setFilter] = useState("");
+  const [openGroups, setOpenGroups] = useState(() => /* @__PURE__ */ new Set());
+  const toggleGroup = (label) => setOpenGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    return next;
+  });
   const searchRef = useRef(null);
   useEffect(() => {
     if (searchRef.current) searchRef.current.focus();
   }, []);
-  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true }));
+  const sites = (db.sites || []).filter(isHydroTrackedSite).slice().sort(hydroSiteSort);
   const filteredSites = sites.filter((s) => {
     if (!filter) return true;
     const owner = getSiteOwner(db, s.id);
     const hay = `${s.number} ${s.section || ""} ${(owner == null ? void 0 : owner.name) || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
+  const renderSiteCards = (list) => list.map((s) => React.createElement(HydroSiteCard, {
+    key: s.id,
+    site: s,
+    owner: getSiteOwner(db, s.id),
+    last: getLastHydroReading(db, s.id),
+    onEnterReading: () => onEnterReading(s.id),
+    onViewHistory: () => onGoToDesktopTab("hydro")
+  }));
   return React.createElement(
     React.Fragment,
     null,
@@ -14015,18 +14082,29 @@ function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) 
     React.createElement("input", {
       ref: searchRef,
       type: "text",
+      inputMode: "numeric",
       value: filter,
       onChange: (e) => setFilter(e.target.value),
       placeholder: "Type a site #…",
       className: inputCls + " min-h-[50px] text-lg mb-4"
     }),
-    filteredSites.length === 0 ? React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1" }, `No sites match "${filter}".`) : filteredSites.map((s) => React.createElement(HydroSiteCard, {
-      key: s.id,
-      site: s,
-      owner: getSiteOwner(db, s.id),
-      last: getLastHydroReading(db, s.id),
-      onEnterReading: () => onEnterReading(s.id),
-      onViewHistory: () => onGoToDesktopTab("hydro")
+    filter ? (filteredSites.length === 0 ? React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1" }, `No sites match "${filter}".`) : renderSiteCards(filteredSites)) : React.createElement("div", { className: "space-y-2" }, groupSitesByHydroRange(sites).map((group) => {
+      const isOpen = openGroups.has(group.label);
+      return React.createElement(
+        "div",
+        { key: group.label, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            onClick: () => toggleGroup(group.label),
+            className: "w-full flex items-center justify-between gap-2 px-4 py-3.5 text-left min-h-[50px]"
+          },
+          React.createElement("span", { className: "text-base font-semibold text-[#1E1A13]" }, group.label, " ", React.createElement("span", { className: "text-sm font-normal text-[#9A968D]" }, "(", group.sites.length, ")")),
+          React.createElement("span", { className: `text-[#75716A] transition-transform ${isOpen ? "rotate-180" : ""}` }, "▼")
+        ),
+        isOpen && React.createElement("div", { className: "px-3 pb-3 border-t border-[#E2DED5] pt-2" }, renderSiteCards(group.sites))
+      );
     }))
   );
 }
