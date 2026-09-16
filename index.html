@@ -12816,7 +12816,7 @@ const ACCOUNTING_NAV_GROUPS = [
   { label: "The Park", items: ["sites", "customers", "cottages"] }
 ];
 const GROUPED_NAV_BY_MODE = { service: SERVICE_NAV_GROUPS, admin: ADMIN_NAV_GROUPS, sales: SALES_NAV_GROUPS, accounting: ACCOUNTING_NAV_GROUPS };
-const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn", hydroreview: "warn" };
+const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn", hydroreview: "warn", systemhealth: "warn" };
 const NAV_ICON_SHAPES = {
   dashboard: [
     React.createElement("rect", { key: "a", x: 3, y: 3, width: 7, height: 9 }),
@@ -15459,7 +15459,8 @@ function AppContent() {
     propane: (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank).length,
     winterizing: (db.winterizingRequests || []).filter((r) => !r.archived && !r.completed).length,
     hydro: (db.sites || []).filter((s) => !getLastHydroReading(db, s.id)).length,
-    hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length
+    hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length,
+    systemhealth: (db.systemErrorLog || []).filter((e) => Date.now() - e.ts < 24 * 60 * 60 * 1e3).length
   };
   const createInvoiceFromSource = (source, sourceType) => {
     setInvoicePrefill({ source, sourceType });
