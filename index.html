@@ -12786,7 +12786,28 @@ function CorrespondenceIsNew(c) {
 function CorrespondenceIsSnoozed(c) {
   return c.status === "snoozed" && Boolean(c.followUpAt) && c.followUpAt > todayISO();
 }
-function CorrespondenceRow({ item, customer, active, onClick }) {
+// Collapses repeat emails from the same matched customer into one row (the
+// full history is still all there in the reading pane's thread) so a
+// customer following up twice doesn't create two competing list rows.
+// Unmatched senders are left ungrouped since there's no thread view to fall
+// back on for the ones a collapsed row would hide.
+function groupCorrespondenceByCustomer(items) {
+  const rows = [];
+  const index = /* @__PURE__ */ new Map();
+  items.forEach((item) => {
+    if (item.customerId && index.has(item.customerId)) {
+      const row = index.get(item.customerId);
+      row.count += 1;
+      row.ids.push(item.id);
+      return;
+    }
+    const row = { item, count: 1, ids: [item.id] };
+    if (item.customerId) index.set(item.customerId, row);
+    rows.push(row);
+  });
+  return rows;
+}
+function CorrespondenceRow({ item, customer, active, onClick, count }) {
   const isNew = CorrespondenceIsNew(item);
   const isSnoozed = CorrespondenceIsSnoozed(item);
   const name = customer ? customer.name : item.fromEmail;
@@ -12796,7 +12817,7 @@ function CorrespondenceRow({ item, customer, active, onClick }) {
       onClick,
       className: `w-full text-left px-3 py-2.5 rounded-lg border mb-1.5 ${active ? "border-[#377249] bg-[#DDF1E1]" : isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-transparent hover:bg-[#F1EEE9]"}`
     },
-    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13] truncate" }, name), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] whitespace-nowrap flex-shrink-0" }, isSnoozed ? `Follow up ${new Date(item.followUpAt + "T00:00:00").toLocaleDateString()}` : timeAgo(item.receivedAt))),
+    /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5 min-w-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13] truncate" }, name), count > 1 && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E] flex-shrink-0" }, "\xD7", count)), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] whitespace-nowrap flex-shrink-0" }, isSnoozed ? `Follow up ${new Date(item.followUpAt + "T00:00:00").toLocaleDateString()}` : timeAgo(item.receivedAt))),
     /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 mt-0.5" }, !customer && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a] flex-shrink-0" }, "No match"), item.suggestedFlag && /* @__PURE__ */ React.createElement("span", { className: "text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#FBEEDA] text-[#9A6B1F] flex-shrink-0" }, "⚡ Flagged"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#4B4740] truncate" }, item.subject || "(no subject)")),
     /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] truncate mt-0.5" }, item.bodyPreview || item.body || "")
   );
@@ -12886,13 +12907,18 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     setDeleteConfirmId(null);
   };
   const linkedWorkOrders = viewCustomer ? Array.from(new Set(all.filter((c) => c.customerId === viewCustomer.id && c.workOrderId).map((c) => c.workOrderId))).map((id) => (db.workOrders || []).find((w) => w.id === id)).filter(Boolean) : [];
-  const renderList = (items, emptyText) => items.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic px-3 py-4" }, emptyText) : items.map((item) => /* @__PURE__ */ React.createElement(CorrespondenceRow, {
-    key: item.id,
-    item,
-    customer: item.customerId ? (db.customers || []).find((c) => c.id === item.customerId) : null,
-    active: selectedId === item.id,
-    onClick: () => selectItem(item)
-  }));
+  const renderList = (items, emptyText, grouped) => {
+    if (items.length === 0) return /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic px-3 py-4" }, emptyText);
+    const rows = grouped ? groupCorrespondenceByCustomer(items) : items.map((item) => ({ item, count: 1, ids: [item.id] }));
+    return rows.map((row) => /* @__PURE__ */ React.createElement(CorrespondenceRow, {
+      key: row.item.id,
+      item: row.item,
+      count: row.count,
+      customer: row.item.customerId ? (db.customers || []).find((c) => c.id === row.item.customerId) : null,
+      active: row.ids.includes(selectedId),
+      onClick: () => selectItem(row.item)
+    }));
+  };
   let readingPane;
   if (composePickerOpen) {
     readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-1" }, "New Message"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-2" }, "Pick a customer to start a new email thread with."), /* @__PURE__ */ React.createElement(CorrespondenceLinkPicker, { customers: db.customers, onPick: pickComposeCustomer, onCancel: () => setComposePickerOpen(false) }));
@@ -12910,7 +12936,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     setComposePickerOpen(false);
     setReplyTo(null);
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-1" }, "Correspondence"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Incoming mail to service@qicampark.com — link, reply, or create a work order, then mark handled once it's dealt with.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setCannedRepliesOpen(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Canned Replies"), /* @__PURE__ */ React.createElement("button", { onClick: openCompose, className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "+ New Message"))), /* @__PURE__ */ React.createElement("div", { className: "flex border border-[#E2DED5] rounded-xl bg-white overflow-hidden", style: { minHeight: "70vh" } }, /* @__PURE__ */ React.createElement("div", { className: `${showingDetail ? "hidden sm:flex" : "flex"} w-full sm:w-[340px] flex-shrink-0 border-r border-[#E2DED5] bg-[#F9F5EC] flex-col`, style: { maxHeight: "80vh" } }, /* @__PURE__ */ React.createElement("div", { className: "p-3 border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-3 py-1.5", placeholder: "Search correspondence…", value: filter, onChange: (e) => setFilter(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "overflow-y-auto flex-1 px-2 py-2" }, /* @__PURE__ */ React.createElement("h3", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold px-1 mb-1.5" }, "Needs Attention (", filteredNeedsAttention.length, ")"), renderList(filteredNeedsAttention, "Nothing needs attention right now."), filteredSnoozed.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h3", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold px-1 mb-1.5 mt-4" }, "Snoozed (", filteredSnoozed.length, ")"), renderList(filteredSnoozed, "")), /* @__PURE__ */ React.createElement("h3", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold px-1 mb-1.5 mt-4" }, q ? "Handled (matching)" : "Handled"), renderList(filteredHandled, "Nothing handled yet."))), /* @__PURE__ */ React.createElement("div", { className: `${showingDetail ? "block" : "hidden"} sm:block flex-1 overflow-y-auto`, style: { maxHeight: "80vh" } }, showingDetail && /* @__PURE__ */ React.createElement("button", { onClick: clearSelection, className: "sm:hidden text-xs font-semibold text-[#377249] px-5 pt-4 hover:underline" }, "← Back to messages"), readingPane)), creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-1" }, "Correspondence"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Incoming mail to service@qicampark.com — link, reply, or create a work order, then mark handled once it's dealt with.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setCannedRepliesOpen(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Canned Replies"), /* @__PURE__ */ React.createElement("button", { onClick: openCompose, className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "+ New Message"))), /* @__PURE__ */ React.createElement("div", { className: "flex border border-[#E2DED5] rounded-xl bg-white overflow-hidden", style: { minHeight: "70vh" } }, /* @__PURE__ */ React.createElement("div", { className: `${showingDetail ? "hidden sm:flex" : "flex"} w-full sm:w-[340px] flex-shrink-0 border-r border-[#E2DED5] bg-[#F9F5EC] flex-col`, style: { maxHeight: "80vh" } }, /* @__PURE__ */ React.createElement("div", { className: "p-3 border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-3 py-1.5", placeholder: "Search correspondence…", value: filter, onChange: (e) => setFilter(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "overflow-y-auto flex-1 px-2 py-2" }, /* @__PURE__ */ React.createElement("h3", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold px-1 mb-1.5" }, "Needs Attention (", groupCorrespondenceByCustomer(filteredNeedsAttention).length, ")"), renderList(filteredNeedsAttention, "Nothing needs attention right now.", true), filteredSnoozed.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h3", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold px-1 mb-1.5 mt-4" }, "Snoozed (", groupCorrespondenceByCustomer(filteredSnoozed).length, ")"), renderList(filteredSnoozed, "", true)), /* @__PURE__ */ React.createElement("h3", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold px-1 mb-1.5 mt-4" }, q ? "Handled (matching)" : "Handled"), renderList(filteredHandled, "Nothing handled yet."))), /* @__PURE__ */ React.createElement("div", { className: `${showingDetail ? "block" : "hidden"} sm:block flex-1 overflow-y-auto`, style: { maxHeight: "80vh" } }, showingDetail && /* @__PURE__ */ React.createElement("button", { onClick: clearSelection, className: "sm:hidden text-xs font-semibold text-[#377249] px-5 pt-4 hover:underline" }, "← Back to messages"), readingPane)), creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
     db,
     saveWorkOrder: (wo) => {
       saveWorkOrder(wo);
