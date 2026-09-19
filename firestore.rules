@@ -70,6 +70,7 @@ service cloud.firestore {
     match /pendingSignups/{id} { allow read, write: if isSignedIn(); }
     match /propaneRequests/{id} { allow read, write: if isSignedIn(); }
     match /winterizingRequests/{id} { allow read, write: if isSignedIn(); }
+    match /treeRequests/{id} { allow read, write: if isSignedIn(); }
     match /workOrders/{id} { allow read, write: if isSignedIn(); }
     match /customers/{id} { allow read, write: if isSignedIn(); }
     match /quotes/{id} { allow read, write: if isSignedIn(); }
