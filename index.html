@@ -83,6 +83,7 @@ const DOC_REF = db_.collection("campground").doc("data");
 const PENDING_SIGNUPS_REF = db_.collection("pendingSignups");
 const PROPANE_REQUESTS_REF = db_.collection("propaneRequests");
 const WINTERIZING_REQUESTS_REF = db_.collection("winterizingRequests");
+const TREE_REQUESTS_REF = db_.collection("treeRequests");
 const WORK_ORDERS_REF = db_.collection("workOrders");
 const CUSTOMERS_REF = db_.collection("customers");
 const QUOTES_REF = db_.collection("quotes");
@@ -201,6 +202,7 @@ const emptyDb = () => ({
   pendingWinterizingSignups: [],
   propaneRequests: [],
   pendingPropaneSignups: [],
+  treeRequests: [],
   salesAppointments: [],
   sunspaceOrders: [],
   serviceAppointments: [],
@@ -215,7 +217,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
-const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "generalservice", "correspondence", "hydro", "customers"]);
+const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "trees", "generalservice", "correspondence", "hydro", "customers"]);
 const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "servicereports"]);
 const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "inventory", "consignments", "sunspace", "deals", "salestransactions"]);
 function getUserRole(db, email) {
@@ -391,6 +393,12 @@ const WO_STATUS_STYLES = {
   Open: "bg-[#F1EEE9] text-[#4B4740]",
   "In Progress": "bg-[#DCEBE8] text-[#3E7A72]",
   Completed: "bg-[#DDF1E1] text-[#28633C]"
+};
+const TREE_STAGES = ["Inspected", "QIC Job", "Hire Out"];
+const TREE_STAGE_STYLES = {
+  Inspected: "bg-[#F1EEE9] text-[#75716A]",
+  "QIC Job": "bg-[#DDF1E1] text-[#28633C]",
+  "Hire Out": "bg-[#E4EEF2] text-[#2E6E8E]"
 };
 const STAFF_STATUS = ["Available", "On Site", "Off Duty"];
 const STAFF_STATUS_DOT = {
@@ -1008,6 +1016,7 @@ class ErrorBoundary extends React.Component {
 function useDb() {
   const [mainData, setMainData] = useState(null);
   const [propaneList, setPropaneList] = useState(null);
+  const [treeList, setTreeList] = useState(null);
   const [winterizingList, setWinterizingList] = useState(null);
   const [workOrdersList, setWorkOrdersList] = useState(null);
   const [customersList, setCustomersList] = useState(null);
@@ -1081,6 +1090,15 @@ function useDb() {
         const list = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setPropaneList(list);
+      },
+      () => {
+      }
+    );
+    const unsubTrees = TREE_REQUESTS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setTreeList(list);
       },
       () => {
       }
@@ -1161,6 +1179,7 @@ function useDb() {
       unsub();
       unsubPending();
       unsubPropane();
+      unsubTrees();
       unsubWinterizing();
       unsubWorkOrders();
       unsubCustomers();
@@ -1171,7 +1190,7 @@ function useDb() {
       unsubCottages();
     };
   }, []);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [] } : null;
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], treeRequests: treeList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [] } : null;
   const persist = useCallback(async (next) => {
     const { propaneRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, sites, cottages, ...rest } = next;
     setMainData(rest);
@@ -1227,6 +1246,26 @@ function useDb() {
       setSaveError(null);
     } catch (e) {
       setSaveError(`Couldn't remove that propane request${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const saveTreeRequest = useCallback(async (request) => {
+    const attempt = () => TREE_REQUESTS_REF.doc(request.id).set(request);
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't save that tree entry${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+    }
+  }, []);
+  const deleteTreeRequest = useCallback(async (id) => {
+    const attempt = () => TREE_REQUESTS_REF.doc(id).delete();
+    lastAttempt.current = attempt;
+    try {
+      await attempt();
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Couldn't remove that tree entry${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
   const saveWinterizingRequest = useCallback(async (request) => {
@@ -1405,7 +1444,7 @@ function useDb() {
     const attempt = lastAttempt.current;
     attempt().then(() => setSaveError(null)).catch((e) => setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
   }, []);
-  return { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry };
+  return { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveTreeRequest, deleteTreeRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry };
 }
 function IconTag({ className = "" }) {
   return /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 24 24", className, fill: "none", stroke: "currentColor", strokeWidth: "1.6" }, /* @__PURE__ */ React.createElement("path", { d: "M3 11.5V5a2 2 0 0 1 2-2h6.5L21 11.5a2 2 0 0 1 0 2.8l-6.7 6.7a2 2 0 0 1-2.8 0L3 12.8a2 2 0 0 1 0-1.3Z" }), /* @__PURE__ */ React.createElement("circle", { cx: "7.5", cy: "7.5", r: "1.4", fill: "currentColor", stroke: "none" }));
@@ -1756,7 +1795,7 @@ function SendQuoteConfirmModal({ quote, customer, onConfirm, onCancel }) {
     "Yes, send"
   )));
 }
-function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose }) {
+function TrashModal({ db, persist, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
     site: "Site",
@@ -1771,6 +1810,7 @@ function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, s
     quoteTemplate: "Quote Template",
     winterizingRequest: "Winterizing Request",
     propaneRequest: "Propane Request",
+    treeRequest: "Tree Entry",
     salesAppointment: "Sales Appointment",
     sunspaceOrder: "Sunspace Order",
     serviceAppointment: "Service Appointment",
@@ -1785,6 +1825,9 @@ function TrashModal({ db, persist, savePropaneRequest, saveWinterizingRequest, s
     if (entry.type === "propaneRequest") {
       persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
       savePropaneRequest(entry.data);
+    } else if (entry.type === "treeRequest") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveTreeRequest(entry.data);
     } else if (entry.type === "winterizingRequest") {
       persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
       saveWinterizingRequest(entry.data);
@@ -3837,25 +3880,46 @@ function QuickPropaneRequestModal({ db, initial, savePropaneRequest, onClose }) 
   };
   return /* @__PURE__ */ React.createElement(Modal, { title: "New Propane Request", onClose, wide: true }, /* @__PURE__ */ React.createElement(PropaneRequestForm, { initial, db, onSave: save, onCancel: onClose }));
 }
+// Same conservative-match reasoning as isPropaneEmail above.
+function isTreeEmail(item) {
+  const hay = `${item.subject || ""} ${item.body || ""}`.toLowerCase();
+  return /\btree\b|\btrees\b|\blimb(s|bing)?\b|\bbranch(es)?\b|\bfallen\b|\bstump\b/.test(hay);
+}
+function QuickTreeRequestModal({ db, initial, saveTreeRequest, onClose }) {
+  const save = (request) => {
+    saveTreeRequest(request);
+    onClose();
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title: "New Tree Entry", onClose, wide: true }, /* @__PURE__ */ React.createElement(TreeRequestForm, { initial, db, onSave: save, onCancel: onClose }));
+}
 // The primary action adapts to what the message looks like (propane vs.
 // generic) instead of always defaulting to Work Order, so the common case is
 // one click; the other destination stays one click further away in the
 // caret menu rather than crowding a second full-size button in.
-function CorrespondenceCreateButton({ item, onCreateWorkOrder, onCreatePropane, variant }) {
+function CorrespondenceCreateButton({ item, onCreateWorkOrder, onCreatePropane, onCreateTree, variant }) {
   const [open, setOpen] = useState(false);
-  if (!onCreateWorkOrder && !onCreatePropane) return null;
   const isButton = variant === "button";
   const primaryCls = isButton ? "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" : "text-xs font-semibold text-[#377249] hover:underline";
-  const propaneFirst = onCreatePropane && isPropaneEmail(item);
-  const primary = propaneFirst ? { label: isButton ? "Create Propane Request" : "+ Create Propane Request", onClick: onCreatePropane } : { label: isButton ? "Create Work Order" : "+ Create Work Order", onClick: onCreateWorkOrder };
-  const secondary = propaneFirst ? (onCreateWorkOrder ? { label: "Create Work Order", onClick: onCreateWorkOrder } : null) : (onCreatePropane ? { label: "Create Propane Request", onClick: onCreatePropane } : null);
-  if (!primary.onClick) return secondary && secondary.onClick ? /* @__PURE__ */ React.createElement("button", { onClick: () => secondary.onClick(item), className: primaryCls }, secondary.label) : null;
-  return /* @__PURE__ */ React.createElement("span", { className: "relative inline-flex items-center gap-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => primary.onClick(item), className: primaryCls }, primary.label), secondary && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { onClick: () => setOpen((o) => !o), className: `text-xs font-semibold text-[#75716A] hover:text-[#377249] px-0.5 ${isButton ? "border border-[#E2DED5] rounded-md py-1.5" : ""}`, "aria-label": "Other options" }, "▾"), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-10 top-full left-0 mt-1 bg-white border border-[#E2DED5] rounded-md shadow-md py-1 whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
+  // Destinations in priority order: the first one whose keyword check matches
+  // wins the primary slot; Work Order is always the fallback when nothing
+  // else matches. Everything else lands in the caret dropdown, so adding a
+  // future destination here never crowds the row.
+  const destinations = [
+    { key: "propane", label: "Propane Request", onClick: onCreatePropane, matches: onCreatePropane && isPropaneEmail(item) },
+    { key: "tree", label: "Tree Entry", onClick: onCreateTree, matches: onCreateTree && isTreeEmail(item) },
+    { key: "workorder", label: "Work Order", onClick: onCreateWorkOrder, matches: false }
+  ].filter((d) => d.onClick);
+  if (destinations.length === 0) return null;
+  const primary = destinations.find((d) => d.matches) || destinations.find((d) => d.key === "workorder") || destinations[0];
+  const others = destinations.filter((d) => d !== primary);
+  const labelFor = (d, isPrimary) => `${isPrimary && !isButton ? "+ " : ""}Create ${d.label}`;
+  if (others.length === 0) return /* @__PURE__ */ React.createElement("button", { onClick: () => primary.onClick(item), className: primaryCls }, labelFor(primary, true));
+  return /* @__PURE__ */ React.createElement("span", { className: "relative inline-flex items-center gap-1" }, /* @__PURE__ */ React.createElement("button", { onClick: () => primary.onClick(item), className: primaryCls }, labelFor(primary, true)), /* @__PURE__ */ React.createElement("button", { onClick: () => setOpen((o) => !o), className: `text-xs font-semibold text-[#75716A] hover:text-[#377249] px-0.5 ${isButton ? "border border-[#E2DED5] rounded-md py-1.5" : ""}`, "aria-label": "Other options" }, "▾"), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-10 top-full left-0 mt-1 bg-white border border-[#E2DED5] rounded-md shadow-md py-1 whitespace-nowrap" }, others.map((d) => /* @__PURE__ */ React.createElement("button", { key: d.key, onClick: () => {
     setOpen(false);
-    secondary.onClick(item);
-  }, className: "block w-full text-left px-3 py-1.5 text-xs text-[#1E1A13] hover:bg-[#F1EEE9]" }, secondary.label))));
+    d.onClick(item);
+  }, className: "block w-full text-left px-3 py-1.5 text-xs text-[#1E1A13] hover:bg-[#F1EEE9]" }, labelFor(d, false)))));
 }
-function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder, onCreatePropane, onReply }) {
+function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder, onCreatePropane, onCreateTree, onReply }) {
   const isOut = item.direction === "out";
   const isNew = !isOut && CorrespondenceIsNew(item);
   const isSnoozed = item.status === "snoozed" && item.followUpAt && item.followUpAt > todayISO();
@@ -3870,11 +3934,12 @@ function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder
     saveCorrespondence({ ...item, status: "snoozed", followUpAt: followUpDate });
     setSnoozing(false);
   };
-  return /* @__PURE__ */ React.createElement("div", { className: `rounded-lg border p-3 mb-2 ${isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-[#E2DED5] bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, isOut ? "QIC Service" : item.fromEmail, /* @__PURE__ */ React.createElement("span", { className: `ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isOut ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#E4EEF2] text-[#2E6E8E]"}` }, isOut ? "Sent" : "Received"), isNew && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#B8752F] text-white" }, "NEW"), CorrespondenceIsFYI(item) && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "FYI"), isSnoozed && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E]" }, "Follow up ", new Date(item.followUpAt + "T00:00:00").toLocaleDateString())), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "")), item.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "\u21AA Forwarded by ", item.forwardedBy), item.subject && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1" }, "Subject: ", item.subject), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, item.body), item.attachmentUrl && /* @__PURE__ */ React.createElement("div", { className: "mt-2 flex items-center gap-2 border border-[#E2DED5] rounded-md p-2 bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("a", { href: item.attachmentUrl, target: "_blank", rel: "noreferrer", className: "text-xs text-[#377249] hover:underline font-medium flex-1 truncate" }, item.attachmentName || "View attachment"), /* @__PURE__ */ React.createElement("button", { onClick: clearAttachment, className: "text-xs text-[#a8532a] hover:underline flex-shrink-0" }, "Delete photo")), item.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F]" }, "\u26A1 ", item.suggestedFlag), !isOut && (isNew && isFYI ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#377249] hover:underline" }, "\u2713 Acknowledge"), /* @__PURE__ */ React.createElement("button", { onClick: () => setOverrideFYI(true), className: "text-xs text-[#9A968D] hover:underline" }, "Needs a reply?")) : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2 flex-wrap" }, onReply && /* @__PURE__ */ React.createElement("button", { onClick: () => onReply(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Reply"), /* @__PURE__ */ React.createElement(CorrespondenceCreateButton, { item, onCreateWorkOrder, onCreatePropane }), isNew && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Mark Handled"), isNew && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(true), className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Follow up\u2026"), snoozing && /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: followUpDate, min: todayISO(), onChange: (e) => setFollowUpDate(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1" }), /* @__PURE__ */ React.createElement("button", { onClick: confirmSnooze, disabled: !followUpDate, className: "text-xs font-semibold text-[#377249] hover:underline disabled:opacity-50" }, "Snooze"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(false), className: "text-xs text-[#9A968D] hover:underline" }, "Cancel")))));
+  return /* @__PURE__ */ React.createElement("div", { className: `rounded-lg border p-3 mb-2 ${isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-[#E2DED5] bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, isOut ? "QIC Service" : item.fromEmail, /* @__PURE__ */ React.createElement("span", { className: `ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isOut ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#E4EEF2] text-[#2E6E8E]"}` }, isOut ? "Sent" : "Received"), isNew && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#B8752F] text-white" }, "NEW"), CorrespondenceIsFYI(item) && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "FYI"), isSnoozed && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E]" }, "Follow up ", new Date(item.followUpAt + "T00:00:00").toLocaleDateString())), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "")), item.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "\u21AA Forwarded by ", item.forwardedBy), item.subject && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1" }, "Subject: ", item.subject), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, item.body), item.attachmentUrl && /* @__PURE__ */ React.createElement("div", { className: "mt-2 flex items-center gap-2 border border-[#E2DED5] rounded-md p-2 bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("a", { href: item.attachmentUrl, target: "_blank", rel: "noreferrer", className: "text-xs text-[#377249] hover:underline font-medium flex-1 truncate" }, item.attachmentName || "View attachment"), /* @__PURE__ */ React.createElement("button", { onClick: clearAttachment, className: "text-xs text-[#a8532a] hover:underline flex-shrink-0" }, "Delete photo")), item.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F]" }, "\u26A1 ", item.suggestedFlag), !isOut && (isNew && isFYI ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#377249] hover:underline" }, "\u2713 Acknowledge"), /* @__PURE__ */ React.createElement("button", { onClick: () => setOverrideFYI(true), className: "text-xs text-[#9A968D] hover:underline" }, "Needs a reply?")) : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2 flex-wrap" }, onReply && /* @__PURE__ */ React.createElement("button", { onClick: () => onReply(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Reply"), /* @__PURE__ */ React.createElement(CorrespondenceCreateButton, { item, onCreateWorkOrder, onCreatePropane, onCreateTree }), isNew && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Mark Handled"), isNew && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(true), className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Follow up\u2026"), snoozing && /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: followUpDate, min: todayISO(), onChange: (e) => setFollowUpDate(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1" }), /* @__PURE__ */ React.createElement("button", { onClick: confirmSnooze, disabled: !followUpDate, className: "text-xs font-semibold text-[#377249] hover:underline disabled:opacity-50" }, "Snooze"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(false), className: "text-xs text-[#9A968D] hover:underline" }, "Cancel")))));
 }
-function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, onReply }) {
+function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, onReply }) {
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [creatingPropaneFrom, setCreatingPropaneFrom] = useState(null);
+  const [creatingTreeFrom, setCreatingTreeFrom] = useState(null);
   const [viewingWO, setViewingWO] = useState(null);
   const items = (db.correspondence || []).filter((c) => c.customerId === customer.id).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""));
   const modal = creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
@@ -3902,9 +3967,21 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
       ...correspondenceWorkOrderPrefill(db, customer.id)
     }
   });
+  const treeModal = creatingTreeFrom && saveTreeRequest && /* @__PURE__ */ React.createElement(QuickTreeRequestModal, {
+    db,
+    saveTreeRequest: (request) => {
+      saveTreeRequest(request);
+      if (saveCorrespondence) saveCorrespondence({ ...creatingTreeFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString() });
+    },
+    onClose: () => setCreatingTreeFrom(null),
+    initial: {
+      description: creatingTreeFrom.body || "",
+      ...correspondenceWorkOrderPrefill(db, customer.id)
+    }
+  });
   const viewModal = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" });
   if (items.length === 0) {
-    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No correspondence yet."), modal, propaneModal, viewModal);
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No correspondence yet."), modal, propaneModal, treeModal, viewModal);
   }
   let lastWO = null;
   const rows = [];
@@ -3914,9 +3991,9 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
       rows.push(wo ? /* @__PURE__ */ React.createElement("button", { key: `wo-${item.id}`, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4] inline-block mt-3 mb-1.5" }, "WORK ORDER \u2014 ", wo.title) : /* @__PURE__ */ React.createElement("div", { key: `wo-${item.id}`, className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] inline-block mt-3 mb-1.5" }, "WORK ORDER"));
     }
     lastWO = item.workOrderId || null;
-    rows.push(/* @__PURE__ */ React.createElement(CorrespondenceMessage, { key: item.id, item, db, saveCorrespondence, onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onCreatePropane: savePropaneRequest ? setCreatingPropaneFrom : null, onReply }));
+    rows.push(/* @__PURE__ */ React.createElement(CorrespondenceMessage, { key: item.id, item, db, saveCorrespondence, onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onCreatePropane: savePropaneRequest ? setCreatingPropaneFrom : null, onCreateTree: saveTreeRequest ? setCreatingTreeFrom : null, onReply }));
   });
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal, propaneModal, viewModal);
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal, propaneModal, treeModal, viewModal);
 }
 function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorrespondence, saveCottage, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
@@ -11501,6 +11578,175 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
   return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, needsReviewEl, body, modalEl, expiringEl, confirmCompleteEl, reviewEl, confirmEl);
 }
 
+function TreeRequestForm({ initial, db, onSave, onCancel }) {
+  const initialCottage = (initial == null ? void 0 : initial.cottageId) ? db.cottages.find((c) => c.id === initial.cottageId) : null;
+  const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || (initialCottage == null ? void 0 : initialCottage.siteId) || "");
+  const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
+  const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
+  const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
+  const [priority, setPriority] = useState((initial == null ? void 0 : initial.priority) || "Medium");
+  const [stage, setStage] = useState((initial == null ? void 0 : initial.stage) || "Inspected");
+  const [notedDate, setNotedDate] = useState((initial == null ? void 0 : initial.notedDate) || todayISO());
+  const pickSite = (val) => {
+    setSiteId(val);
+    if (val) {
+      const cottagesOnSite = db.cottages.filter((c) => c.siteId === val);
+      if (cottagesOnSite.length === 1) {
+        setCottageId(cottagesOnSite[0].id);
+      } else if (cottageId) {
+        const currentCottage = db.cottages.find((c) => c.id === cottageId);
+        if (currentCottage && currentCottage.siteId !== val) setCottageId("");
+      }
+      if (!customerId) {
+        const owner = db.customers.find((c) => customerSiteIds(c).includes(val));
+        if (owner) setCustomerId(owner.id);
+      }
+    }
+  };
+  const pickCottage = (val) => {
+    setCottageId(val);
+    if (val) {
+      const cottage = db.cottages.find((c) => c.id === val);
+      if (cottage && cottage.siteId) {
+        if (cottage.siteId !== siteId) setSiteId(cottage.siteId);
+        if (!customerId) {
+          const owner = db.customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
+          if (owner) setCustomerId(owner.id);
+        }
+      }
+    }
+  };
+  const pickCustomer = (val) => {
+    setCustomerId(val);
+    if (val) {
+      const customer = db.customers.find((c) => c.id === val);
+      const custSiteIds = customer ? customerSiteIds(customer) : [];
+      if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
+    }
+  };
+  const submit = () => {
+    if (!description.trim()) return;
+    onSave({
+      id: (initial == null ? void 0 : initial.id) || uid(),
+      siteId: siteId || null,
+      cottageId: cottageId || null,
+      customerId: customerId || null,
+      description: description.trim(),
+      priority,
+      stage,
+      notedDate,
+      completed: (initial == null ? void 0 : initial.completed) || false,
+      completedDate: (initial == null ? void 0 : initial.completedDate) || null,
+      workOrderId: (initial == null ? void 0 : initial.workOrderId) || null,
+      createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
+    });
+  };
+  return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
+    if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
+    value: siteId,
+    onChange: pickSite,
+    placeholder: "Search sites…",
+    noneLabel: "— Select a site —"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Cottage (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: (siteId ? db.cottages.filter((c) => c.siteId === siteId) : db.cottages).map((c) => {
+      const site = db.sites.find((s) => s.id === c.siteId);
+      return { value: c.id, label: c.name + (site ? ` (Site ${site.number})` : ""), searchText: [c.name, site == null ? void 0 : site.number].filter(Boolean).join(" ") };
+    }),
+    value: cottageId,
+    onChange: pickCottage,
+    placeholder: "Search cottages…",
+    noneLabel: "— None —"
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Customer (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: db.customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
+    value: customerId,
+    onChange: pickCustomer,
+    placeholder: "Search customers…",
+    noneLabel: "No customer linked"
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Stage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: stage, onChange: (e) => setStage(e.target.value) }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement(Field, { label: "Noted Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: notedDate, onChange: (e) => setNotedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: 'What & where — e.g. "Large dead oak leaning over the driveway near Site 42"', autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !description.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, initial ? "Save Changes" : "Log Tree")));
+}
+function TreeRow({ tree, db, onEdit, onDelete, onCreateWorkOrder, onSetStage, onViewWorkOrder }) {
+  const site = tree.siteId ? db.sites.find((s) => s.id === tree.siteId) : null;
+  const cottage = tree.cottageId ? db.cottages.find((c) => c.id === tree.cottageId) : null;
+  const customer = tree.customerId ? db.customers.find((c) => c.id === tree.customerId) : null;
+  const location = [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" — ") || "No location set";
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, location), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${PRIORITY_STYLES[tree.priority] || PRIORITY_STYLES.Medium}` }, tree.priority)), customer && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-0.5" }, "Reported by ", customer.name), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 whitespace-pre-wrap" }, tree.description)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#9A968D] whitespace-nowrap flex-shrink-0" }, tree.notedDate)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-2 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("select", { value: tree.stage || "Inspected", onChange: (e) => onSetStage(tree, e.target.value), className: `text-xs font-semibold rounded-md px-2 py-1 border-0 ${TREE_STAGE_STYLES[tree.stage] || TREE_STAGE_STYLES.Inspected}` }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))), tree.workOrderId ? /* @__PURE__ */ React.createElement("button", { onClick: () => onViewWorkOrder(tree), className: "text-xs font-semibold text-[#B8752F] hover:underline" }, "View Work Order") : onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(tree), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Create Work Order"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(tree), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(tree.id), className: "text-xs font-semibold text-[#a8532a] hover:underline ml-auto" }, "Delete")));
+}
+function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder }) {
+  const actor = useCurrentActor();
+  const confirm = useConfirm();
+  const [modal, setModal] = useState(null);
+  const [creatingFrom, setCreatingFrom] = useState(null);
+  const [viewingWO, setViewingWO] = useState(null);
+  const requests = db.treeRequests || [];
+  const priorityRank = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
+  const pending = requests.filter((r) => !r.completed).sort((a, b) => {
+    const pd = (priorityRank[a.priority] != null ? priorityRank[a.priority] : 2) - (priorityRank[b.priority] != null ? priorityRank[b.priority] : 2);
+    return pd !== 0 ? pd : (b.notedDate || "").localeCompare(a.notedDate || "");
+  });
+  const completedList = requests.filter((r) => r.completed).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || "")).slice(0, 50);
+  const siteLabel = (tree) => {
+    const site = tree.siteId ? db.sites.find((s) => s.id === tree.siteId) : null;
+    const cottage = tree.cottageId ? db.cottages.find((c) => c.id === tree.cottageId) : null;
+    return [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" — ") || "no location set";
+  };
+  const save = (request) => {
+    const exists = requests.some((r) => r.id === request.id);
+    const activityLog = addLog(db, actor, exists ? `Updated tree entry (${siteLabel(request)})` : `Logged a tree entry (${siteLabel(request)})`);
+    persist({ ...db, activityLog });
+    saveTreeRequest(request);
+    setModal(null);
+  };
+  const remove = (id) => {
+    const request = requests.find((r) => r.id === id);
+    const activityLog = addLog(db, actor, `Removed tree entry (${siteLabel(request || {})}) (moved to trash)`);
+    const entry = { id: uid(), type: "treeRequest", data: request, label: `Tree — ${siteLabel(request || {})}`, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
+    deleteTreeRequest(id);
+    confirm.clear();
+  };
+  const setStage = (tree, stage) => {
+    saveTreeRequest({ ...tree, stage });
+  };
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Trees"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Tree work spotted by staff or reported by customers — track it here, then create a work order when it's ready to schedule.")), /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap" }, "+ New Tree Entry"));
+  const pendingSection = /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Pending (", pending.length, ")"), pending.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No trees logged right now." }) : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((tree) => /* @__PURE__ */ React.createElement(TreeRow, {
+    key: tree.id,
+    tree,
+    db,
+    onEdit: (t) => setModal({ mode: "edit", data: t }),
+    onDelete: (id) => confirm.ask(id),
+    onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null,
+    onSetStage: setStage,
+    onViewWorkOrder: (t) => setViewingWO((db.workOrders || []).find((w) => w.id === t.workOrderId))
+  }))));
+  const completedSection = completedList.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Recently Completed"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, completedList.map((tree) => /* @__PURE__ */ React.createElement("div", { key: tree.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-white px-4 py-2.5 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 truncate" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, siteLabel(tree)), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " — ", tree.description), tree.workOrderId && /* @__PURE__ */ React.createElement("button", { onClick: () => setViewingWO((db.workOrders || []).find((w) => w.id === tree.workOrderId)), className: "ml-2 text-xs font-semibold text-[#B8752F] hover:underline whitespace-nowrap" }, "View Work Order")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap flex-shrink-0" }, tree.completedDate)))));
+  const modalEl = modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Tree Entry" : "Edit Tree Entry", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(TreeRequestForm, { initial: modal.data, db, onSave: save, onCancel: () => setModal(null) }));
+  const creatingModal = creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
+    db,
+    saveWorkOrder: (wo) => {
+      saveWorkOrder(wo);
+      saveTreeRequest({ ...creatingFrom, completed: true, completedDate: todayISO(), workOrderId: wo.id, stage: creatingFrom.stage === "Hire Out" ? "Hire Out" : "QIC Job" });
+    },
+    onClose: () => setCreatingFrom(null),
+    initial: {
+      title: `Tree work — ${siteLabel(creatingFrom || {})}`,
+      description: (creatingFrom == null ? void 0 : creatingFrom.description) || "",
+      priority: (creatingFrom == null ? void 0 : creatingFrom.priority) || "Medium",
+      workGroup: "Tree Work",
+      siteId: (creatingFrom == null ? void 0 : creatingFrom.siteId) || null,
+      cottageId: (creatingFrom == null ? void 0 : creatingFrom.cottageId) || null,
+      customerId: (creatingFrom == null ? void 0 : creatingFrom.customerId) || null
+    }
+  });
+  const viewModal = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" });
+  return /* @__PURE__ */ React.createElement("div", null, header, pendingSection, completedSection, modalEl, creatingModal, viewModal, confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
+    label: "this tree entry",
+    onConfirm: () => remove(confirm.target),
+    onCancel: confirm.clear
+  }));
+}
+
 function GeneralServiceMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
   const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
@@ -13063,6 +13309,7 @@ function SystemHealthView({ db, persist }) {
     { label: "Consignment Listings", count: (db.consignmentListings || []).length },
     { label: "Sunspace Orders", count: (db.sunspaceOrders || []).length },
     { label: "Winterizing Requests", count: (db.winterizingRequests || []).length },
+    { label: "Tree Entries", count: (db.treeRequests || []).length },
     { label: "Hydro Readings", count: (db.hydroReadings || []).length },
     { label: "Activity Log Entries", count: (db.activityLog || []).length }
   ];
@@ -13173,13 +13420,14 @@ function CorrespondenceRow({ item, customer, active, onClick, count }) {
 }
 // TODO(design-handoff): who owns a failed send, and what happens at the monthly Zoho task
 // ceiling, are open decisions the handoff flags explicitly — not resolved here.
-function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveCottage }) {
+function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }) {
   const [selectedId, setSelectedId] = useState(null);
   const [viewCustomerId, setViewCustomerId] = useState(null);
   const [composePickerOpen, setComposePickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [creatingPropaneFrom, setCreatingPropaneFrom] = useState(null);
+  const [creatingTreeFrom, setCreatingTreeFrom] = useState(null);
   const [linking, setLinking] = useState(false);
   const [pendingCustomer, setPendingCustomer] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
@@ -13275,10 +13523,10 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
   if (composePickerOpen) {
     readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-1" }, "New Message"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-2" }, "Pick a customer to start a new email thread with."), /* @__PURE__ */ React.createElement(CorrespondenceLinkPicker, { customers: db.customers, onPick: pickComposeCustomer, onCancel: () => setComposePickerOpen(false) }));
   } else if (viewCustomer) {
-    readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, viewCustomer.name), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "Matched")), selectedItem && /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "text-xs text-[#9A968D] hover:text-[#a8532a] hover:underline flex-shrink-0" }, "Delete this email")), linkedWorkOrders.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#9A968D] font-semibold" }, "Work Orders:"), linkedWorkOrders.map((wo) => /* @__PURE__ */ React.createElement("button", { key: wo.id, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-0.5 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4]" }, wo.title))), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer: viewCustomer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, onReply: setReplyTo })), /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer: viewCustomer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies }));
+    readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, viewCustomer.name), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "Matched")), selectedItem && /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "text-xs text-[#9A968D] hover:text-[#a8532a] hover:underline flex-shrink-0" }, "Delete this email")), linkedWorkOrders.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#9A968D] font-semibold" }, "Work Orders:"), linkedWorkOrders.map((wo) => /* @__PURE__ */ React.createElement("button", { key: wo.id, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-0.5 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4]" }, wo.title))), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer: viewCustomer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, onReply: setReplyTo })), /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer: viewCustomer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies }));
   } else if (selectedItem) {
     const isFYIStandalone = CorrespondenceIsFYI(selectedItem) && !overrideFYI && CorrespondenceIsNew(selectedItem);
-    readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-1" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, selectedItem.fromEmail), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a]" }, "No match"), CorrespondenceIsFYI(selectedItem) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "FYI")), selectedItem.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "↪ Forwarded by ", selectedItem.forwardedBy), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold text-[#1E1A13] mt-2" }, selectedItem.subject || "(no subject)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-2" }, selectedItem.receivedAt ? new Date(selectedItem.receivedAt).toLocaleString() : ""), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap mb-3" }, selectedItem.body), selectedItem.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F] mb-3" }, "⚡ ", selectedItem.suggestedFlag), pendingCustomer ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] mb-2" }, "Link this email to ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, pendingCustomer.name), "?"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Save ", selectedItem.fromEmail, " to their record so future emails from this address match automatically?"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleLink(pendingCustomer, true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Yes, save it"), /* @__PURE__ */ React.createElement("button", { onClick: () => handleLink(pendingCustomer, false), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Just link, don't save"), /* @__PURE__ */ React.createElement("button", { onClick: () => setPendingCustomer(null), className: "px-3 py-1.5 rounded-md text-xs text-[#75716A]" }, "Cancel"))) : linking ? /* @__PURE__ */ React.createElement(CorrespondenceLinkPicker, { customers: db.customers, onPick: setPendingCustomer, onCancel: () => setLinking(false) }) : isFYIStandalone ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setLinking(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Link"), /* @__PURE__ */ React.createElement("button", { onClick: () => markHandled(selectedItem), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "✓ Acknowledge"), /* @__PURE__ */ React.createElement("button", { onClick: () => setOverrideFYI(true), className: "text-xs text-[#9A968D] hover:underline" }, "Needs a reply?"), /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "px-3 py-1.5 rounded-md text-xs font-semibold text-[#a8532a] hover:bg-[#F5E3D9]" }, "Delete")) : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setLinking(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Link"), /* @__PURE__ */ React.createElement(CorrespondenceCreateButton, { item: selectedItem, variant: "button", onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onCreatePropane: savePropaneRequest ? setCreatingPropaneFrom : null }), CorrespondenceIsNew(selectedItem) && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => markHandled(selectedItem), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Mark Handled"), CorrespondenceIsNew(selectedItem) && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Follow up…"), snoozing && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("input", { type: "date", value: followUpDate, min: todayISO(), onChange: (e) => setFollowUpDate(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1.5" }), /* @__PURE__ */ React.createElement("button", { onClick: () => handleSnooze(selectedItem, followUpDate), disabled: !followUpDate, className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, "Snooze"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(false), className: "text-xs text-[#75716A] hover:underline" }, "Cancel")), /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "px-3 py-1.5 rounded-md text-xs font-semibold text-[#a8532a] hover:bg-[#F5E3D9]" }, "Delete")));
+    readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-1" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, selectedItem.fromEmail), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a]" }, "No match"), CorrespondenceIsFYI(selectedItem) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "FYI")), selectedItem.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "↪ Forwarded by ", selectedItem.forwardedBy), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold text-[#1E1A13] mt-2" }, selectedItem.subject || "(no subject)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-2" }, selectedItem.receivedAt ? new Date(selectedItem.receivedAt).toLocaleString() : ""), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap mb-3" }, selectedItem.body), selectedItem.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F] mb-3" }, "⚡ ", selectedItem.suggestedFlag), pendingCustomer ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] mb-2" }, "Link this email to ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, pendingCustomer.name), "?"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Save ", selectedItem.fromEmail, " to their record so future emails from this address match automatically?"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleLink(pendingCustomer, true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Yes, save it"), /* @__PURE__ */ React.createElement("button", { onClick: () => handleLink(pendingCustomer, false), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Just link, don't save"), /* @__PURE__ */ React.createElement("button", { onClick: () => setPendingCustomer(null), className: "px-3 py-1.5 rounded-md text-xs text-[#75716A]" }, "Cancel"))) : linking ? /* @__PURE__ */ React.createElement(CorrespondenceLinkPicker, { customers: db.customers, onPick: setPendingCustomer, onCancel: () => setLinking(false) }) : isFYIStandalone ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setLinking(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Link"), /* @__PURE__ */ React.createElement("button", { onClick: () => markHandled(selectedItem), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "✓ Acknowledge"), /* @__PURE__ */ React.createElement("button", { onClick: () => setOverrideFYI(true), className: "text-xs text-[#9A968D] hover:underline" }, "Needs a reply?"), /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "px-3 py-1.5 rounded-md text-xs font-semibold text-[#a8532a] hover:bg-[#F5E3D9]" }, "Delete")) : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setLinking(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Link"), /* @__PURE__ */ React.createElement(CorrespondenceCreateButton, { item: selectedItem, variant: "button", onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onCreatePropane: savePropaneRequest ? setCreatingPropaneFrom : null, onCreateTree: saveTreeRequest ? setCreatingTreeFrom : null }), CorrespondenceIsNew(selectedItem) && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => markHandled(selectedItem), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Mark Handled"), CorrespondenceIsNew(selectedItem) && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Follow up…"), snoozing && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("input", { type: "date", value: followUpDate, min: todayISO(), onChange: (e) => setFollowUpDate(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1.5" }), /* @__PURE__ */ React.createElement("button", { onClick: () => handleSnooze(selectedItem, followUpDate), disabled: !followUpDate, className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, "Snooze"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(false), className: "text-xs text-[#75716A] hover:underline" }, "Cancel")), /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "px-3 py-1.5 rounded-md text-xs font-semibold text-[#a8532a] hover:bg-[#F5E3D9]" }, "Delete")));
   } else {
     readingPane = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-center h-full text-sm text-[#9A968D] italic p-5" }, "Select a message to read it here.");
   }
@@ -13312,6 +13560,17 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
       notes: creatingPropaneFrom.body || "",
       ...correspondenceWorkOrderPrefill(db, creatingPropaneFrom.customerId)
     }
+  }), creatingTreeFrom && saveTreeRequest && /* @__PURE__ */ React.createElement(QuickTreeRequestModal, {
+    db,
+    saveTreeRequest: (request) => {
+      saveTreeRequest(request);
+      saveCorrespondence({ ...creatingTreeFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString() });
+    },
+    onClose: () => setCreatingTreeFrom(null),
+    initial: {
+      description: creatingTreeFrom.body || "",
+      ...correspondenceWorkOrderPrefill(db, creatingTreeFrom.customerId)
+    }
   }), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" }), deleteConfirmId && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
     message: "Delete this email? It'll be removed from correspondence.",
     onConfirm: confirmDelete,
@@ -13324,6 +13583,7 @@ const TABS = [
   { key: "workorders", label: "Work Orders", group: "service" },
   { key: "invoices", label: "Invoices", group: "service" },
   { key: "propane", label: "Propane", group: "service" },
+  { key: "trees", label: "Trees", group: "service" },
   { key: "parts", label: "Parts", group: "service" },
   { key: "sites", label: "Sites", group: "service" },
   { key: "customers", label: "Customers", group: "service" },
@@ -13358,7 +13618,7 @@ const SERVICE_NAV_GROUPS = [
   { label: "Today", items: ["dashboard", "workorders", "correspondence", "generalservice", "servicereports", "calendar"] },
   { label: "Money", items: ["quotes", "invoices"] },
   { label: "The Park", items: ["sites", "customers", "cottages", "map"] },
-  { label: "Seasonal", items: ["propane", "winterizing", "hydro", "parts"] }
+  { label: "Seasonal", items: ["propane", "trees", "winterizing", "hydro", "parts"] }
 ];
 const ADMIN_NAV_GROUPS = [
   { label: "Overview", items: ["admindashboard", "adminreports"] },
@@ -13433,6 +13693,10 @@ const NAV_ICON_SHAPES = {
   propane: [
     React.createElement("path", { key: "a", d: "M7 21h10V8a3 3 0 0 0-3-3h-4a3 3 0 0 0-3 3z" }),
     React.createElement("path", { key: "b", d: "M10 5V3h4v2M7 12h10" })
+  ],
+  trees: [
+    React.createElement("path", { key: "a", d: "M12 3l5 8h-3l4 7H6l4-7H7z" }),
+    React.createElement("path", { key: "b", d: "M12 18v3" })
   ],
   winterizing: [
     React.createElement("path", { key: "a", d: "M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11" })
@@ -15768,7 +16032,7 @@ function AdminApp({ db, persist, actor, saveSite, bulkWriteSites, onSignOut }) {
   );
 }
 function AppContent() {
-  const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
+  const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveTreeRequest, deleteTreeRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
   const isMobileViewport = useIsMobile();
   const [fieldModeOverride, setFieldModeOverride] = useState(
     () => typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mode") : null
@@ -15965,6 +16229,7 @@ function AppContent() {
       const next = { ...emptyDb(), ...importPending };
       next.activityLog = addLog(next, actor, "Restored data from a backup file");
       const importedPropane = next.propaneRequests || [];
+      const importedTrees = next.treeRequests || [];
       const importedWinterizing = next.winterizingRequests || [];
       const importedWorkOrders = next.workOrders || [];
       const importedCustomers = next.customers || [];
@@ -15975,9 +16240,10 @@ function AppContent() {
       const importedCottages = next.cottages || [];
       persist(next);
       try {
-        const [existingPropaneSnap, existingWinterizingSnap, existingWorkOrdersSnap, existingCustomersSnap, existingQuotesSnap, existingInvoicesSnap, existingCorrespondenceSnap, existingSitesSnap, existingCottagesSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get(), CUSTOMERS_REF.get(), QUOTES_REF.get(), INVOICES_REF.get(), CORRESPONDENCE_REF.get(), SITES_REF.get(), COTTAGES_REF.get()]);
+        const [existingPropaneSnap, existingTreesSnap, existingWinterizingSnap, existingWorkOrdersSnap, existingCustomersSnap, existingQuotesSnap, existingInvoicesSnap, existingCorrespondenceSnap, existingSitesSnap, existingCottagesSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), TREE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get(), CUSTOMERS_REF.get(), QUOTES_REF.get(), INVOICES_REF.get(), CORRESPONDENCE_REF.get(), SITES_REF.get(), COTTAGES_REF.get()]);
         const ops = [];
         existingPropaneSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
+        existingTreesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingWinterizingSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingWorkOrdersSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingCustomersSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
@@ -15987,6 +16253,7 @@ function AppContent() {
         existingSitesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         existingCottagesSnap.forEach((d) => ops.push({ type: "delete", ref: d.ref }));
         importedPropane.forEach((r) => ops.push({ type: "set", ref: PROPANE_REQUESTS_REF.doc(r.id || uid()), data: r }));
+        importedTrees.forEach((r) => ops.push({ type: "set", ref: TREE_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWinterizing.forEach((r) => ops.push({ type: "set", ref: WINTERIZING_REQUESTS_REF.doc(r.id || uid()), data: r }));
         importedWorkOrders.forEach((w) => ops.push({ type: "set", ref: WORK_ORDERS_REF.doc(w.id || uid()), data: w }));
         importedCustomers.forEach((c) => ops.push({ type: "set", ref: CUSTOMERS_REF.doc(c.id || uid()), data: c }));
@@ -16190,7 +16457,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
@@ -16205,7 +16472,7 @@ function AppContent() {
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) })));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) })));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
