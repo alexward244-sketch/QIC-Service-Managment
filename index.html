@@ -4000,12 +4000,26 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
   const [viewingWO, setViewingWO] = useState(null);
   const [viewingCottageId, setViewingCottageId] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
+  const [activeTab, setActiveTab] = useState("workorders");
   if (!customer) return null;
   const siteIds = customerSiteIds(customer);
   const linkedSites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
   const cottages = db.cottages.filter((c) => siteIds.includes(c.siteId));
   const workOrders = db.workOrders.filter((w) => w.customerId === customer.id || siteIds.includes(w.siteId));
   const quotes = db.quotes.filter((q) => q.customerId === customer.id);
+  const invoices = db.invoices.filter((inv) => inv.customerId === customer.id || siteIds.includes(inv.siteId));
+  const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const invoiceStats = invoices.map((inv) => {
+    const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
+    const { total } = computeQuoteTotals(inv, effectiveTaxRate);
+    const status = invoiceStatus(inv, effectiveTaxRate);
+    return { inv, total, status, balance: total - (Number(inv.depositAmount) || 0) };
+  });
+  const totalInvoiced = invoiceStats.reduce((sum, s) => sum + s.total, 0);
+  const outstanding = invoiceStats.filter((s) => s.status !== "Paid").reduce((sum, s) => sum + s.balance, 0);
+  const openJobs = workOrders.filter((w) => w.status !== "Completed").length;
+  const nameParts = customer.name.trim().split(/\s+/).filter(Boolean);
+  const initials = nameParts.length > 1 ? (nameParts[0][0] + nameParts[nameParts.length - 1][0]).toUpperCase() : (nameParts[0] || "?").slice(0, 2).toUpperCase();
   const isDrawer = variant === "drawer" && !nested;
   const Wrap = isDrawer ? DrawerShell : Modal;
   const wrapProps = isDrawer ? { title: customer.name, eyebrow: "Customer", onClose, width: "min(1400px, 96vw)" } : { title: customer.name, onClose, wide: true };
@@ -4025,6 +4039,10 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
   }));
   const workOrdersSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this customer." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) })));
   const quotesSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this customer." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status))));
+  const invoicesSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Invoices", empty: "No invoices for this customer." }, invoiceStats.map(({ inv, total, status }) => {
+    const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
+    return /* @__PURE__ */ React.createElement("div", { key: inv.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, `Invoice #${inv.invoiceNumber || ""}`), /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, status)));
+  }));
   const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { customer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder, onReply: setReplyTo }));
   const footer = /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !nested && /* @__PURE__ */ React.createElement(
     "button",
@@ -4034,19 +4052,51 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveCorresp
     },
     "Edit Customer"
   ));
+  const TABS = [
+    { key: "workorders", label: "Work Orders", count: workOrders.length, content: workOrdersSection },
+    { key: "quotes", label: "Quotes", count: quotes.length, content: quotesSection },
+    { key: "invoices", label: "Invoices", count: invoices.length, content: invoicesSection },
+    { key: "correspondence", label: "Correspondence", count: null, content: correspondenceSection }
+  ];
+  const statTile = (label, value, tone) => /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 sm:px-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, label), /* @__PURE__ */ React.createElement("div", { className: `text-lg font-semibold ${tone || "text-[#1E1A13]"}` }, value));
   const body = isDrawer ? /* @__PURE__ */ React.createElement(
     "div",
     null,
     /* @__PURE__ */ React.createElement(
       "div",
-      { className: "grid gap-6 mb-6 pb-6 border-b border-[#EEEBE5]", style: { gridTemplateColumns: "300px repeat(3, minmax(0,1fr))" } },
-      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, contactInfo),
-      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, cottagesSection),
-      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, workOrdersSection),
-      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, quotesSection)
+      { className: "flex items-start gap-4 pb-5 mb-5 border-b border-[#EEEBE5]" },
+      /* @__PURE__ */ React.createElement("div", { className: "w-14 h-14 rounded-full bg-[#DDF1E1] text-[#28633C] flex items-center justify-center font-bold text-lg flex-shrink-0" }, initials),
+      /* @__PURE__ */ React.createElement("div", { className: "min-w-0 text-sm text-[#75716A] flex flex-wrap gap-x-3 gap-y-0.5 mt-1" }, customer.phone && /* @__PURE__ */ React.createElement("span", null, customer.phone), customer.email && /* @__PURE__ */ React.createElement("span", null, customer.email), /* @__PURE__ */ React.createElement("span", null, linkedSites.length ? `Site${linkedSites.length > 1 ? "s" : ""} ${linkedSites.map((s) => s.number).join(", ")}` : "Unassigned"))
     ),
-    correspondenceSection
-  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, contactInfo, cottagesSection, workOrdersSection, quotesSection, correspondenceSection);
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "grid grid-cols-2 sm:grid-cols-4 divide-x divide-[#EEEBE5] border border-[#EEEBE5] rounded-lg mb-6" },
+      statTile("Total Invoiced", formatPrice(totalInvoiced)),
+      statTile("Outstanding", formatPrice(outstanding), outstanding > 0 ? "text-[#C1652F]" : "text-[#1E1A13]"),
+      statTile("Open Jobs", openJobs),
+      statTile("Sites", linkedSites.length)
+    ),
+    /* @__PURE__ */ React.createElement(
+      "div",
+      { className: "grid gap-6", style: { gridTemplateColumns: "240px minmax(0,1fr)" } },
+      /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, contactInfo, cottagesSection),
+      /* @__PURE__ */ React.createElement(
+        "div",
+        { className: "min-w-0" },
+        /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-5 border-b border-[#EEEBE5] mb-4 overflow-x-auto" }, TABS.map((t) => /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            key: t.key,
+            onClick: () => setActiveTab(t.key),
+            className: `pb-2.5 text-sm font-semibold whitespace-nowrap border-b-2 -mb-px transition ${activeTab === t.key ? "border-[#377249] text-[#377249]" : "border-transparent text-[#75716A] hover:text-[#1E1A13]"}`
+          },
+          t.label,
+          t.count != null && /* @__PURE__ */ React.createElement("span", { className: "ml-1 text-xs font-normal text-[#9A968D]" }, t.count)
+        ))),
+        (TABS.find((t) => t.key === activeTab) || TABS[0]).content
+      )
+    )
+  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, contactInfo, cottagesSection, workOrdersSection, quotesSection, invoicesSection, correspondenceSection);
   return /* @__PURE__ */ React.createElement(Wrap, wrapProps, body, footer, viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, onClose: () => setViewingWO(null), variant: "drawer" }), viewingCottageId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
