@@ -399,16 +399,27 @@ const STAFF_STATUS_DOT = {
   "Off Duty": "bg-[#9A968D]"
 };
 const RATE_OPTIONS = [
-  { label: "Service Tech", rate: 110, account: "4037" },
-  { label: "Labour Tech", rate: 65, account: "4035" },
-  { label: "Warranty", rate: 0, account: "" },
-  { label: "N/A", rate: 0, account: "" }
+  { id: "rate-service-tech", label: "Service Tech", rate: 110, account: "4037" },
+  { id: "rate-labour-tech", label: "Labour Tech", rate: 65, account: "4035" },
+  { id: "rate-warranty", label: "Warranty", rate: 0, account: "" },
+  { id: "rate-na", label: "N/A", rate: 0, account: "" }
 ];
 const SERVICE_CALL_OPTIONS = [
-  { label: "Tech", rate: 70 },
-  { label: "General", rate: 50 },
-  { label: "None", rate: 0 }
+  { id: "call-tech", label: "Tech", rate: 70 },
+  { id: "call-general", label: "General", rate: 50 },
+  { id: "call-none", label: "None", rate: 0 }
 ];
+// Rate tables are editable from Settings > Labour & Service Rates (stored on
+// db.settings) but fall back to the shipped defaults above until someone
+// customizes them, so existing data never breaks.
+function getLaborRateOptions(db) {
+  const opts = db.settings && db.settings.laborRateOptions;
+  return opts && opts.length ? opts : RATE_OPTIONS;
+}
+function getServiceCallOptions(db) {
+  const opts = db.settings && db.settings.serviceCallOptions;
+  return opts && opts.length ? opts : SERVICE_CALL_OPTIONS;
+}
 const SECTION_ORDER = ["Pebble Beach Seasonal", "Original Park Seasonal", "Limestone South", "4 Season", "Original Park 4 Season"];
 const PAYMENT_STATUS = [
   { value: "Paid", label: "Paid" },
@@ -3802,6 +3813,7 @@ function QuickWorkOrderModal({ db, initial, saveWorkOrder, onClose }) {
     templates: db.workOrderTemplates,
     taxRate,
     workOrders: db.workOrders,
+    rateOptions: getLaborRateOptions(db),
     onSave: save,
     onCancel: onClose,
     onDirtyChange: () => {
@@ -4323,7 +4335,7 @@ function PaymentInstructionsControl({ db, persist }) {
   ));
 }
 
-function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber, taxRate, onSave, onCancel }) {
+function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber, taxRate, rateOptions, serviceCallOptions, onSave, onCancel }) {
   var _a, _b, _c, _d;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || todayISO());
@@ -4394,10 +4406,10 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
     if (!part) return;
     setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id }]);
   };
-  const laborRateOption = RATE_OPTIONS.find((r) => r.label === laborRateType);
+  const laborRateOption = rateOptions.find((r) => r.label === laborRateType);
   const laborRate = laborRateOption ? laborRateOption.rate : 0;
   const laborAccount = laborRateOption ? laborRateOption.account : "";
-  const serviceCallOption = SERVICE_CALL_OPTIONS.find((s) => s.label === serviceCallType);
+  const serviceCallOption = serviceCallOptions.find((s) => s.label === serviceCallType);
   const serviceCall = serviceCallOption ? serviceCallOption.rate : 0;
   const totalsInput = { lineItems, laborHours, laborRate, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount, serviceCall };
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals(totalsInput, taxRate);
@@ -4517,7 +4529,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
     value: laborHours,
     onChange: (e) => setLaborHours(e.target.value),
     placeholder: "0"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", {
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", {
     type: "button",
     onClick: () => setShopSuppliesMode("percent"),
     className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]")
@@ -4541,7 +4553,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
     value: shopSuppliesAmount,
     onChange: (e) => setShopSuppliesAmount(e.target.value),
     placeholder: "0.00"
-  }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, SERVICE_CALL_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")")))))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
+  }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")")))))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
     step: "0.01",
@@ -4819,6 +4831,8 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     parts: db.parts,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
+    rateOptions: getLaborRateOptions(db),
+    serviceCallOptions: getServiceCallOptions(db),
     onSave: save,
     onCancel: () => setModal(null)
   })) : null;
@@ -4899,7 +4913,7 @@ function PartsView({ db, persist }) {
       value: filter,
       onChange: (e) => setFilter(e.target.value)
     }
-  ), /* @__PURE__ */ React.createElement(TaxRateControl, { db, persist }), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
@@ -5502,6 +5516,8 @@ function QuotesView({ db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoTo
       taxRate,
       defaultShopSuppliesPercent: (_d = (_c = db.settings) == null ? void 0 : _c.shopSuppliesPercent) != null ? _d : 5,
       templates: db.quoteTemplates,
+      rateOptions: getLaborRateOptions(db),
+      serviceCallOptions: getServiceCallOptions(db),
       onSave: save,
       onCancel: requestCloseModal,
       onDirtyChange: (d) => {
@@ -5597,7 +5613,7 @@ function QuotesView({ db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoTo
     onCancel: () => setSendConfirm(null)
   }), templatesOpen && /* @__PURE__ */ React.createElement(QuoteTemplatesModal, { db, persist, onClose: () => setTemplatesOpen(false) }));
 }
-function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate, defaultShopSuppliesPercent, templates, onSave, onCancel, onDirtyChange }) {
+function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate, defaultShopSuppliesPercent, templates, rateOptions, serviceCallOptions, onSave, onCancel, onDirtyChange }) {
   var _a, _b, _c, _d, _e, _f, _g, _h;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
@@ -5612,7 +5628,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const [templateId, setTemplateId] = useState("");
   const [laborHours, setLaborHours] = useState((_b = initial == null ? void 0 : initial.laborHours) != null ? _b : "");
   const [laborRateType, setLaborRateType] = useState(
-    (initial == null ? void 0 : initial.laborRateType) || ((_c = RATE_OPTIONS.find((r) => r.rate === (initial == null ? void 0 : initial.laborRate))) == null ? void 0 : _c.label) || "N/A"
+    (initial == null ? void 0 : initial.laborRateType) || ((_c = rateOptions.find((r) => r.rate === (initial == null ? void 0 : initial.laborRate))) == null ? void 0 : _c.label) || "N/A"
   );
   const [shopSuppliesMode, setShopSuppliesMode] = useState((initial == null ? void 0 : initial.shopSuppliesMode) || "percent");
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_e = (_d = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _d : defaultShopSuppliesPercent) != null ? _e : 5);
@@ -5650,7 +5666,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     setCommentText("");
   };
   const isDuplicate = title.trim() && (quotes || []).some((q) => q.id !== (initial == null ? void 0 : initial.id) && q.title.trim().toLowerCase() === title.trim().toLowerCase());
-  const laborRate = (_h = (_g = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : RATE_OPTIONS[1].rate;
+  const laborRate = (_h = (_g = rateOptions.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : rateOptions[1].rate;
   const handleSiteChange = (val) => {
     setSiteId(val);
     if (val) {
@@ -5697,7 +5713,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const lineItemsSubtotal = lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const laborCost = (Number(laborHours) || 0) * laborRate;
   const shopSupplies = shopSuppliesMode === "flat" ? Number(shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(shopSuppliesPercent) || 0) / 100);
-  const serviceCallOption = SERVICE_CALL_OPTIONS.find((s) => s.label === serviceCallType);
+  const serviceCallOption = serviceCallOptions.find((s) => s.label === serviceCallType);
   const serviceCallAmt = serviceCallOption ? serviceCallOption.rate : 0;
   const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCallAmt;
   const tax = subtotal * (taxRate / 100);
@@ -5839,7 +5855,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       onChange: (e) => setLaborHours(e.target.value),
       placeholder: "0"
     }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -5880,7 +5896,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   ))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement(
     "select",
     { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) },
-    SERVICE_CALL_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))
+    serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))
   )))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
 }
 
@@ -7870,7 +7886,7 @@ function ConsignmentListingsView({ db, persist }) {
       value: filter,
       onChange: (e) => setFilter(e.target.value)
     }
-  ), /* @__PURE__ */ React.createElement(CommissionRateControl, { db, persist }))), db.consignmentListings.length === 0 ? /* @__PURE__ */ React.createElement(
+  ))), db.consignmentListings.length === 0 ? /* @__PURE__ */ React.createElement(
     EmptyState,
     {
       text: "No listings yet.",
@@ -9709,7 +9725,7 @@ function QuoteTemplatesModal({ db, persist, onClose }) {
     persist({ ...trashItem({ ...db, quoteTemplates: templates }, "quoteTemplate", tpl, (_b2 = tpl == null ? void 0 : tpl.name) != null ? _b2 : "Template"), activityLog });
     confirm.clear();
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Quote Templates", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Save a common estimate once, then start new quotes from it instead of typing the same line items every time."), templates.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No templates saved yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, templates.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, t.name), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, t.title, (t.lineItems || []).length > 0 ? ` \xB7 ${t.lineItems.length} line item${t.lineItems.length === 1 ? "" : "s"}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setFormOpen({ mode: "edit", data: t }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(t.id) }, "Delete"))))), formOpen ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement(QuoteTemplateForm, { initial: formOpen.data, parts: db.parts, onSave: save, onCancel: () => setFormOpen(null) })) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFormOpen({ mode: "new" }), className: "text-sm text-[#377249] hover:underline font-medium" }, "+ Add template"), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")), confirm.target && /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Quote Templates", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Save a common estimate once, then start new quotes from it instead of typing the same line items every time."), templates.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No templates saved yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, templates.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, t.name), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, t.title, (t.lineItems || []).length > 0 ? ` \xB7 ${t.lineItems.length} line item${t.lineItems.length === 1 ? "" : "s"}` : "")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setFormOpen({ mode: "edit", data: t }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(t.id) }, "Delete"))))), formOpen ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement(QuoteTemplateForm, { initial: formOpen.data, parts: db.parts, rateOptions: getLaborRateOptions(db), serviceCallOptions: getServiceCallOptions(db), onSave: save, onCancel: () => setFormOpen(null) })) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFormOpen({ mode: "new" }), className: "text-sm text-[#377249] hover:underline font-medium" }, "+ Add template"), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")), confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = templates.find((t) => t.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this template",
@@ -9718,7 +9734,7 @@ function QuoteTemplatesModal({ db, persist, onClose }) {
     }
   ));
 }
-function QuoteTemplateForm({ initial, parts, onSave, onCancel }) {
+function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, onSave, onCancel }) {
   const [name, setName] = useState((initial == null ? void 0 : initial.name) || "");
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
@@ -9770,7 +9786,7 @@ function QuoteTemplateForm({ initial, parts, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Standard Gas Test", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Quote Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created quote is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Labor Hours" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: laborHours, onChange: (e) => setLaborHours(e.target.value), placeholder: "0" })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("percent"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "%"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("flat"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "flat" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "$")), shopSuppliesMode === "percent" ? /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.1", className: inputCls, value: shopSuppliesPercent, onChange: (e) => setShopSuppliesPercent(e.target.value), placeholder: "0" }) : /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: shopSuppliesAmount, onChange: (e) => setShopSuppliesAmount(e.target.value), placeholder: "0.00" }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, SERVICE_CALL_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Default notes shown on the quote" })), /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement("input", {
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Standard Gas Test", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Quote Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created quote is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Labor Hours" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: laborHours, onChange: (e) => setLaborHours(e.target.value), placeholder: "0" })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("percent"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "%"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("flat"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "flat" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "$")), shopSuppliesMode === "percent" ? /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.1", className: inputCls, value: shopSuppliesPercent, onChange: (e) => setShopSuppliesPercent(e.target.value), placeholder: "0" }) : /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: shopSuppliesAmount, onChange: (e) => setShopSuppliesAmount(e.target.value), placeholder: "0.00" }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Default notes shown on the quote" })), /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " flex-1",
     value: li.description,
     onChange: (e) => updateLine(li.id, "description", e.target.value),
@@ -9809,7 +9825,7 @@ function QuoteTemplateForm({ initial, parts, onSave, onCancel }) {
     placeholder: "Add from parts\u2026"
   })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Template")));
 }
-function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, workOrders, onSave, onCancel, onDirtyChange }) {
+function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, workOrders, rateOptions, onSave, onCancel, onDirtyChange }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
@@ -9897,7 +9913,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
     }
     if (onDirtyChange) onDirtyChange(true);
   }, [title, description, siteId, cottageId, customerId, assignedTo, status, priority, workGroup, date, partsUsed, laborHours, laborRateType, paymentStatus]);
-  const laborRate = (_c = (_b = RATE_OPTIONS.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : RATE_OPTIONS[1].rate;
+  const laborRate = (_c = (_b = rateOptions.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : rateOptions[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
   const relatedCandidates = (workOrders || []).filter((w) => {
     if (initial && w.id === initial.id) return false;
@@ -10039,7 +10055,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: (e) => setLaborHours(e.target.value),
       placeholder: "0"
     }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, RATE_OPTIONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labour cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labour cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
     const part = parts.find((p) => p.id === pu.partId);
     const partPrice = (Number(part == null ? void 0 : part.price) || 0) * (1 + (Number(taxRate) || 0) / 100);
     const lineTotal = partPrice * (Number(pu.quantity) || 0);
@@ -12433,7 +12449,7 @@ function HydroReviewView({ db, persist }) {
     setPendingConfirm(null);
     setToast(`Confirmed and invoiced site ${site.number}`);
   };
-  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#B5432E] font-semibold" }, "Hydro Meter Review"), /* @__PURE__ */ React.createElement(HydroRateControl, { db, persist })), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#B5432E] font-semibold" }, "Hydro Meter Review")), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
     const site = db.sites.find((s) => s.id === r.siteId);
     const owner = getSiteOwner(db, r.siteId);
     return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm });
@@ -12562,7 +12578,7 @@ function SeasonalFeeHistoryDrawer({ site, db, onUpdate, onClose }) {
     return /* @__PURE__ */ React.createElement("div", { key: h.date, className: "flex items-center justify-between text-sm px-3 py-2 rounded-lg bg-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, h.date), /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, React.createElement(Money, { value: h.amount })), pct != null && /* @__PURE__ */ React.createElement("span", { className: `text-xs font-semibold ${pct >= 0 ? "text-[#28633C]" : "text-[#a8532a]"}` }, pct >= 0 ? "+" : "", pct.toFixed(1), "%"));
   })))));
 }
-function SeasonalFeesView({ db, persist, saveSite, bulkWriteSites }) {
+function SiteFeesPane({ db, persist, saveSite, bulkWriteSites }) {
   const actor = useCurrentActor();
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(/* @__PURE__ */ new Set());
@@ -12669,7 +12685,7 @@ function SeasonalFeesView({ db, persist, saveSite, bulkWriteSites }) {
     setBulkImportOpen(false);
     setToast(`Imported lot fees for ${rows.length} site(s)`);
   };
-  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "Seasonal Fees", subtitle: "Per-site rates, with full history for every change.", action: /* @__PURE__ */ React.createElement("button", { onClick: () => setBulkImportOpen(true), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Bulk Import from Spreadsheet") }), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Sites with a fee set", value: `${sitesWithFee.length} / ${sites.length}` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Current monthly revenue", value: React.createElement(Money, { value: totalMonthly }) }), /* @__PURE__ */ React.createElement(StatCard, { label: "Current annualized rate", value: React.createElement(Money, { value: totalAnnual }) }), /* @__PURE__ */ React.createElement(StatCard, { label: "Avg Year-over-Year Change", value: avgYoy != null ? `${avgYoy >= 0 ? "+" : ""}${avgYoy.toFixed(1)}%` : "—", tone: avgYoy == null ? "" : avgYoy >= 0 ? "text-[#28633C]" : "text-[#a8532a]" })), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-[#1E1A13]" }, selected.size, " selected"), /* @__PURE__ */ React.createElement("button", { onClick: selectAllFiltered, className: "text-xs text-[#377249] hover:underline font-medium" }, "Select all shown"), /* @__PURE__ */ React.createElement("button", { onClick: clearSelection, className: "text-xs text-[#75716A] hover:underline font-medium" }, "Clear selection")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Set fee for selected: $", /* @__PURE__ */ React.createElement("input", { type: "number", value: bulkAmount, onChange: (e) => setBulkAmount(e.target.value), className: "ml-2 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: bulkEffectiveDate, onChange: (e) => setBulkEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), /* @__PURE__ */ React.createElement("button", { onClick: applyBulkSet, disabled: selected.size === 0, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Apply to selected")), /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Annual increase (applies to selected sites, or all sites with a fee if none selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by ", /* @__PURE__ */ React.createElement("input", { type: "number", value: increasePct, onChange: (e) => setIncreasePct(e.target.value), className: "mx-2 w-16 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "%"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("pct"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply % increase"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "or"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by $", /* @__PURE__ */ React.createElement("input", { type: "number", value: increaseFlat, onChange: (e) => setIncreaseFlat(e.target.value), className: "mx-2 w-20 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("flat"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply $ increase"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium ml-2" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: increaseEffectiveDate, onChange: (e) => setIncreaseEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }))))), /* @__PURE__ */ React.createElement("input", { type: "text", value: filter, onChange: (e) => setFilter(e.target.value), placeholder: "Search by site #, section, tag, or customer name\u2026", className: "w-full mb-2 border border-[#E2DED5] rounded-lg px-3 py-2 text-sm bg-white" }), allTags.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] font-medium" }, "Select by tag:"), allTags.map((tag) => /* @__PURE__ */ React.createElement("button", { key: tag, onClick: () => selectByTag(tag), className: "px-2.5 py-1 rounded-full text-xs font-medium bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, tag))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-8" }), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Tags"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Current Fee"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "YoY Change"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Upcoming Change"))), /* @__PURE__ */ React.createElement("tbody", null, groupedFilteredSites.flatMap(({ key, groupSites }) => [
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 flex-wrap mb-4" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13]" }, "Site Fees"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, "Search, select, and bulk-edit rates for every site.")), /* @__PURE__ */ React.createElement("button", { onClick: () => setBulkImportOpen(true), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white flex-shrink-0" }, "Bulk Import from Spreadsheet")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Sites with a fee set", value: `${sitesWithFee.length} / ${sites.length}` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Current monthly revenue", value: React.createElement(Money, { value: totalMonthly }) }), /* @__PURE__ */ React.createElement(StatCard, { label: "Current annualized rate", value: React.createElement(Money, { value: totalAnnual }) }), /* @__PURE__ */ React.createElement(StatCard, { label: "Avg Year-over-Year Change", value: avgYoy != null ? `${avgYoy >= 0 ? "+" : ""}${avgYoy.toFixed(1)}%` : "—", tone: avgYoy == null ? "" : avgYoy >= 0 ? "text-[#28633C]" : "text-[#a8532a]" })), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-5 space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-semibold text-[#1E1A13]" }, selected.size, " selected"), /* @__PURE__ */ React.createElement("button", { onClick: selectAllFiltered, className: "text-xs text-[#377249] hover:underline font-medium" }, "Select all shown"), /* @__PURE__ */ React.createElement("button", { onClick: clearSelection, className: "text-xs text-[#75716A] hover:underline font-medium" }, "Clear selection")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Set fee for selected: $", /* @__PURE__ */ React.createElement("input", { type: "number", value: bulkAmount, onChange: (e) => setBulkAmount(e.target.value), className: "ml-2 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: bulkEffectiveDate, onChange: (e) => setBulkEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), /* @__PURE__ */ React.createElement("button", { onClick: applyBulkSet, disabled: selected.size === 0, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Apply to selected")), /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold text-[#1E1A13] mb-2" }, "Annual increase (applies to selected sites, or all sites with a fee if none selected)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by ", /* @__PURE__ */ React.createElement("input", { type: "number", value: increasePct, onChange: (e) => setIncreasePct(e.target.value), className: "mx-2 w-16 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "%"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("pct"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply % increase"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "or"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Increase by $", /* @__PURE__ */ React.createElement("input", { type: "number", value: increaseFlat, onChange: (e) => setIncreaseFlat(e.target.value), className: "mx-2 w-20 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }), "/mo"), /* @__PURE__ */ React.createElement("button", { onClick: () => applyIncrease("flat"), className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#C1652F] text-white" }, "Apply $ increase"), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium ml-2" }, "effective ", /* @__PURE__ */ React.createElement("input", { type: "date", value: increaseEffectiveDate, onChange: (e) => setIncreaseEffectiveDate(e.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" }))))), /* @__PURE__ */ React.createElement("input", { type: "text", value: filter, onChange: (e) => setFilter(e.target.value), placeholder: "Search by site #, section, tag, or customer name\u2026", className: "w-full mb-2 border border-[#E2DED5] rounded-lg px-3 py-2 text-sm bg-white" }), allTags.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] font-medium" }, "Select by tag:"), allTags.map((tag) => /* @__PURE__ */ React.createElement("button", { key: tag, onClick: () => selectByTag(tag), className: "px-2.5 py-1 rounded-full text-xs font-medium bg-[#F1EEE9] text-[#4B4740] hover:bg-[#E2DED5]" }, tag))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-8" }), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Site #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Tags"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Current Fee"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "YoY Change"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 font-semibold" }, "Upcoming Change"))), /* @__PURE__ */ React.createElement("tbody", null, groupedFilteredSites.flatMap(({ key, groupSites }) => [
     /* @__PURE__ */ React.createElement("tr", { key: `group-${key}` }, /* @__PURE__ */ React.createElement("td", { colSpan: 7, className: "px-4 py-2 bg-[#F1EEE9] border-t border-[#E2DED5] text-[11px] font-bold uppercase tracking-wider text-[#75716A]" }, key, /* @__PURE__ */ React.createElement("span", { className: "ml-2 font-normal normal-case text-[#9A968D]" }, groupSites.length, " site", groupSites.length === 1 ? "" : "s"))),
     ...groupSites.map((s) => {
       const owner = getSiteOwner(db, s.id);
@@ -12679,6 +12695,286 @@ function SeasonalFeesView({ db, persist, saveSite, bulkWriteSites }) {
       return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: selected.has(s.id), onChange: () => toggleSelect(s.id) })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setViewingSiteId(s.id), className: "font-semibold text-[#377249] hover:underline" }, s.number)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, (s.tags || []).length ? s.tags.join(", ") : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2" }, /* @__PURE__ */ React.createElement(SeasonalFeeInput, { value: currentRate, onCommit: (value) => updateFee(s.id, value) })), /* @__PURE__ */ React.createElement("td", { className: `px-4 py-2 text-xs font-semibold ${yoy == null ? "text-[#9A968D]" : yoy >= 0 ? "text-[#28633C]" : "text-[#a8532a]"}` }, yoy == null ? "\u2014" : `${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, upcoming ? `${React.createElement(Money, { value: upcoming.amount })}/mo on ${upcoming.date}` : "\u2014"));
     })
   ])))), bulkImportOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Import Lot Fees", onClose: () => setBulkImportOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkImportLotFeesForm, { sites: db.sites, onImport: bulkImportLotFees, onCancel: () => setBulkImportOpen(false) })), viewingSiteId && /* @__PURE__ */ React.createElement(SeasonalFeeHistoryDrawer, { site: db.sites.find((s) => s.id === viewingSiteId), db, onUpdate: (value) => updateFee(viewingSiteId, value), onClose: () => setViewingSiteId(null) }));
+}
+function RateOptionsTable({ title, hint, options, onEdit, onDelete, onAdd, addLabel, showAccount }) {
+  return React.createElement(
+    "div",
+    { className: "mb-6" },
+    React.createElement("div", { className: "text-[11px] font-bold uppercase tracking-wider text-[#75716A] mb-2" }, title),
+    hint && React.createElement("p", { className: "text-xs text-[#9A968D] mb-2" }, hint),
+    React.createElement(
+      "table",
+      { className: "w-full text-sm mb-2" },
+      React.createElement(
+        "thead",
+        null,
+        React.createElement(
+          "tr",
+          { className: "bg-[#F1EEE9] text-left text-xs text-[#75716A]" },
+          React.createElement("th", { className: "px-3 py-2 font-semibold" }, "Name"),
+          React.createElement("th", { className: "px-3 py-2 font-semibold" }, "Rate"),
+          showAccount && React.createElement("th", { className: "px-3 py-2 font-semibold" }, "Account"),
+          React.createElement("th", { className: "px-3 py-2 w-20" })
+        )
+      ),
+      React.createElement(
+        "tbody",
+        null,
+        options.map((opt) => React.createElement(
+          "tr",
+          { key: opt.id, className: "border-t border-[#E2DED5]" },
+          React.createElement("td", { className: "px-3 py-2 text-[#1E1A13]" }, opt.label),
+          React.createElement("td", { className: "px-3 py-2 text-[#1E1A13]" }, formatPrice(opt.rate), showAccount ? "/hr" : ""),
+          showAccount && React.createElement("td", { className: "px-3 py-2 text-xs text-[#9A968D]" }, opt.account || "—"),
+          React.createElement(
+            "td",
+            { className: "px-3 py-2 text-xs whitespace-nowrap" },
+            React.createElement("button", { onClick: () => onEdit(opt), className: "text-[#377249] hover:underline mr-2" }, "Edit"),
+            React.createElement("button", { onClick: () => onDelete(opt.id), className: "text-[#a8532a] hover:underline" }, "Delete")
+          )
+        ))
+      )
+    ),
+    React.createElement("button", { onClick: onAdd, className: "text-sm text-[#377249] hover:underline font-medium" }, addLabel)
+  );
+}
+function RateOptionForm({ initial, showAccount, onSave, onCancel }) {
+  const [label, setLabel] = useState((initial && initial.label) || "");
+  const [rate, setRate] = useState(initial ? String(initial.rate) : "");
+  const [account, setAccount] = useState((initial && initial.account) || "");
+  const rateNum = Number(rate);
+  const valid = label.trim() && Number.isFinite(rateNum) && rateNum >= 0;
+  const submit = () => {
+    if (!valid) return;
+    onSave({ label: label.trim(), rate: rateNum, account: account.trim() });
+  };
+  return React.createElement(
+    "div",
+    { className: "border-t border-[#E2DED5] pt-3 mb-6" },
+    React.createElement("div", { className: "grid sm:grid-cols-3 gap-2 mb-2" }, React.createElement("input", {
+      className: inputCls,
+      value: label,
+      onChange: (e) => setLabel(e.target.value),
+      placeholder: "Name",
+      autoFocus: true
+    }), React.createElement("input", {
+      type: "number",
+      min: "0",
+      step: "0.01",
+      className: inputCls,
+      value: rate,
+      onChange: (e) => setRate(e.target.value),
+      placeholder: "Rate"
+    }), showAccount && React.createElement("input", {
+      className: inputCls,
+      value: account,
+      onChange: (e) => setAccount(e.target.value),
+      placeholder: "Account code (optional)"
+    })),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      React.createElement("button", { onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Save")
+    )
+  );
+}
+function LaborRatesPane({ db, persist }) {
+  const actor = useCurrentActor();
+  const laborConfirm = useConfirm();
+  const callConfirm = useConfirm();
+  const [laborFormOpen, setLaborFormOpen] = useState(null);
+  const [callFormOpen, setCallFormOpen] = useState(null);
+  const laborOptions = getLaborRateOptions(db);
+  const callOptions = getServiceCallOptions(db);
+  const saveLabor = (fields) => {
+    const exists = laborFormOpen.mode === "edit";
+    const entry = exists ? { ...laborFormOpen.data, ...fields } : { id: uid(), ...fields };
+    const laborRateOptions = exists ? laborOptions.map((r) => r.id === entry.id ? entry : r) : [...laborOptions, entry];
+    const activityLog = addLog(db, actor, exists ? `Updated labour rate "${entry.label}"` : `Added labour rate "${entry.label}"`);
+    persist({ ...db, settings: { ...db.settings || {}, laborRateOptions }, activityLog });
+    setLaborFormOpen(null);
+  };
+  const removeLabor = (id) => {
+    const entry = laborOptions.find((r) => r.id === id);
+    const laborRateOptions = laborOptions.filter((r) => r.id !== id);
+    const activityLog = addLog(db, actor, `Removed labour rate "${(entry && entry.label) || ""}"`);
+    persist({ ...db, settings: { ...db.settings || {}, laborRateOptions }, activityLog });
+    laborConfirm.clear();
+  };
+  const saveCall = (fields) => {
+    const exists = callFormOpen.mode === "edit";
+    const entry = exists ? { ...callFormOpen.data, ...fields } : { id: uid(), ...fields };
+    const serviceCallOptions = exists ? callOptions.map((r) => r.id === entry.id ? entry : r) : [...callOptions, entry];
+    const activityLog = addLog(db, actor, exists ? `Updated service call rate "${entry.label}"` : `Added service call rate "${entry.label}"`);
+    persist({ ...db, settings: { ...db.settings || {}, serviceCallOptions }, activityLog });
+    setCallFormOpen(null);
+  };
+  const removeCall = (id) => {
+    const entry = callOptions.find((r) => r.id === id);
+    const serviceCallOptions = callOptions.filter((r) => r.id !== id);
+    const activityLog = addLog(db, actor, `Removed service call rate "${(entry && entry.label) || ""}"`);
+    persist({ ...db, settings: { ...db.settings || {}, serviceCallOptions }, activityLog });
+    callConfirm.clear();
+  };
+  return React.createElement(
+    "div",
+    null,
+    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Labour & Service Rates"),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "These feed the Rate Type and Service Call dropdowns everywhere a quote, invoice, or work order asks for one."),
+    React.createElement(RateOptionsTable, {
+      title: "Labour Rate Types",
+      options: laborOptions,
+      showAccount: true,
+      onEdit: (opt) => setLaborFormOpen({ mode: "edit", data: opt }),
+      onDelete: (id) => laborConfirm.ask(id),
+      onAdd: () => setLaborFormOpen({ mode: "new" }),
+      addLabel: "+ Add rate type"
+    }),
+    laborFormOpen && React.createElement(RateOptionForm, {
+      initial: laborFormOpen.data,
+      showAccount: true,
+      onSave: saveLabor,
+      onCancel: () => setLaborFormOpen(null)
+    }),
+    React.createElement(RateOptionsTable, {
+      title: "Service Call Rates",
+      options: callOptions,
+      showAccount: false,
+      onEdit: (opt) => setCallFormOpen({ mode: "edit", data: opt }),
+      onDelete: (id) => callConfirm.ask(id),
+      onAdd: () => setCallFormOpen({ mode: "new" }),
+      addLabel: "+ Add service call type"
+    }),
+    callFormOpen && React.createElement(RateOptionForm, {
+      initial: callFormOpen.data,
+      showAccount: false,
+      onSave: saveCall,
+      onCancel: () => setCallFormOpen(null)
+    }),
+    laborConfirm.target && React.createElement(ConfirmDeleteModal, {
+      label: (laborOptions.find((r) => r.id === laborConfirm.target) || {}).label || "this rate",
+      onConfirm: () => removeLabor(laborConfirm.target),
+      onCancel: laborConfirm.clear
+    }),
+    callConfirm.target && React.createElement(ConfirmDeleteModal, {
+      label: (callOptions.find((r) => r.id === callConfirm.target) || {}).label || "this rate",
+      onConfirm: () => removeCall(callConfirm.target),
+      onCancel: callConfirm.clear
+    })
+  );
+}
+function ShopSuppliesPercentControl({ db, persist }) {
+  var _a, _b, _c;
+  const pct = (_b = (_a = db.settings) == null ? void 0 : _a.shopSuppliesPercent) != null ? _b : 5;
+  const [value, setValue] = useState(String(pct));
+  useEffect(() => {
+    var _a2, _b2;
+    setValue(String((_b2 = (_a2 = db.settings) == null ? void 0 : _a2.shopSuppliesPercent) != null ? _b2 : 5));
+  }, [(_c = db.settings) == null ? void 0 : _c.shopSuppliesPercent]);
+  const commit = () => {
+    const n = Number(value);
+    const next = Number.isFinite(n) && n >= 0 ? n : 0;
+    persist({ ...db, settings: { ...db.settings || {}, shopSuppliesPercent: next } });
+  };
+  return React.createElement(
+    "div",
+    { className: "flex items-center gap-1.5 text-sm text-[#75716A]" },
+    React.createElement("span", { className: "whitespace-nowrap" }, "Default shop supplies"),
+    React.createElement("input", {
+      type: "number",
+      min: "0",
+      step: "0.1",
+      value,
+      onChange: (e) => setValue(e.target.value),
+      onBlur: commit,
+      onKeyDown: (e) => {
+        if (e.key === "Enter") {
+          commit();
+          e.currentTarget.blur();
+        }
+      },
+      className: "w-16 rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-sm text-[#1E1A13] focus:outline-none focus:ring-2 focus:ring-[#C1652F]/50 focus:border-[#C1652F]"
+    }),
+    React.createElement("span", null, "%")
+  );
+}
+function TaxCommissionPane({ db, persist }) {
+  return React.createElement(
+    "div",
+    null,
+    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Tax & Commission"),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Applied wherever a rate isn't overridden on an individual invoice or listing."),
+    React.createElement("div", { className: "space-y-3" }, React.createElement(TaxRateControl, { db, persist }), React.createElement(CommissionRateControl, { db, persist }), React.createElement(ShopSuppliesPercentControl, { db, persist }))
+  );
+}
+function InvoicingPane({ db, persist }) {
+  return React.createElement(
+    "div",
+    null,
+    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Company & Payment"),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Shown on every printed invoice, quote, and info sheet."),
+    React.createElement(CompanyProfileControl, { db, persist }),
+    React.createElement("hr", { className: "border-[#E2DED5] my-4" }),
+    React.createElement("div", { className: "space-y-3" }, React.createElement(AccountingEmailControl, { db, persist }), React.createElement(PaymentInstructionsControl, { db, persist }))
+  );
+}
+function HydroBillingPane({ db, persist }) {
+  return React.createElement(
+    "div",
+    null,
+    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Hydro Billing"),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Rate and routing for hydro meter invoices."),
+    React.createElement("div", { className: "space-y-3" }, React.createElement(HydroRateControl, { db, persist }), React.createElement("hr", { className: "border-[#E2DED5]" }), React.createElement(AccountingCopyEmailControl, { db, persist }))
+  );
+}
+const ADMIN_SETTINGS_NAV = [
+  { group: "Rates & Fees", items: [
+    { key: "sitefees", label: "Site Fees" },
+    { key: "laborrates", label: "Labour & Service Rates" },
+    { key: "taxcommission", label: "Tax & Commission" }
+  ] },
+  { group: "Invoicing", items: [
+    { key: "invoicing", label: "Company & Payment" },
+    { key: "hydrobilling", label: "Hydro Billing" }
+  ] }
+];
+function AdminSettingsView({ db, persist, saveSite, bulkWriteSites }) {
+  const [pane, setPane] = useState("sitefees");
+  let content;
+  if (pane === "sitefees") content = React.createElement(SiteFeesPane, { db, persist, saveSite, bulkWriteSites });
+  else if (pane === "laborrates") content = React.createElement(LaborRatesPane, { db, persist });
+  else if (pane === "taxcommission") content = React.createElement(TaxCommissionPane, { db, persist });
+  else if (pane === "invoicing") content = React.createElement(InvoicingPane, { db, persist });
+  else content = React.createElement(HydroBillingPane, { db, persist });
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(AdminSectionHeader, { title: "Settings", subtitle: "Site fees, shop rates, and everything invoicing depends on." }),
+    React.createElement(
+      "div",
+      { className: "flex border border-[#E2DED5] rounded-xl bg-[#FFFDFA] overflow-hidden", style: { minHeight: "60vh" } },
+      React.createElement(
+        "div",
+        { className: "w-[210px] flex-shrink-0 border-r border-[#E2DED5] bg-[#F1EEE9] p-2.5" },
+        ADMIN_SETTINGS_NAV.map((section) => React.createElement(
+          React.Fragment,
+          { key: section.group },
+          React.createElement("div", { className: "text-[10px] font-bold uppercase tracking-wider text-[#9A968D] px-2.5 pt-3 pb-1.5" }, section.group),
+          section.items.map((item) => React.createElement(
+            "button",
+            {
+              key: item.key,
+              onClick: () => setPane(item.key),
+              className: `block w-full text-left text-sm px-2.5 py-2 rounded-lg mb-0.5 font-medium ${pane === item.key ? "bg-[#FFFDFA] text-[#377249] shadow-sm" : "text-[#75716A] hover:bg-[#E2DED5]/50"}`
+            },
+            item.label
+          ))
+        ))
+      ),
+      React.createElement("div", { className: "flex-1 p-5 min-w-0 overflow-x-auto" }, content)
+    )
+  );
 }
 function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
   const [text, setText] = useState("");
@@ -12793,9 +13089,6 @@ function SystemHealthView({ db, persist }) {
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "System Health & Alerts", subtitle: "Data volume, third-party usage limits, and recent errors." }), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Data Stored", value: `${estimatedMB.toFixed(1)} MB`, subtitle: "of 1 GB free tier" }), /* @__PURE__ */ React.createElement(StatCard, { label: "Email Usage", value: `${emailPct}%`, tone: toneFor(emailPct), subtitle: `${emailsUsedThisMonth} of ${emailLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Zoho Flow Usage", value: `${zohoPct}%`, tone: toneFor(zohoPct), subtitle: `${zohoUsed} of ${zohoLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Errors Logged", value: errorLog.length, tone: errorLog.length > 0 ? "text-[#a8532a]" : void 0 })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
 }
 const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders", "consignments", "sunspace", "admindashboard", "adminreports", "seasonalfees", "hydroreview", "salestransactions"]);
-function SettingsView({ db, persist }) {
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "Settings", subtitle: "Invoicing and hydro billing rules. What's configured here — and what isn't yet." }), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 mb-4 space-y-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Invoicing"), /* @__PURE__ */ React.createElement(CompanyProfileControl, { db, persist }), /* @__PURE__ */ React.createElement(AccountingEmailControl, { db, persist }), /* @__PURE__ */ React.createElement(PaymentInstructionsControl, { db, persist })), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5 space-y-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Hydro Billing"), /* @__PURE__ */ React.createElement(AccountingCopyEmailControl, { db, persist })));
-}
 function matchCustomerByEmail(customers, email) {
   if (!email) return null;
   const target = email.trim().toLowerCase();
@@ -13052,9 +13345,8 @@ const TABS = [
   { key: "salestransactions", label: "Sales Transactions", group: "sales" },
   { key: "admindashboard", label: "Admin Dashboard", group: "admin" },
   { key: "adminreports", label: "Reports", group: "admin" },
-  { key: "seasonalfees", label: "Seasonal Fees", group: "admin" },
+  { key: "seasonalfees", label: "Settings", group: "admin" },
   { key: "systemhealth", label: "System Health", group: "admin" },
-  { key: "settings", label: "Settings", group: "admin" },
   { key: "staff", label: "Staff", group: "admin" },
   { key: "hydroreview", label: "Hydro Meter Review", group: "accounting" },
   { key: "hydro", label: "Hydro Readings", group: "accounting" },
@@ -13072,7 +13364,7 @@ const ADMIN_NAV_GROUPS = [
   { label: "Overview", items: ["admindashboard", "adminreports"] },
   { label: "Park", items: ["seasonalfees"] },
   { label: "People", items: ["staff"] },
-  { label: "System", items: ["systemhealth", "settings"] }
+  { label: "System", items: ["systemhealth"] }
 ];
 const SALES_NAV_GROUPS = [
   { label: "Overview", items: ["salesdashboard", "salesreport"] },
@@ -13557,6 +13849,7 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
         templates: db.workOrderTemplates,
         taxRate: (db.settings || {}).taxRate != null ? db.settings.taxRate : 13,
         workOrders: db.workOrders,
+        rateOptions: getLaborRateOptions(db),
         onSave: saveNew,
         onCancel: () => setNewOpen(false),
         onDirtyChange: () => {
@@ -13635,7 +13928,7 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
   const primaryNext = wo.status === "Open" ? "In Progress" : wo.status === "In Progress" ? "Completed" : "Open";
   const updateBilling = (patch) => {
     const nextLaborRateType = patch.laborRateType !== void 0 ? patch.laborRateType : wo.laborRateType || "N/A";
-    const nextLaborRate = (RATE_OPTIONS.find((r) => r.label === nextLaborRateType) || RATE_OPTIONS[1]).rate;
+    const nextLaborRate = (getLaborRateOptions(db).find((r) => r.label === nextLaborRateType) || getLaborRateOptions(db)[1]).rate;
     saveWorkOrder({ ...wo, ...patch, laborRateType: nextLaborRateType, laborRate: nextLaborRate });
   };
   const setPayment = (value) => {
@@ -13708,7 +14001,7 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         React.createElement(Field, { label: "Payment Status" }, React.createElement("select", { className: inputCls, value: wo.paymentStatus || "", onChange: (e) => setPayment(e.target.value) }, React.createElement("option", { value: "" }, "—"), PAYMENT_STATUS.map((p) => React.createElement("option", { key: p.value, value: p.value }, p.label)))),
         React.createElement(Field, { label: "Labor Hours" }, React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: wo.laborHours != null ? wo.laborHours : "", onChange: (e) => updateBilling({ laborHours: Number(e.target.value) || 0 }) }))
       ),
-      React.createElement(Field, { label: "Labor Rate" }, React.createElement("select", { className: inputCls, value: wo.laborRateType || "N/A", onChange: (e) => updateBilling({ laborRateType: e.target.value }) }, RATE_OPTIONS.map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label))))
+      React.createElement(Field, { label: "Labor Rate" }, React.createElement("select", { className: inputCls, value: wo.laborRateType || "N/A", onChange: (e) => updateBilling({ laborRateType: e.target.value }) }, getLaborRateOptions(db).map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label))))
     ),
     React.createElement(
       "div",
@@ -14486,6 +14779,8 @@ function FieldQuotesScreen({ db, persist, actor, saveQuote, saveWorkOrder, onBac
         taxRate,
         defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
         templates: db.quoteTemplates,
+        rateOptions: getLaborRateOptions(db),
+        serviceCallOptions: getServiceCallOptions(db),
         onSave: save,
         onCancel: () => setModal(null),
         onDirtyChange: () => {
@@ -14610,6 +14905,8 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
         parts: db.parts,
         invoiceNumber: nextInvoiceNumber(db),
         taxRate,
+        rateOptions: getLaborRateOptions(db),
+        serviceCallOptions: getServiceCallOptions(db),
         onSave: save,
         onCancel: () => setModal(null)
       })
@@ -15388,7 +15685,7 @@ function AdminTabBar({ screen, onSelect }) {
     "div",
     { className: "flex-shrink-0 bg-[#FFFDFA] border-t border-[#E2DED5] flex px-1.5 pt-2", style: { paddingBottom: "max(10px, env(safe-area-inset-bottom))" } },
     ADMIN_FIELD_TABS.map((t) => {
-      const active = screen === t.key || t.key === "more" && ["seasonalfees", "systemhealth", "settings"].includes(screen);
+      const active = screen === t.key || t.key === "more" && ["seasonalfees", "systemhealth"].includes(screen);
       return React.createElement(
         "button",
         { key: t.key, type: "button", onClick: () => onSelect(t.key), className: "flex-1 min-h-[52px] flex flex-col items-center justify-center gap-1" },
@@ -15400,9 +15697,8 @@ function AdminTabBar({ screen, onSelect }) {
 }
 function AdminMoreScreen({ onNavigate, onSignOut }) {
   const rows = [
-    { key: "seasonalfees", label: "Seasonal Fees" },
-    { key: "systemhealth", label: "System Health" },
-    { key: "settings", label: "Settings" }
+    { key: "seasonalfees", label: "Settings" },
+    { key: "systemhealth", label: "System Health" }
   ];
   return React.createElement(
     React.Fragment,
@@ -15439,9 +15735,8 @@ function AdminApp({ db, persist, actor, saveSite, bulkWriteSites, onSignOut }) {
     staff: ["Staff", null],
     reports: ["Reports", null],
     more: ["More", null],
-    seasonalfees: ["Seasonal Fees", null],
-    systemhealth: ["System Health", null],
-    settings: ["Settings", null]
+    seasonalfees: ["Settings", null],
+    systemhealth: ["System Health", null]
   };
   const [title, subtitle] = titles[screen] || ["QIC Admin", null];
   return React.createElement(
@@ -15460,19 +15755,13 @@ function AdminApp({ db, persist, actor, saveSite, bulkWriteSites, onSignOut }) {
         React.Fragment,
         null,
         React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#5B4B8A] mb-3" }, "← More"),
-        React.createElement(SeasonalFeesView, { db, persist, saveSite, bulkWriteSites })
+        React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites })
       ),
       screen === "systemhealth" && React.createElement(
         React.Fragment,
         null,
         React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#5B4B8A] mb-3" }, "← More"),
         React.createElement(SystemHealthView, { db, persist })
-      ),
-      screen === "settings" && React.createElement(
-        React.Fragment,
-        null,
-        React.createElement("button", { type: "button", onClick: () => selectTab("more"), className: "text-[13px] font-semibold text-[#5B4B8A] mb-3" }, "← More"),
-        React.createElement(SettingsView, { db, persist })
       )
     ),
     React.createElement(AdminTabBar, { screen, onSelect: selectTab })
@@ -15732,7 +16021,7 @@ function AppContent() {
   };
   const goToSettings = () => {
     setMode("admin");
-    setTab("settings");
+    setTab("seasonalfees");
     setMobileNavOpen(false);
   };
   const navBadges = {
@@ -15901,7 +16190,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(SeasonalFeesView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "settings" && /* @__PURE__ */ React.createElement(SettingsView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
