@@ -11903,7 +11903,9 @@ function buildServiceItems(db, taxRate) {
     const c = cottageId ? (db.cottages || []).find((x) => x.id === cottageId) : null;
     return c ? c.name : "Unassigned";
   };
+  const invoicedWorkOrderIds = new Set((db.invoices || []).filter((inv) => inv.sourceType === "workOrder" && inv.sourceId).map((inv) => inv.sourceId));
   (db.workOrders || []).forEach((wo) => {
+    if (invoicedWorkOrderIds.has(wo.id)) return;
     items.push({ id: "wo-" + wo.id, type: "Work Order", date: wo.date || "", status: wo.status || "Open", title: wo.title || "Untitled work order", siteId: wo.siteId || null, assignedTo: wo.assignedTo || "", priority: wo.priority || "" });
   });
   (db.winterizingRequests || []).forEach((r) => {
