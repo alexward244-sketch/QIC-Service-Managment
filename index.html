@@ -14896,12 +14896,17 @@ function MobileSignOutButton({ onSignOut }) {
     "Sign Out"
   );
 }
-function FieldMoreScreen({ onNavigate, onSignOut }) {
+function FieldMoreScreen({ onNavigate, onSignOut, isAdminOrManager }) {
   const rows = [
     { key: "hydro", label: "Hydro Readings" },
-    { key: "parts", label: "Parts" },
-    { key: "quotes", label: "Quotes" },
-    { key: "invoices", label: "Invoices" }
+    // Parts pricing, Quotes, and Invoices are manager-tier features on
+    // desktop (see OFFICE_TAB_KEYS vs MANAGER_TAB_KEYS) — keep them out of
+    // regular field staff's "More" menu to match.
+    ...isAdminOrManager ? [
+      { key: "parts", label: "Parts" },
+      { key: "quotes", label: "Quotes" },
+      { key: "invoices", label: "Invoices" }
+    ] : []
   ];
   return React.createElement(
     React.Fragment,
@@ -15325,7 +15330,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     }))
   );
 }
-function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, onCreateInvoice, onGoToDesktopTab, onSignOut }) {
+function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, pendingSignups, confirmPendingSignup, removePendingSignup, isAdminOrManager, onCreateInvoice, onGoToDesktopTab, onSignOut }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
   const [jobId, setJobId] = useState(null);
@@ -15413,7 +15418,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         setToast
       }),
       screen === "park" && React.createElement(FieldParkScreen, { db, persist, saveWorkOrder, saveCottage, saveSite }),
-      screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: setScreen, onSignOut }),
+      screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: setScreen, onSignOut, isAdminOrManager }),
       screen === "hydro" && React.createElement(FieldHydroListScreen, {
         db,
         onEnterReading: (id) => {
@@ -15432,8 +15437,8 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onSaved: () => setScreen("hydro"),
         onBack: () => setScreen("hydro")
       }),
-      screen === "parts" && React.createElement(FieldPartsScreen, { db, onBack: () => selectTab("more") }),
-      screen === "quotes" && React.createElement(FieldQuotesScreen, {
+      screen === "parts" && isAdminOrManager && React.createElement(FieldPartsScreen, { db, onBack: () => selectTab("more") }),
+      screen === "quotes" && isAdminOrManager && React.createElement(FieldQuotesScreen, {
         db,
         persist,
         actor,
@@ -15443,7 +15448,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onGoToJobs: () => selectTab("jobs"),
         setToast
       }),
-      screen === "invoices" && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, deleteInvoice, onBack: () => selectTab("more"), setToast })
+      screen === "invoices" && isAdminOrManager && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, deleteInvoice, onBack: () => selectTab("more"), setToast })
     ),
     toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
     React.createElement(FieldTabBar, { screen, onSelect: selectTab })
@@ -16458,6 +16463,7 @@ function AppContent() {
       pendingSignups,
       confirmPendingSignup,
       removePendingSignup,
+      isAdminOrManager,
       onCreateInvoice: (order) => {
         createInvoiceFromSource(order, "workOrder");
         setFieldModeOverride("desktop");
