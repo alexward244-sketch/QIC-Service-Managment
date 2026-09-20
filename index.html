@@ -1796,7 +1796,7 @@ function SendQuoteConfirmModal({ quote, customer, onConfirm, onCancel }) {
     "Yes, send"
   )));
 }
-function TrashModal({ db, persist, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose }) {
+function TrashModal({ db, persist, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, saveCorrespondence, onClose }) {
   const actor = useCurrentActor();
   const labelFor = (type) => ({
     site: "Site",
@@ -1819,7 +1819,8 @@ function TrashModal({ db, persist, savePropaneRequest, saveTreeRequest, saveWint
     prospect: "Prospect",
     deal: "Deal",
     cottageOrder: "Cottage Order",
-    consignmentListing: "Consignment Listing"
+    consignmentListing: "Consignment Listing",
+    correspondence: "Correspondence"
   })[type] || type;
   const restore = (entry) => {
     const activityLog = addLog(db, actor, `Restored ${labelFor(entry.type).toLowerCase()} "${entry.label}" from trash`);
@@ -1850,6 +1851,9 @@ function TrashModal({ db, persist, savePropaneRequest, saveTreeRequest, saveWint
     } else if (entry.type === "cottage") {
       persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
       saveCottage(entry.data);
+    } else if (entry.type === "correspondence") {
+      persist({ ...db, trash: (db.trash || []).filter((t) => t.id !== entry.id), activityLog });
+      saveCorrespondence(entry.data);
     } else {
       persist({ ...restoreTrashItem(db, entry.id), activityLog });
     }
@@ -13540,6 +13544,7 @@ function CorrespondenceRow({ item, customer, active, onClick, count }) {
 // TODO(design-handoff): who owns a failed send, and what happens at the monthly Zoho task
 // ceiling, are open decisions the handoff flags explicitly — not resolved here.
 function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }) {
+  const actor = useCurrentActor();
   const [selectedId, setSelectedId] = useState(null);
   const [viewCustomerId, setViewCustomerId] = useState(null);
   const [composePickerOpen, setComposePickerOpen] = useState(false);
@@ -13618,6 +13623,11 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     setFollowUpDate("");
   };
   const confirmDelete = () => {
+    const item = all.find((c) => c.id === deleteConfirmId);
+    const label = `Email — ${(item == null ? void 0 : item.subject) || "(no subject)"}`;
+    const activityLog = addLog(db, actor, `Removed ${label} (moved to trash)`);
+    const entry = { id: uid(), type: "correspondence", data: item, label, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
     deleteCorrespondence(deleteConfirmId);
     if (selectedId === deleteConfirmId) {
       setSelectedId(null);
@@ -16597,7 +16607,7 @@ function AppContent() {
       onConfirm: confirmImport,
       onCancel: () => setImportPending(null)
     }
-  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) })));
+  )), trashOpen && /* @__PURE__ */ React.createElement(TrashModal, { db, persist, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, saveWorkOrder, saveCustomer, saveQuote, saveInvoice, saveSite, saveCottage, saveCorrespondence, onClose: () => setTrashOpen(false) }), manageRolesOpen && /* @__PURE__ */ React.createElement(ManageRolesModal, { db, persist, currentEmail: actor, onClose: () => setManageRolesOpen(false) })));
 }
 function LoginScreen() {
   const [email, setEmail] = useState("");
