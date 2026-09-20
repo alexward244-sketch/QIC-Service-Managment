@@ -11458,21 +11458,30 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
   const [modal, setModal] = useState(null);
   const [reviewingEntry, setReviewingEntry] = useState(null);
   const [confirmingComplete, setConfirmingComplete] = useState(null);
+  const [filter, setFilter] = useState("");
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = db.propaneRequests || [];
   const pending = pendingSignupsProp || [];
   const today = todayISO();
-  const active = requests.filter((r) => !r.completed && !r.expiredTank);
-  const needsReview = requests.filter((r) => r.expiredTank);
-  const overdue = active.filter((r) => r.requestedDate < today);
-  const todayTenAm = active.filter((r) => r.requestedDate === today && r.run === "10am");
-  const todayFourPm = active.filter((r) => r.requestedDate === today && r.run === "4pm");
-  const upcoming = active.filter((r) => r.requestedDate > today).sort((a, b) => a.requestedDate.localeCompare(b.requestedDate));
   const cottageName = (id) => {
     const c = id ? db.cottages.find((x) => x.id === id) : null;
     return c ? c.name : "";
   };
+  const filteredRequests = requests.filter((r) => {
+    if (!filter) return true;
+    const cottage = db.cottages.find((c) => c.id === r.cottageId);
+    const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+    const customer = r.customerId ? db.customers.find((c) => c.id === r.customerId) : null;
+    const hay = `${cottageName(r.cottageId)} ${(site == null ? void 0 : site.number) || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const active = filteredRequests.filter((r) => !r.completed && !r.expiredTank);
+  const needsReview = filteredRequests.filter((r) => r.expiredTank);
+  const overdue = active.filter((r) => r.requestedDate < today);
+  const todayTenAm = active.filter((r) => r.requestedDate === today && r.run === "10am");
+  const todayFourPm = active.filter((r) => r.requestedDate === today && r.run === "4pm");
+  const upcoming = active.filter((r) => r.requestedDate > today).sort((a, b) => a.requestedDate.localeCompare(b.requestedDate));
   const save = (request) => {
     const exists = requests.some((r) => r.id === request.id);
     const activityLog = addLog(db, actor, exists ? `Updated propane request for ${cottageName(request.cottageId) || "unassigned"}` : `Added propane request for ${cottageName(request.cottageId) || "unassigned"}`);
@@ -11659,10 +11668,15 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
     onMoveRun: moveRun,
     onPrint: (req) => downloadPrintableItems([req], (r) => buildPropaneRequestHtml(r, db), `propane-${cottageName(req.cottageId).replace(/[^a-z0-9]+/gi, "-").toLowerCase() || todayISO()}`)
   }))));
-  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Propane"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Daily fill runs at 10am and 4pm.")), /* @__PURE__ */ React.createElement("button", {
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Propane"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Daily fill runs at 10am and 4pm.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("input", {
+    className: inputCls + " w-full sm:w-56",
+    placeholder: "Search by cottage, site, or customer…",
+    value: filter,
+    onChange: (e) => setFilter(e.target.value)
+  }), /* @__PURE__ */ React.createElement("button", {
     onClick: () => setModal({ mode: "new" }),
     className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
-  }, "+ New Request"));
+  }, "+ New Request")));
   const incomingEl = pending.length > 0 ? /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#F5E3D9] bg-[#FBEEDA] px-4 py-3 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold uppercase tracking-wider text-[#9A6B1F] mb-2" }, "Incoming Sign-Ups \u2014 ", pending.length, " need", pending.length === 1 ? "s" : "", " review"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, pending.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, entry.submittedName || "(no name)", " \u2014 Site ", entry.submittedSiteNumber || "?"), /* @__PURE__ */ React.createElement("button", { onClick: () => setReviewingEntry(entry), className: "text-xs px-3 sm:px-2.5 py-2 sm:py-1 min-h-[36px] sm:min-h-0 rounded-full bg-[#377249] text-[#F9F5EC] font-medium hover:bg-[#135C30] whitespace-nowrap" }, "Review"))))) : null;
   const needsReviewEl = needsReview.length > 0 ? /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-3 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs font-semibold uppercase tracking-wider text-[#a8532a] mb-2" }, "Expired Tank \u2014 Did Not Fill \u2014 ", needsReview.length, " need", needsReview.length === 1 ? "s" : "", " review"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, needsReview.map((r) => {
     const cottage = db.cottages.find((c) => c.id === r.cottageId);
@@ -11801,18 +11815,25 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
   const [modal, setModal] = useState(null);
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [viewingWO, setViewingWO] = useState(null);
+  const [filter, setFilter] = useState("");
   const requests = db.treeRequests || [];
   const priorityRank = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
-  const pending = requests.filter((r) => !r.completed).sort((a, b) => {
-    const pd = (priorityRank[a.priority] != null ? priorityRank[a.priority] : 2) - (priorityRank[b.priority] != null ? priorityRank[b.priority] : 2);
-    return pd !== 0 ? pd : (b.notedDate || "").localeCompare(a.notedDate || "");
-  });
-  const completedList = requests.filter((r) => r.completed).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || "")).slice(0, 50);
   const siteLabel = (tree) => {
     const site = tree.siteId ? db.sites.find((s) => s.id === tree.siteId) : null;
     const cottage = tree.cottageId ? db.cottages.find((c) => c.id === tree.cottageId) : null;
     return [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" — ") || "no location set";
   };
+  const filteredRequests = requests.filter((r) => {
+    if (!filter) return true;
+    const customer = r.customerId ? db.customers.find((c) => c.id === r.customerId) : null;
+    const hay = `${siteLabel(r)} ${(customer == null ? void 0 : customer.name) || ""} ${r.description || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
+  const pending = filteredRequests.filter((r) => !r.completed).sort((a, b) => {
+    const pd = (priorityRank[a.priority] != null ? priorityRank[a.priority] : 2) - (priorityRank[b.priority] != null ? priorityRank[b.priority] : 2);
+    return pd !== 0 ? pd : (b.notedDate || "").localeCompare(a.notedDate || "");
+  });
+  const completedList = filteredRequests.filter((r) => r.completed).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || "")).slice(0, 50);
   const save = (request) => {
     const exists = requests.some((r) => r.id === request.id);
     const activityLog = addLog(db, actor, exists ? `Updated tree entry (${siteLabel(request)})` : `Logged a tree entry (${siteLabel(request)})`);
@@ -11831,7 +11852,12 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
   const setStage = (tree, stage) => {
     saveTreeRequest({ ...tree, stage });
   };
-  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Trees"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Tree work spotted by staff or reported by customers — track it here, then create a work order when it's ready to schedule.")), /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap" }, "+ New Tree Entry"));
+  const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Trees"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Tree work spotted by staff or reported by customers — track it here, then create a work order when it's ready to schedule.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("input", {
+    className: inputCls + " w-full sm:w-56",
+    placeholder: "Search by site, cottage, or customer…",
+    value: filter,
+    onChange: (e) => setFilter(e.target.value)
+  }), /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap" }, "+ New Tree Entry")));
   const pendingSection = /* @__PURE__ */ React.createElement("div", { className: "mb-6" }, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Pending (", pending.length, ")"), pending.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No trees logged right now." }) : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((tree) => /* @__PURE__ */ React.createElement(TreeRow, {
     key: tree.id,
     tree,
@@ -11975,8 +12001,14 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
 }
 function GeneralServiceView({ db, persist, saveWorkOrder, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, onBackToDashboard }) {
   const [reviewingEntry, setReviewingEntry] = useState(null);
+  const [filter, setFilter] = useState("");
   const actor = useCurrentActor();
-  const pending = pendingSignupsProp || [];
+  const allPending = pendingSignupsProp || [];
+  const pending = allPending.filter((entry) => {
+    if (!filter) return true;
+    const hay = `${entry.submittedName || ""} ${entry.submittedSiteNumber || ""} ${entry.submittedCategory || ""} ${entry.submittedDescription || ""}`.toLowerCase();
+    return hay.includes(filter.toLowerCase());
+  });
   const recentlyCreated = (db.workOrders || []).filter((w) => w.sourceType === "generalServiceRequest").slice().sort((a, b) => b.date < a.date ? -1 : 1).slice(0, 8);
   const siteNumberFor = (siteId) => {
     const site = siteId ? (db.sites || []).find((s) => s.id === siteId) : null;
@@ -11999,8 +12031,13 @@ function GeneralServiceView({ db, persist, saveWorkOrder, pendingSignups: pendin
     removePendingSignup(entry.id);
     setReviewingEntry(null);
   };
-  const header = /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("button", { onClick: onBackToDashboard, className: "text-xs text-[#75716A] hover:underline mb-2" }, "\u2190 Back to Dashboard"), /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Service Requests"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Submissions from the General Service Request form on the website \u2014 review and confirm to create a Work Order."));
-  const queueEl = pending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1 mb-6" }, "Nothing pending review.") : /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] overflow-hidden mb-6" }, pending.map((entry) => /* @__PURE__ */ React.createElement(PendingSignupRow, { key: entry.id, entry, db, onReview: setReviewingEntry })));
+  const header = /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("button", { onClick: onBackToDashboard, className: "text-xs text-[#75716A] hover:underline mb-2" }, "\u2190 Back to Dashboard"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Service Requests"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Submissions from the General Service Request form on the website \u2014 review and confirm to create a Work Order.")), allPending.length > 0 && /* @__PURE__ */ React.createElement("input", {
+    className: inputCls + " w-full sm:w-56",
+    placeholder: "Search pending requests\u2026",
+    value: filter,
+    onChange: (e) => setFilter(e.target.value)
+  })));
+  const queueEl = allPending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1 mb-6" }, "Nothing pending review.") : pending.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1 mb-6" }, "No pending requests match that search.") : /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] overflow-hidden mb-6" }, pending.map((entry) => /* @__PURE__ */ React.createElement(PendingSignupRow, { key: entry.id, entry, db, onReview: setReviewingEntry })));
   const recentEl = recentlyCreated.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A] mb-2 px-1" }, "Recently Created From Requests"), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] overflow-hidden" }, recentlyCreated.map((w) => {
     const where = siteNumberFor(w.siteId) ? `Site ${siteNumberFor(w.siteId)}` : cottageNameFor(w.cottageId) || "\u2014";
     return /* @__PURE__ */ React.createElement("div", { key: w.id, className: "flex items-center justify-between gap-3 px-4 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, w.title), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, where, " \xB7 ", w.date)), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[w.status] || ""}` }, w.status));
