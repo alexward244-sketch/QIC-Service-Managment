@@ -12034,6 +12034,11 @@ function buildServiceItems(db, taxRate) {
   (db.propaneRequests || []).forEach((r) => {
     items.push({ id: "prop-" + r.id, type: "Propane", date: (r.completed ? r.completedDate : r.requestedDate) || "", status: r.completed ? "Completed" : "Pending", title: `Propane \u2014 ${cottageLabel(r.cottageId)}`, siteId: siteOfCottage(r.cottageId), assignedTo: "", priority: "", payment: r.payment || "", paymentMethod: r.paymentMethod || "" });
   });
+  (db.treeRequests || []).forEach((r) => {
+    const site = r.siteId ? (db.sites || []).find((s) => s.id === r.siteId) : null;
+    const location = [site ? `Site ${site.number}` : null, r.cottageId ? cottageLabel(r.cottageId) : null].filter(Boolean).join(" \u2014 ") || "No location set";
+    items.push({ id: "tree-" + r.id, type: "Tree", date: (r.completed ? r.completedDate : r.notedDate) || "", status: r.completed ? "Completed" : r.stage || "To be Inspected", title: `Tree \u2014 ${location}`, siteId: r.siteId || null, assignedTo: "", priority: r.priority || "" });
+  });
   (db.quotes || []).forEach((q) => {
     items.push({ id: "quote-" + q.id, type: "Quote", date: q.date || "", status: q.status || "Draft", title: q.title || "Untitled quote", siteId: q.siteId || null, assignedTo: "", priority: "" });
   });
@@ -12049,11 +12054,12 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest, saveWorkOrder
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
   const allItems = useMemo(() => buildServiceItems(db, taxRate), [db, taxRate]);
-  const TYPES = ["Work Order", "Winterizing", "Propane", "Quote", "Invoice"];
+  const TYPES = ["Work Order", "Winterizing", "Propane", "Tree", "Quote", "Invoice"];
   const STATUS_BY_TYPE = {
     "Work Order": ["Open", "In Progress", "Completed"],
     Winterizing: ["Pending", "Completed"],
     Propane: ["Pending", "Completed"],
+    Tree: [...TREE_STAGES, "Completed"],
     Quote: ["Draft", "Sent", "Accepted", "Declined"],
     Invoice: ["Draft", "Sent", "Paid"]
   };
@@ -16432,6 +16438,7 @@ function AppContent() {
     invoices: (db.invoices || []).filter((i) => !i.paidInFullDate).length,
     sites: (db.sites || []).length,
     propane: (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank).length,
+    trees: (db.treeRequests || []).filter((r) => !r.completed).length,
     winterizing: (db.winterizingRequests || []).filter((r) => !r.archived && !r.completed).length,
     hydro: (db.sites || []).filter((s) => isHydroTrackedSite(s) && !getLastHydroReading(db, s.id)).length,
     hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length,
