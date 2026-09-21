@@ -3928,6 +3928,7 @@ function QuickInvoiceModal({ db, initial, saveInvoice, onClose }) {
     cottages: db.cottages,
     customers: db.customers,
     parts: db.parts,
+    workOrders: db.workOrders,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
     rateOptions: getLaborRateOptions(db),
@@ -4548,7 +4549,7 @@ function PaymentInstructionsControl({ db, persist }) {
   ));
 }
 
-function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber, taxRate, rateOptions, serviceCallOptions, onSave, onCancel }) {
+function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, invoiceNumber, taxRate, rateOptions, serviceCallOptions, onSave, onCancel }) {
   var _a, _b, _c, _d;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || todayISO());
@@ -4556,6 +4557,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
+  const [linkedWorkOrderId, setLinkedWorkOrderId] = useState((initial == null ? void 0 : initial.sourceType) === "workOrder" ? initial.sourceId || "" : "");
   const [lineItems, setLineItems] = useState(
     ((_a = initial == null ? void 0 : initial.lineItems) == null ? void 0 : _a.length) ? initial.lineItems : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }]
   );
@@ -4605,6 +4607,30 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
       if (custSiteIds.length === 1) pickSite(custSiteIds[0]);
     }
   };
+  // Quick-link an existing Work Order onto this invoice without going
+  // through that work order's own "Create Invoice" button — for when
+  // several invoices are being written up in one sitting. Only fills in
+  // fields that are still blank, so it never clobbers something already
+  // typed; the link itself (sourceType/sourceId, set on submit below)
+  // always applies once a work order is picked.
+  const pickWorkOrder = (val) => {
+    setLinkedWorkOrderId(val);
+    if (!val) return;
+    const wo = (workOrders || []).find((w) => w.id === val);
+    if (!wo) return;
+    if (!title.trim()) setTitle(wo.title || "");
+    if (!siteId && wo.siteId) setSiteId(wo.siteId);
+    if (!cottageId && wo.cottageId) setCottageId(wo.cottageId);
+    if (!customerId && wo.customerId) setCustomerId(wo.customerId);
+    if (!Number(laborHours) && Number(wo.laborHours) > 0) setLaborHours(wo.laborHours);
+    if (laborRateType === "N/A" && wo.laborRateType) setLaborRateType(wo.laborRateType);
+    if (lineItems.length === 1 && !lineItems[0].description.trim() && (wo.partsUsed || []).length) {
+      setLineItems((wo.partsUsed || []).map((pu) => {
+        const part = parts.find((p) => p.id === pu.partId);
+        return { id: uid(), description: part ? part.name : "Part", quantity: Number(pu.quantity) || 1, unitPrice: part ? Number(part.price) || 0 : 0, account: part ? part.salesAccount || "" : "", partId: pu.partId };
+      }));
+    }
+  };
   const updateLine = (id, field, value) => {
     setLineItems((items) => items.map((li) => li.id === id ? { ...li, [field]: value } : li));
   };
@@ -4640,8 +4666,8 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
       invoiceNumber: (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber,
-      sourceType: (initial == null ? void 0 : initial.sourceType) || "standalone",
-      sourceId: (initial == null ? void 0 : initial.sourceId) || null,
+      sourceType: linkedWorkOrderId ? "workOrder" : (initial == null ? void 0 : initial.sourceType) || "standalone",
+      sourceId: linkedWorkOrderId || (initial == null ? void 0 : initial.sourceId) || null,
       title: title.trim(),
       date,
       siteId: siteId || null,
@@ -4677,6 +4703,17 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, invoiceNumber
     options: ADVANCE_PAYMENT_METHODS,
     showLabel: true,
     onSelect: (m) => setPaidInAdvanceMethod(paidInAdvanceMethod === m ? null : m)
+  })), workOrders && workOrders.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Link to Work Order (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+    options: workOrders.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((w) => {
+      const site = w.siteId ? sites.find((s) => s.id === w.siteId) : null;
+      const cottage = w.cottageId ? cottages.find((c) => c.id === w.cottageId) : null;
+      const where = site ? `Site ${site.number}` : cottage ? cottage.name : "Unassigned";
+      return { value: w.id, label: `${w.title} — ${where} (${w.status})`, searchText: [w.title, site == null ? void 0 : site.number, cottage == null ? void 0 : cottage.name, w.status].filter(Boolean).join(" ") };
+    }),
+    value: linkedWorkOrderId,
+    onChange: pickWorkOrder,
+    placeholder: "Search work orders…",
+    noneLabel: "— Not linked to a work order —"
   })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
@@ -5042,6 +5079,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, invoicePrefill,
     cottages: db.cottages,
     customers: db.customers,
     parts: db.parts,
+    workOrders: db.workOrders,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
     rateOptions: getLaborRateOptions(db),
@@ -15492,6 +15530,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
         cottages: db.cottages,
         customers: db.customers,
         parts: db.parts,
+        workOrders: db.workOrders,
         invoiceNumber: nextInvoiceNumber(db),
         taxRate,
         rateOptions: getLaborRateOptions(db),
