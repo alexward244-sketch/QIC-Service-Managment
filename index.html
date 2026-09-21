@@ -11008,20 +11008,21 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
   const gateItems = checkedOptions.filter((opt) => !opt.gateExempt);
   const anodeRodRequested = Boolean(request.options && request.options.anodeRod);
   const anodeRodReplaced = Boolean(request.anodeRodReplacedAt);
-  // Mobile-only completion gate: on phones, staff check off each customer-requested
-  // task (kept in local component state \u2014 never saved) before Mark Winterized
-  // unlocks. keyAtReception is gateExempt \u2014 an ask/note rather than a guaranteed
-  // task \u2014 shown as a badge, never required. The anode rod also isn't required,
-  // but still shows in this checklist (tapping it persists anodeRodReplacedAt and
-  // triggers auto-invoicing immediately, same as before) since it's still something
+  // Completion gate (same on desktop and mobile): staff check off each
+  // customer-requested task (kept in local component state \u2014 never saved)
+  // before Mark Winterized unlocks. keyAtReception is gateExempt \u2014 an
+  // ask/note rather than a guaranteed task \u2014 shown as a badge, never
+  // required. The anode rod also isn't required, but still shows in this
+  // checklist (tapping it persists anodeRodReplacedAt and triggers
+  // auto-invoicing immediately, same as before) since it's still something
   // worth tracking here.
-  // On desktop (or when there's nothing gate-worthy to check off), the checkbox
-  // still toggles completion instantly, exactly as before.
+  // When there's nothing gate-worthy to check off, the checkbox still
+  // toggles completion instantly, exactly as before.
   const isMobile = useIsMobile();
   const [confirming, setConfirming] = useState(false);
   const [checkedLocal, setCheckedLocal] = useState(() => /* @__PURE__ */ new Set());
-  const needsGate = isMobile && (gateItems.length > 0 || anodeRodRequested && !anodeRodReplaced);
-  const inlineOptions = isMobile ? checkedOptions.filter((opt) => opt.key !== "anodeRod") : checkedOptions;
+  const needsGate = gateItems.length > 0 || anodeRodRequested && !anodeRodReplaced;
+  const inlineOptions = needsGate ? checkedOptions.filter((opt) => opt.key !== "anodeRod") : checkedOptions;
   const handleToggleChange = () => {
     if (readOnly) return;
     if (!isDone && needsGate) {
