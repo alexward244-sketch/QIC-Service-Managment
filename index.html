@@ -999,17 +999,27 @@ class ErrorBoundary extends React.Component {
   static getDerivedStateFromError(error) {
     return { error };
   }
+  componentDidCatch(error, errorInfo) {
+    console.error("App crashed:", error, errorInfo);
+  }
   render() {
     if (this.state.error) {
-      return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex items-center justify-center bg-[#F9F5EC] p-6" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-sm text-center" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#a8532a] font-semibold mb-2" }, "Something went wrong loading your records."), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "This can happen if the shared data got into a bad state, or if the Firebase config above hasn't been filled in yet. Resetting will clear all saved sites, cottages, customers, and work orders and start fresh."), /* @__PURE__ */ React.createElement(
+      return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex items-center justify-center bg-[#F9F5EC] p-6" }, /* @__PURE__ */ React.createElement("div", { className: "max-w-sm text-center" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#a8532a] font-semibold mb-2" }, "Something went wrong."), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "This is almost always a bug in one screen, not lost data \u2014 try reloading first."), this.state.error.message && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] font-mono text-[#a8532a] bg-white border border-[#E2DED5] rounded-md px-2 py-1.5 mb-4 break-words text-left" }, this.state.error.message), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          onClick: () => window.location.reload(),
+          className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] mb-4"
+        },
+        "Reload Page"
+      ), /* @__PURE__ */ React.createElement("details", { className: "text-left" }, /* @__PURE__ */ React.createElement("summary", { className: "text-xs text-[#75716A] cursor-pointer hover:underline" }, "Reloading didn't help \u2014 more options"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-2 mb-2" }, "Resetting will clear all saved sites, cottages, customers, and work orders and start fresh. Only do this if the shared data itself is corrupted \u2014 not for a screen that just needs a code fix."), /* @__PURE__ */ React.createElement(
         "button",
         {
           onClick: this.handleReset,
           disabled: this.state.resetting,
-          className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] disabled:opacity-60"
+          className: "px-3 py-1.5 rounded-md border border-[#a8532a] text-[#a8532a] text-xs font-medium hover:bg-[#F5E3D9] disabled:opacity-60"
         },
         this.state.resetting ? "Resetting\u2026" : "Reset all data"
-      )));
+      ))));
     }
     return this.props.children;
   }
@@ -9695,6 +9705,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       templates: db.workOrderTemplates,
       taxRate: (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13,
       workOrders: db.workOrders,
+      rateOptions: getLaborRateOptions(db),
       onSave: save,
       onCancel: requestCloseModal,
       onDirtyChange: (d) => {
