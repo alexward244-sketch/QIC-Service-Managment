@@ -4020,6 +4020,17 @@ function CorrespondenceMessage({ item, db, saveCorrespondence, onCreateWorkOrder
   };
   return /* @__PURE__ */ React.createElement("div", { className: `rounded-lg border p-3 mb-2 ${isNew ? "border-[#B8752F] bg-[#FFFBF3]" : "border-[#E2DED5] bg-white"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, isOut ? "QIC Service" : item.fromEmail, /* @__PURE__ */ React.createElement("span", { className: `ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${isOut ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#E4EEF2] text-[#2E6E8E]"}` }, isOut ? "Sent" : "Received"), isNew && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#B8752F] text-white" }, "NEW"), CorrespondenceIsFYI(item) && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "FYI"), isSnoozed && /* @__PURE__ */ React.createElement("span", { className: "ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E]" }, "Follow up ", new Date(item.followUpAt + "T00:00:00").toLocaleDateString())), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.receivedAt ? new Date(item.receivedAt).toLocaleString() : "")), item.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "\u21AA Forwarded by ", item.forwardedBy), item.subject && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-1" }, "Subject: ", item.subject), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap" }, item.body), item.attachmentUrl && /* @__PURE__ */ React.createElement("div", { className: "mt-2 flex items-center gap-2 border border-[#E2DED5] rounded-md p-2 bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("a", { href: item.attachmentUrl, target: "_blank", rel: "noreferrer", className: "text-xs text-[#377249] hover:underline font-medium flex-1 truncate" }, item.attachmentName || "View attachment"), /* @__PURE__ */ React.createElement("button", { onClick: clearAttachment, className: "text-xs text-[#a8532a] hover:underline flex-shrink-0" }, "Delete photo")), item.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F]" }, "\u26A1 ", item.suggestedFlag), !isOut && (isNew && isFYI ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#377249] hover:underline" }, "\u2713 Acknowledge"), /* @__PURE__ */ React.createElement("button", { onClick: () => setOverrideFYI(true), className: "text-xs text-[#9A968D] hover:underline" }, "Needs a reply?")) : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 mt-2 flex-wrap" }, onReply && /* @__PURE__ */ React.createElement("button", { onClick: () => onReply(item), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Reply"), /* @__PURE__ */ React.createElement(CorrespondenceCreateButton, { item, onCreateWorkOrder, onCreatePropane, onCreateTree }), isNew && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: markHandled, className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Mark Handled"), isNew && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(true), className: "text-xs font-semibold text-[#75716A] hover:underline" }, "Follow up\u2026"), snoozing && /* @__PURE__ */ React.createElement("span", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: followUpDate, min: todayISO(), onChange: (e) => setFollowUpDate(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1" }), /* @__PURE__ */ React.createElement("button", { onClick: confirmSnooze, disabled: !followUpDate, className: "text-xs font-semibold text-[#377249] hover:underline disabled:opacity-50" }, "Snooze"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(false), className: "text-xs text-[#9A968D] hover:underline" }, "Cancel")))));
 }
+const CONVERSATION_GAP_MS = 21 * 24 * 60 * 60 * 1e3;
+function normalizeSubject(subject) {
+  let s = (subject || "").trim();
+  let changed = true;
+  while (changed) {
+    const next = s.replace(/^(re|fwd?|fw)\s*:\s*/i, "").trim();
+    changed = next !== s;
+    s = next;
+  }
+  return s.toLowerCase();
+}
 function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, onReply }) {
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [creatingPropaneFrom, setCreatingPropaneFrom] = useState(null);
@@ -4068,8 +4079,17 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No correspondence yet."), modal, propaneModal, treeModal, viewModal);
   }
   let lastWO = null;
+  let prevItem = null;
   const rows = [];
   items.forEach((item) => {
+    if (prevItem) {
+      const subjectChanged = normalizeSubject(item.subject) !== normalizeSubject(prevItem.subject);
+      const gapExceeded = item.receivedAt && prevItem.receivedAt && new Date(item.receivedAt) - new Date(prevItem.receivedAt) > CONVERSATION_GAP_MS;
+      if (subjectChanged || gapExceeded) {
+        rows.push(/* @__PURE__ */ React.createElement("div", { key: `sep-${item.id}`, className: "flex items-center gap-2 mt-5 mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex-1 h-px bg-[#E2DED5]" }), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wider text-[#9A968D] font-semibold whitespace-nowrap" }, item.subject || "New conversation", item.receivedAt ? ` \xB7 ${new Date(item.receivedAt).toLocaleDateString()}` : ""), /* @__PURE__ */ React.createElement("div", { className: "flex-1 h-px bg-[#E2DED5]" })));
+      }
+    }
+    prevItem = item;
     if (item.workOrderId && item.workOrderId !== lastWO) {
       const wo = (db.workOrders || []).find((w) => w.id === item.workOrderId);
       rows.push(wo ? /* @__PURE__ */ React.createElement("button", { key: `wo-${item.id}`, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4] inline-block mt-3 mb-1.5" }, "WORK ORDER \u2014 ", wo.title) : /* @__PURE__ */ React.createElement("div", { key: `wo-${item.id}`, className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] inline-block mt-3 mb-1.5" }, "WORK ORDER"));
