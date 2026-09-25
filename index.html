@@ -3874,7 +3874,9 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onCle
         toEmail: to,
         subject: subject || "",
         body: message,
-        receivedAt: (/* @__PURE__ */ new Date()).toISOString()
+        receivedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        status: "handled",
+        handledAt: (/* @__PURE__ */ new Date()).toISOString()
       });
       clearEmailDraft(draftKey);
       setSubject("");
@@ -13954,14 +13956,17 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
   const [cannedRepliesOpen, setCannedRepliesOpen] = useState(false);
   const [overrideFYI, setOverrideFYI] = useState(false);
   // Outbound messages tied to a matched customer live in that customer's
-  // thread only (CorrespondenceThread); an outbound message with no
-  // customerId — e.g. a quick reply sent from a pending service request or
-  // a work order before it's matched — has nowhere else to show up, so it
-  // stays visible here instead of vanishing once sent.
-  const all = (db.correspondence || []).filter((c) => c.direction !== "out" || !c.customerId);
+  // thread only (CorrespondenceThread); it also needs a home in this list
+  // or it's effectively invisible — nothing marks a first-touch outbound
+  // message (matched customer or not) as anything, so it fell through
+  // every bucket below. Every outbound message counts as "handled" (we
+  // sent it, nothing more to do unless/until they reply) whether or not
+  // its status field was ever explicitly set — covers messages sent
+  // before this fix existed too, no backfill needed.
+  const all = (db.correspondence || []);
   const needsAttention = all.filter(CorrespondenceIsNew).sort((a, b) => (b.receivedAt || "").localeCompare(a.receivedAt || ""));
   const snoozed = all.filter(CorrespondenceIsSnoozed).sort((a, b) => (a.followUpAt || "").localeCompare(b.followUpAt || ""));
-  const handled = all.filter((c) => c.status === "handled").sort((a, b) => (b.handledAt || b.receivedAt || "").localeCompare(a.handledAt || a.receivedAt || ""));
+  const handled = all.filter((c) => c.status === "handled" || c.direction === "out" && c.status !== "snoozed").sort((a, b) => (b.handledAt || b.receivedAt || "").localeCompare(a.handledAt || a.receivedAt || ""));
   const q = filter.trim().toLowerCase();
   const matchesFilter = (item) => {
     if (!q) return true;
