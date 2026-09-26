@@ -4113,13 +4113,14 @@ function QuickQuoteModal({ db, initial, saveQuote, onClose }) {
     }
   }));
 }
-function QuickInvoiceModal({ db, initial, saveInvoice, onClose }) {
+function QuickInvoiceModal({ db, initial, saveInvoice, onClose, onViewWorkOrder }) {
   const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const sourceWO = initial && initial.sourceType === "workOrder" && initial.sourceId ? db.workOrders.find((w) => w.id === initial.sourceId) : null;
   const save = (invoice) => {
     saveInvoice(invoice);
     onClose();
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: initial != null && initial.id ? "Edit Invoice" : "New Invoice", onClose, wide: true }, /* @__PURE__ */ React.createElement(InvoiceForm, {
+  return /* @__PURE__ */ React.createElement(Modal, { title: initial != null && initial.id ? "Edit Invoice" : "New Invoice", onClose, wide: true }, sourceWO && onViewWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onViewWorkOrder(sourceWO), className: "text-sm text-[#377249] hover:underline font-medium mb-3 block" }, "← View Work Order", sourceWO.workOrderNumber ? ` (${sourceWO.workOrderNumber})` : ""), /* @__PURE__ */ React.createElement(InvoiceForm, {
     initial,
     sites: db.sites,
     cottages: db.cottages,
@@ -12651,7 +12652,10 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest, saveWorkOrder
       setEditingWinterizing(null);
     },
     onCancel: () => setEditingWinterizing(null)
-  })), viewingInvoice && saveInvoice && /* @__PURE__ */ React.createElement(QuickInvoiceModal, { db, initial: viewingInvoice, saveInvoice, onClose: () => setViewingInvoice(null) }));
+  })), viewingInvoice && saveInvoice && /* @__PURE__ */ React.createElement(QuickInvoiceModal, { db, initial: viewingInvoice, saveInvoice, onClose: () => setViewingInvoice(null), onViewWorkOrder: (wo) => {
+    setViewingInvoice(null);
+    setViewingWO(wo);
+  } }));
 }
 function buildTransactionList(db, taxRate, commissionPercent) {
   const rows = [];
