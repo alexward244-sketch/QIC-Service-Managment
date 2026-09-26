@@ -12,12 +12,17 @@ const ZOHO_CLIENT_ID = defineSecret("ZOHO_CLIENT_ID");
 const ZOHO_CLIENT_SECRET = defineSecret("ZOHO_CLIENT_SECRET");
 const ZOHO_REFRESH_TOKEN = defineSecret("ZOHO_REFRESH_TOKEN");
 
-// Zoho's accounts/mail API base domain depends on which data center the
-// Zoho org lives in (their Flow UI is on flow.zohocloud.ca, suggesting the
-// Canada DC) — flip this one constant if attachment fetches come back with
-// an "invalid oauth token"/DC-mismatch error during setup, no redeploy of
-// anything else needed.
-const ZOHO_API_DOMAIN = "zohocloud.ca";
+// Confirmed correct via a live OAuth token exchange: the org's accounts
+// server is on the Canada DC.
+const ZOHO_ACCOUNTS_DOMAIN = "zohocloud.ca";
+
+// Zoho Mail's own REST API doesn't necessarily live on the same domain as
+// the accounts server (confirmed the hard way: mail.zohocloud.ca returned
+// URL_RULE_NOT_CONFIGURED even with a valid token/account). Try each
+// candidate in order and remember whichever one actually works, so this
+// only pays the extra round-trip once per warm instance.
+const ZOHO_MAIL_DOMAIN_CANDIDATES = ["zohocloud.ca", "zoho.com"];
+let cachedZohoMailDomain = null;
 
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
 const ROLES_DOC = admin.firestore().doc("campground/data");
@@ -415,7 +420,7 @@ async function getZohoAccessToken() {
     client_secret: ZOHO_CLIENT_SECRET.value(),
     grant_type: "refresh_token"
   });
-  const response = await fetch(`https://accounts.${ZOHO_API_DOMAIN}/oauth/v2/token?${params.toString()}`, {
+  const response = await fetch(`https://accounts.${ZOHO_ACCOUNTS_DOMAIN}/oauth/v2/token?${params.toString()}`, {
     method: "POST"
   });
   const data = await response.json();
@@ -450,6 +455,30 @@ async function uploadAttachmentToStorage(buffer, originalName, contentType) {
 // attachment, just guarding the function's memory against something absurd.
 const ZOHO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
+// GETs a Zoho Mail API path, trying each candidate mail domain in turn
+// until one responds 2xx, then sticks with that domain for the rest of
+// this warm instance's life. Returns null (having logged every attempt)
+// if every candidate fails - callers treat that as "no attachments".
+async function zohoMailGet(path, accessToken) {
+  const domains = cachedZohoMailDomain ? [cachedZohoMailDomain] : ZOHO_MAIL_DOMAIN_CANDIDATES;
+  let lastFailure = null;
+  for (const domain of domains) {
+    const response = await fetch(`https://mail.${domain}${path}`, {
+      headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }
+    });
+    if (response.ok) {
+      if (cachedZohoMailDomain !== domain) {
+        console.log("Zoho Mail API working domain confirmed:", domain);
+      }
+      cachedZohoMailDomain = domain;
+      return response;
+    }
+    lastFailure = { domain, status: response.status, body: await response.text() };
+  }
+  console.error("Zoho Mail API request failed on every candidate domain:", path, lastFailure);
+  return null;
+}
+
 // Zoho Flow's Mail trigger doesn't expose attachment content directly, only
 // the accountId/folderId/messageId needed to go fetch it ourselves via the
 // Zoho Mail REST API. Best-effort: any failure here (bad OAuth setup, a
@@ -457,18 +486,17 @@ const ZOHO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 // than blocking the correspondence entry from being written.
 async function fetchZohoAttachments({ accountId, folderId, messageId }) {
   if (!accountId || !folderId || !messageId) return [];
+  console.log("Fetching Zoho attachments for", { accountId, folderId, messageId });
   try {
     const accessToken = await getZohoAccessToken();
-    const infoResponse = await fetch(
-      `https://mail.${ZOHO_API_DOMAIN}/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
-      { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+    const infoResponse = await zohoMailGet(
+      `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
+      accessToken
     );
-    if (!infoResponse.ok) {
-      console.error("Zoho attachmentinfo failed:", infoResponse.status, await infoResponse.text());
-      return [];
-    }
+    if (!infoResponse) return [];
     const infoData = await infoResponse.json();
     const items = (infoData.data && infoData.data.attachments) || [];
+    console.log(`Zoho attachmentinfo returned ${items.length} attachment(s)`);
 
     const results = [];
     for (const item of items) {
@@ -478,14 +506,11 @@ async function fetchZohoAttachments({ accountId, folderId, messageId }) {
         continue;
       }
       try {
-        const fileResponse = await fetch(
-          `https://mail.${ZOHO_API_DOMAIN}/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
-          { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+        const fileResponse = await zohoMailGet(
+          `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
+          accessToken
         );
-        if (!fileResponse.ok) {
-          console.error("Zoho attachment download failed:", item.attachmentId, fileResponse.status);
-          continue;
-        }
+        if (!fileResponse) continue;
         const buffer = Buffer.from(await fileResponse.arrayBuffer());
         const contentType = fileResponse.headers.get("content-type");
         const url = await uploadAttachmentToStorage(buffer, item.attachmentName, contentType);
