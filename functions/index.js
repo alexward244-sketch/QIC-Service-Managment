@@ -28,6 +28,13 @@ const ZOHO_MAIL_DOMAIN = "zohocloud.ca";
 // since this is a single fixed mailbox for the org.
 const ZOHO_MAIL_ACCOUNT_ID = "50669000000002002";
 
+// service@qicampark.com's real Inbox folder ID (confirmed via a live
+// GET /api/accounts/.../folders call). Zoho Flow's own "Folder ID" trigger
+// variable does NOT point here (it's actually the Snoozed folder's ID) -
+// same story as "Message ID" below, so this is hardcoded instead of trusted
+// from the webhook body.
+const ZOHO_MAIL_INBOX_FOLDER_ID = "50669000000002014";
+
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
 const ROLES_DOC = admin.firestore().doc("campground/data");
 
@@ -489,22 +496,47 @@ async function zohoMailGetWithRetry(path, accessToken, attempts = 3, delayMs = 2
   return null;
 }
 
-// Zoho Flow's Mail trigger doesn't expose attachment content directly, only
-// the folderId/messageId needed to go fetch it ourselves via the Zoho Mail
-// REST API (accountId is hardcoded above - see ZOHO_MAIL_ACCOUNT_ID).
+// Zoho Flow's Mail trigger's "Folder ID" and "Message ID" variables turned
+// out not to be trustworthy - live testing showed Folder ID actually points
+// at the Snoozed folder (not Inbox), and Message ID matches the real
+// message only sometimes and fails consistently (not just transiently) the
+// rest of the time, for reasons that never turned up in Zoho's own error
+// responses. Rather than depend on either, this looks up the real message
+// itself: lists the Inbox's most recent messages and matches by sender.
+// The message being fetched was, by definition, just received, so a small,
+// short-retried listing is enough - no need to page through history.
+async function findRealMessageId(accessToken, fromEmail) {
+  const target = (fromEmail || "").toLowerCase();
+  if (!target) return null;
+  const response = await zohoMailGetWithRetry(
+    `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${ZOHO_MAIL_INBOX_FOLDER_ID}&limit=15&sortBy=date`,
+    accessToken
+  );
+  if (!response) return null;
+  const data = await response.json();
+  const messages = data.data || [];
+  const match = messages.find((m) => (m.fromAddress || "").toLowerCase() === target);
+  return match ? match.messageId : null;
+}
+
 // Best-effort: any failure here (bad OAuth setup, a huge attachment, a
 // transient Zoho error) is logged and skipped rather than blocking the
 // correspondence entry from being written.
-async function fetchZohoAttachments({ folderId, messageId }) {
-  if (!folderId || !messageId) return [];
-  console.log("Fetching Zoho attachments for", { folderId, messageId });
+async function fetchZohoAttachments({ fromEmail }) {
+  if (!fromEmail) return [];
   try {
     const accessToken = await getZohoAccessToken();
+    const messageId = await findRealMessageId(accessToken, fromEmail);
+    if (!messageId) {
+      console.error("Couldn't find a matching Zoho message for attachment lookup:", fromEmail);
+      return [];
+    }
+    console.log("Fetching Zoho attachments for", { fromEmail, messageId });
     // includeInline=true is required to see photos pasted/dragged directly
     // into the email body (common from phone mail apps) - Zoho tracks those
     // separately from regular file attachments and omits them by default.
     const infoResponse = await zohoMailGetWithRetry(
-      `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachmentinfo?includeInline=true`,
+      `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${ZOHO_MAIL_INBOX_FOLDER_ID}/messages/${messageId}/attachmentinfo?includeInline=true`,
       accessToken
     );
     if (!infoResponse) return [];
@@ -521,7 +553,7 @@ async function fetchZohoAttachments({ folderId, messageId }) {
       }
       try {
         const fileResponse = await zohoMailGetWithRetry(
-          `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
+          `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${ZOHO_MAIL_INBOX_FOLDER_ID}/messages/${messageId}/attachments/${item.attachmentId}`,
           accessToken
         );
         if (!fileResponse) continue;
@@ -560,10 +592,10 @@ exports.serviceCorrespondence = onRequest(
     //   From Address  => fromEmail
     //   Subject        => subject
     //   Body / Plain Text => body
-    //   Folder ID      => folderId (optional - enables attachment fetching)
-    //   Message ID     => messageId (optional - enables attachment fetching)
-    // (Flow's "Account" variable is intentionally unused - it isn't the
-    // Zoho Mail REST API's accountId; see ZOHO_MAIL_ACCOUNT_ID above.)
+    // Flow's "Account", "Folder ID", and "Message ID" variables are
+    // intentionally unused - none of them reliably match the Zoho Mail
+    // REST API's own identifiers (see findRealMessageId, which looks the
+    // real message up directly instead of trusting these).
     const fromEmail = toStr(body.fromEmail).toLowerCase();
 
     if (!fromEmail) {
@@ -613,10 +645,7 @@ exports.serviceCorrespondence = onRequest(
       const [suggestedFlag, needsReply, attachments] = await Promise.all([
         classifyUrgency(toStr(body.subject), storedBody),
         classifyNeedsReply(toStr(body.subject), storedBody),
-        fetchZohoAttachments({
-          folderId: toStr(body.folderId),
-          messageId: toStr(body.messageId)
-        })
+        fetchZohoAttachments({ fromEmail })
       ]);
 
       const entry = {
