@@ -482,13 +482,16 @@ async function fetchZohoAttachments({ folderId, messageId }) {
   console.log("Fetching Zoho attachments for", { folderId, messageId });
   try {
     const accessToken = await getZohoAccessToken();
+    // includeInline=true is required to see photos pasted/dragged directly
+    // into the email body (common from phone mail apps) - Zoho tracks those
+    // separately from regular file attachments and omits them by default.
     const infoResponse = await zohoMailGet(
-      `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
+      `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachmentinfo?includeInline=true`,
       accessToken
     );
     if (!infoResponse) return [];
     const infoData = await infoResponse.json();
-    const items = (infoData.data && infoData.data.attachments) || [];
+    const items = [...((infoData.data && infoData.data.attachments) || []), ...((infoData.data && infoData.data.inline) || [])];
     console.log(`Zoho attachmentinfo returned ${items.length} attachment(s)`);
 
     const results = [];
