@@ -18,13 +18,15 @@ const ZOHO_REFRESH_TOKEN = defineSecret("ZOHO_REFRESH_TOKEN");
 const ZOHO_ACCOUNTS_DOMAIN = "zohocloud.ca";
 const ZOHO_MAIL_DOMAIN = "zohocloud.ca";
 
-// The Mail REST API's accountId is NOT the same value as Zoho Flow's
-// "Account" trigger variable (confirmed empirically: Flow sends
-// 50669000000002002, but GET /api/accounts for this mailbox returns
-// 49913000000002002 - a different ID system entirely, not a typo). This
-// is a single fixed mailbox for the org, so hardcode the real one rather
-// than trust whatever Flow's variable picker happens to label "Account".
-const ZOHO_MAIL_ACCOUNT_ID = "49913000000002002";
+// service@qicampark.com's own Zoho Mail account ID (confirmed via a live
+// GET /api/accounts call authorized directly as that mailbox - it matches
+// what Zoho Flow's "Account" trigger variable sends, which was correct
+// all along). The earlier failures here were about OAuth identity, not
+// this ID: the Self Client credentials below are authorized as
+// service@qicampark.com itself, not as a delegate/personal account, which
+// is what actually made the Mail REST API calls start working. Hardcoded
+// since this is a single fixed mailbox for the org.
+const ZOHO_MAIL_ACCOUNT_ID = "50669000000002002";
 
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
 const ROLES_DOC = admin.firestore().doc("campground/data");
