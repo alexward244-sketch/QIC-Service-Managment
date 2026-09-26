@@ -466,8 +466,26 @@ async function zohoMailGet(path, accessToken) {
   const response = await fetch(`https://mail.${ZOHO_MAIL_DOMAIN}${path}`, {
     headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }
   });
-  if (response.ok) return response;
-  console.error("Zoho Mail API request failed:", path, response.status, await response.text());
+  if (response.ok) return { response };
+  const body = await response.text();
+  console.error("Zoho Mail API request failed:", path, response.status, body);
+  return { status: response.status, body };
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// A message that Zoho Flow's trigger just fired on can briefly 400 as
+// "invalid" on attachmentinfo before it's fully indexed on Zoho's read
+// path (observed live: the same messageId that failed instantly would've
+// succeeded fetched a few seconds later). Retry a couple of times with a
+// short delay before giving up, rather than losing the attachment to a
+// timing race.
+async function zohoMailGetWithRetry(path, accessToken, attempts = 3, delayMs = 2000) {
+  for (let i = 0; i < attempts; i++) {
+    const result = await zohoMailGet(path, accessToken);
+    if (result.response) return result.response;
+    if (i < attempts - 1) await sleep(delayMs);
+  }
   return null;
 }
 
@@ -485,7 +503,7 @@ async function fetchZohoAttachments({ folderId, messageId }) {
     // includeInline=true is required to see photos pasted/dragged directly
     // into the email body (common from phone mail apps) - Zoho tracks those
     // separately from regular file attachments and omits them by default.
-    const infoResponse = await zohoMailGet(
+    const infoResponse = await zohoMailGetWithRetry(
       `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachmentinfo?includeInline=true`,
       accessToken
     );
@@ -502,7 +520,7 @@ async function fetchZohoAttachments({ folderId, messageId }) {
         continue;
       }
       try {
-        const fileResponse = await zohoMailGet(
+        const fileResponse = await zohoMailGetWithRetry(
           `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
           accessToken
         );
