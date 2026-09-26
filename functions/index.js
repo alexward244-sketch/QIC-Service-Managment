@@ -1,12 +1,23 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
+const crypto = require("crypto");
 
 admin.initializeApp();
 const db = admin.firestore();
 
 const WEBHOOK_SECRET = defineSecret("WINTERIZING_WEBHOOK_SECRET");
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const ZOHO_CLIENT_ID = defineSecret("ZOHO_CLIENT_ID");
+const ZOHO_CLIENT_SECRET = defineSecret("ZOHO_CLIENT_SECRET");
+const ZOHO_REFRESH_TOKEN = defineSecret("ZOHO_REFRESH_TOKEN");
+
+// Zoho's accounts/mail API base domain depends on which data center the
+// Zoho org lives in (their Flow UI is on flow.zohocloud.ca, suggesting the
+// Canada DC) — flip this one constant if attachment fetches come back with
+// an "invalid oauth token"/DC-mismatch error during setup, no redeploy of
+// anything else needed.
+const ZOHO_API_DOMAIN = "zohocloud.ca";
 
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
 const ROLES_DOC = admin.firestore().doc("campground/data");
@@ -389,8 +400,109 @@ async function findCustomerByEmail(email) {
   return hit ? hit.id : null;
 }
 
+// Zoho access tokens are short-lived (~1hr); cached at module scope so a
+// warm function instance reuses one instead of spending a refresh-token
+// grant (rate-limited to 10 per 10 minutes) on every inbound email.
+let cachedZohoToken = null; // { token, expiresAt }
+
+async function getZohoAccessToken() {
+  if (cachedZohoToken && cachedZohoToken.expiresAt > Date.now() + 60 * 1000) {
+    return cachedZohoToken.token;
+  }
+  const params = new URLSearchParams({
+    refresh_token: ZOHO_REFRESH_TOKEN.value(),
+    client_id: ZOHO_CLIENT_ID.value(),
+    client_secret: ZOHO_CLIENT_SECRET.value(),
+    grant_type: "refresh_token"
+  });
+  const response = await fetch(`https://accounts.${ZOHO_API_DOMAIN}/oauth/v2/token?${params.toString()}`, {
+    method: "POST"
+  });
+  const data = await response.json();
+  if (!response.ok || !data.access_token) {
+    throw new Error(`Zoho token refresh failed: ${response.status} ${JSON.stringify(data)}`);
+  }
+  cachedZohoToken = { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 };
+  return cachedZohoToken.token;
+}
+
+// Uploads a fetched attachment to the same Storage path the app's own
+// outgoing-attachment flow uses (correspondence-attachments/), and builds a
+// Firebase-style download URL (a long-lived access token embedded in the
+// URL) matching what the client SDK's getDownloadURL() returns, so inbound
+// and outgoing attachments render identically in the correspondence thread.
+async function uploadAttachmentToStorage(buffer, originalName, contentType) {
+  const bucket = admin.storage().bucket();
+  const safeName = (originalName || "attachment").replace(/\s+/g, "_");
+  const path = `correspondence-attachments/${Date.now()}-${safeName}`;
+  const token = crypto.randomUUID();
+  const file = bucket.file(path);
+  await file.save(buffer, {
+    metadata: {
+      contentType: contentType || "application/octet-stream",
+      metadata: { firebaseStorageDownloadTokens: token }
+    }
+  });
+  return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+}
+
+// Caps a single attachment at 25MB — comfortably above any real email
+// attachment, just guarding the function's memory against something absurd.
+const ZOHO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
+// Zoho Flow's Mail trigger doesn't expose attachment content directly, only
+// the accountId/folderId/messageId needed to go fetch it ourselves via the
+// Zoho Mail REST API. Best-effort: any failure here (bad OAuth setup, a
+// huge attachment, a transient Zoho error) is logged and skipped rather
+// than blocking the correspondence entry from being written.
+async function fetchZohoAttachments({ accountId, folderId, messageId }) {
+  if (!accountId || !folderId || !messageId) return [];
+  try {
+    const accessToken = await getZohoAccessToken();
+    const infoResponse = await fetch(
+      `https://mail.${ZOHO_API_DOMAIN}/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
+      { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+    );
+    if (!infoResponse.ok) {
+      console.error("Zoho attachmentinfo failed:", infoResponse.status, await infoResponse.text());
+      return [];
+    }
+    const infoData = await infoResponse.json();
+    const items = (infoData.data && infoData.data.attachments) || [];
+
+    const results = [];
+    for (const item of items) {
+      if (!item.attachmentId) continue;
+      if (item.attachmentSize && item.attachmentSize > ZOHO_ATTACHMENT_MAX_BYTES) {
+        console.error("Skipping oversized Zoho attachment:", item.attachmentName, item.attachmentSize);
+        continue;
+      }
+      try {
+        const fileResponse = await fetch(
+          `https://mail.${ZOHO_API_DOMAIN}/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
+          { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` } }
+        );
+        if (!fileResponse.ok) {
+          console.error("Zoho attachment download failed:", item.attachmentId, fileResponse.status);
+          continue;
+        }
+        const buffer = Buffer.from(await fileResponse.arrayBuffer());
+        const contentType = fileResponse.headers.get("content-type");
+        const url = await uploadAttachmentToStorage(buffer, item.attachmentName, contentType);
+        results.push({ url, name: item.attachmentName || "attachment" });
+      } catch (err) {
+        console.error("Failed to fetch/upload one Zoho attachment:", item.attachmentId, err);
+      }
+    }
+    return results;
+  } catch (err) {
+    console.error("Failed to fetch Zoho attachments:", err);
+    return [];
+  }
+}
+
 exports.serviceCorrespondence = onRequest(
-  { secrets: [WEBHOOK_SECRET, ANTHROPIC_API_KEY], cors: false },
+  { secrets: [WEBHOOK_SECRET, ANTHROPIC_API_KEY, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN], cors: false, timeoutSeconds: 120 },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("Method not allowed");
@@ -406,11 +518,12 @@ exports.serviceCorrespondence = onRequest(
     const body = req.body || {};
 
     // Zoho Flow field mapping for this trigger:
-    //   From Address       => fromEmail
-    //   Subject             => subject
-    //   Body / Plain Text   => body
-    //   Attachment URL      => attachmentUrl (optional)
-    //   Attachment Name     => attachmentName (optional)
+    //   From Address  => fromEmail
+    //   Subject        => subject
+    //   Body / Plain Text => body
+    //   Account        => accountId (optional - enables attachment fetching)
+    //   Folder ID      => folderId (optional - enables attachment fetching)
+    //   Message ID     => messageId (optional - enables attachment fetching)
     const fromEmail = toStr(body.fromEmail).toLowerCase();
 
     if (!fromEmail) {
@@ -457,9 +570,14 @@ exports.serviceCorrespondence = onRequest(
       const storedBody = forwardedBy ? plainBody : stripQuotedReplyText(plainBody);
 
       const customerId = await findCustomerByEmail(effectiveFrom);
-      const [suggestedFlag, needsReply] = await Promise.all([
+      const [suggestedFlag, needsReply, attachments] = await Promise.all([
         classifyUrgency(toStr(body.subject), storedBody),
-        classifyNeedsReply(toStr(body.subject), storedBody)
+        classifyNeedsReply(toStr(body.subject), storedBody),
+        fetchZohoAttachments({
+          accountId: toStr(body.accountId),
+          folderId: toStr(body.folderId),
+          messageId: toStr(body.messageId)
+        })
       ]);
 
       const entry = {
@@ -474,8 +592,7 @@ exports.serviceCorrespondence = onRequest(
         subject: toStr(body.subject),
         body: storedBody,
         receivedAt: new Date().toISOString(),
-        attachmentUrl: toStr(body.attachmentUrl) || null,
-        attachmentName: toStr(body.attachmentName) || null
+        attachments
       };
 
       await db.collection("correspondence").doc(entry.id).set(entry);
