@@ -798,6 +798,21 @@ function nextInvoiceNumber(db) {
   });
   return `INV-${String(max + 1).padStart(4, "0")}`;
 }
+// Same pattern as nextInvoiceNumber - a short unique tag so two similarly
+// named work orders can always be told apart, especially when picking one
+// to link an invoice to.
+function nextWorkOrderNumber(db) {
+  const workOrders = db.workOrders || [];
+  let max = 0;
+  workOrders.forEach((wo) => {
+    const match = /WO-(\d+)/.exec(wo.workOrderNumber || "");
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (n > max) max = n;
+    }
+  });
+  return `WO-${String(max + 1).padStart(4, "0")}`;
+}
 function isInvoicePaidInFull(invoice, taxRate) {
   if (!invoice) return false;
   if (invoice.paidInFullDate) return true;
@@ -1046,6 +1061,7 @@ function useDb() {
   const [saveError, setSaveError] = useState(null);
   const lastAttempt = useRef(null);
   const migratedRef = useRef(false);
+  const woNumberMigratedRef = useRef(false);
   useEffect(() => {
     const unsub = DOC_REF.onSnapshot(
       (snap) => {
@@ -1132,6 +1148,26 @@ function useDb() {
         const list = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setWorkOrdersList(list);
+        // One-time backfill: work orders created before workOrderNumber
+        // existed have none, which defeats the point of using it to tell
+        // similarly-named work orders apart. Assign the missing ones in
+        // date order, continuing from the highest number already in use.
+        if (!woNumberMigratedRef.current && list.length > 0) {
+          woNumberMigratedRef.current = true;
+          const missingNumbers = list.filter((w) => !w.workOrderNumber).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+          if (missingNumbers.length > 0) {
+            let maxN = 0;
+            list.forEach((w) => {
+              const match = /WO-(\d+)/.exec(w.workOrderNumber || "");
+              if (match) maxN = Math.max(maxN, parseInt(match[1], 10));
+            });
+            commitInChunks(missingNumbers.map((w) => {
+              maxN += 1;
+              return { type: "set", ref: WORK_ORDERS_REF.doc(w.id), data: { ...w, workOrderNumber: `WO-${String(maxN).padStart(4, "0")}` } };
+            })).catch(() => {
+            });
+          }
+        }
       },
       () => {
       }
@@ -2532,7 +2568,7 @@ function WorkOrderViewModal({ wo, db, persist, saveWorkOrder, saveCorrespondence
   const relatedSection = (relatedTo || followUps.length > 0) && /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-1 mb-4" }, relatedTo && /* @__PURE__ */ React.createElement("button", { className: "text-left text-xs text-[#377249] hover:underline", onClick: () => setLinkedWO(relatedTo) }, "↩ Comeback for: ", relatedTo.title, relatedTo.completedDate ? ` — completed ${relatedTo.completedDate}` : ""), followUps.map((f) => /* @__PURE__ */ React.createElement("button", { key: f.id, className: "text-left text-xs text-[#377249] hover:underline", onClick: () => setLinkedWO(f) }, "↪ Follow-up: ", f.title, " — ", f.status)));
   const isDrawer = variant === "drawer";
   const Wrap = isDrawer ? DrawerShell : Modal;
-  const wrapProps = isDrawer ? { title: wo.title, eyebrow: `Work order${site ? " \xB7 Site " + site.number : cottage ? " \xB7 " + cottage.name : ""}`, badges: [wo.priority && /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)].filter(Boolean), onClose, width: "480px" } : { title: wo.title, onClose, xl: true };
+  const wrapProps = isDrawer ? { title: wo.title, eyebrow: `${wo.workOrderNumber ? wo.workOrderNumber + " \xB7 " : ""}Work order${site ? " \xB7 Site " + site.number : cottage ? " \xB7 " + cottage.name : ""}`, badges: [wo.priority && /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)].filter(Boolean), onClose, width: "480px" } : { title: wo.workOrderNumber ? `${wo.workOrderNumber} — ${wo.title}` : wo.title, onClose, xl: true };
   return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), relatedSection, wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
     const part = db.parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "x", pu.quantity));
@@ -4044,6 +4080,7 @@ function QuickWorkOrderModal({ db, initial, saveWorkOrder, onClose }) {
     taxRate,
     workOrders: db.workOrders,
     rateOptions: getLaborRateOptions(db),
+    workOrderNumber: nextWorkOrderNumber(db),
     onSave: save,
     onCancel: onClose,
     onDirtyChange: () => {
@@ -4901,8 +4938,11 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     options: workOrders.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((w) => {
       const site = w.siteId ? sites.find((s) => s.id === w.siteId) : null;
       const cottage = w.cottageId ? cottages.find((c) => c.id === w.cottageId) : null;
+      const customer = w.customerId ? customers.find((c) => c.id === w.customerId) : null;
       const where = site ? `Site ${site.number}` : cottage ? cottage.name : "Unassigned";
-      return { value: w.id, label: `${w.title} — ${where} (${w.status})`, searchText: [w.title, site == null ? void 0 : site.number, cottage == null ? void 0 : cottage.name, w.status].filter(Boolean).join(" ") };
+      const numberPrefix = w.workOrderNumber ? `${w.workOrderNumber} — ` : "";
+      const label = `${numberPrefix}${w.title} — ${where}${customer ? " · " + customer.name : ""} (${w.date || ""}, ${w.status})`;
+      return { value: w.id, label, searchText: [w.workOrderNumber, w.title, site == null ? void 0 : site.number, cottage == null ? void 0 : cottage.name, customer == null ? void 0 : customer.name, w.status].filter(Boolean).join(" ") };
     }),
     value: linkedWorkOrderId,
     onChange: pickWorkOrder,
@@ -5925,6 +5965,7 @@ function QuotesView({ db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoTo
     const lineItemNotes = quote.lineItems.length ? "Line items:\n" + quote.lineItems.map((li) => `- ${li.description} (x${li.quantity})`).join("\n") : "";
     const newWorkOrder = {
       id: newId,
+      workOrderNumber: nextWorkOrderNumber(db),
       title: quote.title,
       description: [quote.notes, lineItemNotes].filter(Boolean).join("\n\n"),
       siteId: quote.siteId || null,
@@ -9491,7 +9532,7 @@ function WorkOrderRow({ wo, db, onOpen, onAdvance, onText, smsStatus, onCreateIn
     selectMode && /* @__PURE__ */ React.createElement("span", {
       className: `w-4 h-4 rounded flex-shrink-0 border-2 flex items-center justify-center ${selected ? "bg-[#377249] border-[#377249]" : "bg-[#FFFDFA] border-[#C7C2B8]"}`
     }, selected && /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-2.5 h-2.5", fill: "none", stroke: "#F9F5EC", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))),
-    /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium truncate ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/50" : "text-[#1E1A13]"}` }, wo.title), wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), overdue && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white flex-shrink-0" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C] flex-shrink-0" }, wo.workGroup), wo.notes && wo.notes.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] flex-shrink-0" }, wo.notes.length, " note", wo.notes.length === 1 ? "" : "s")), metaParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate mt-0.5" }, metaParts.join(" \xB7 "))),
+    /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, wo.workOrderNumber && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-mono text-[#9A968D] flex-shrink-0" }, wo.workOrderNumber), /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium truncate ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/50" : "text-[#1E1A13]"}` }, wo.title), wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), overdue && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white flex-shrink-0" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C] flex-shrink-0" }, wo.workGroup), wo.notes && wo.notes.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] flex-shrink-0" }, wo.notes.length, " note", wo.notes.length === 1 ? "" : "s")), metaParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate mt-0.5" }, metaParts.join(" \xB7 "))),
     isDone ? /* @__PURE__ */ React.createElement(
       "select",
       {
@@ -10272,7 +10313,7 @@ function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, on
     placeholder: "Add from parts\u2026"
   })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Template")));
 }
-function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, workOrders, rateOptions, onSave, onCancel, onDirtyChange }) {
+function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, workOrders, rateOptions, workOrderNumber, onSave, onCancel, onDirtyChange }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [description, setDescription] = useState((initial == null ? void 0 : initial.description) || "");
@@ -10428,6 +10469,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
     if (!title.trim()) return;
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
+      workOrderNumber: (initial == null ? void 0 : initial.workOrderNumber) || workOrderNumber,
       title: title.trim(),
       description: description.trim(),
       siteId: siteId || null,
@@ -12487,7 +12529,7 @@ function buildServiceItems(db, taxRate) {
   });
   return items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
-function ServiceReportsView({ db, persist, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveCorrespondence }) {
+function ServiceReportsView({ db, persist, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice }) {
   var _a, _b;
   const [viewingWO, setViewingWO] = useState(null);
   const [editingWinterizing, setEditingWinterizing] = useState(null);
@@ -12593,7 +12635,7 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest, saveWorkOrder
       className: "px-3 py-1.5 rounded-lg text-xs font-semibold border border-[#E2DED5] bg-white text-[#4B4740] hover:bg-[#F1EEE9] disabled:opacity-40 disabled:cursor-not-allowed"
     },
     "Next \u2192"
-  )))), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" }), editingWinterizing && /* @__PURE__ */ React.createElement(Modal, { title: "Edit Winterizing Sign-Up", onClose: () => setEditingWinterizing(null) }, /* @__PURE__ */ React.createElement(WinterizingRequestForm, {
+  )))), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), onCreateInvoice, variant: "drawer" }), editingWinterizing && /* @__PURE__ */ React.createElement(Modal, { title: "Edit Winterizing Sign-Up", onClose: () => setEditingWinterizing(null) }, /* @__PURE__ */ React.createElement(WinterizingRequestForm, {
     initial: editingWinterizing,
     db,
     onSave: (request) => {
@@ -14701,6 +14743,7 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
         taxRate: (db.settings || {}).taxRate != null ? db.settings.taxRate : 13,
         workOrders: db.workOrders,
         rateOptions: getLaborRateOptions(db),
+        workOrderNumber: nextWorkOrderNumber(db),
         onSave: saveNew,
         onCancel: () => setNewOpen(false),
         onDirtyChange: () => {
@@ -15596,6 +15639,7 @@ function FieldQuotesScreen({ db, persist, actor, saveQuote, saveWorkOrder, onBac
     const lineItemNotes = quote.lineItems.length ? "Line items:\n" + quote.lineItems.map((li) => `- ${li.description} (x${li.quantity})`).join("\n") : "";
     const newWorkOrder = {
       id: newId,
+      workOrderNumber: nextWorkOrderNumber(db),
       title: quote.title,
       description: [quote.notes, lineItemNotes].filter(Boolean).join("\n\n"),
       siteId: quote.siteId || null,
@@ -16748,6 +16792,7 @@ function AppContent() {
     const today = todayISO();
     let anyDue = false;
     const newWorkOrders = [];
+    let nextWoNumber = parseInt(nextWorkOrderNumber(db).split("-")[1], 10);
     const updatedTasks = tasks.map((t) => {
       if (t.nextDueDate > today) return t;
       anyDue = true;
@@ -16755,6 +16800,7 @@ function AppContent() {
       while (nextDue <= today) {
         newWorkOrders.push({
           id: uid(),
+          workOrderNumber: `WO-${String(nextWoNumber++).padStart(4, "0")}`,
           title: t.title,
           description: t.description || "",
           siteId: t.siteId || null,
@@ -17066,7 +17112,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveCorrespondence }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
