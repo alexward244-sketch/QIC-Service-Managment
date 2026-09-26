@@ -12,17 +12,19 @@ const ZOHO_CLIENT_ID = defineSecret("ZOHO_CLIENT_ID");
 const ZOHO_CLIENT_SECRET = defineSecret("ZOHO_CLIENT_SECRET");
 const ZOHO_REFRESH_TOKEN = defineSecret("ZOHO_REFRESH_TOKEN");
 
-// Confirmed correct via a live OAuth token exchange: the org's accounts
-// server is on the Canada DC.
+// Confirmed correct via live requests against both the accounts/token
+// server and the Mail REST API itself (a real GET /api/accounts response
+// came back from here, not a routing error) - the org's Zoho DC is Canada.
 const ZOHO_ACCOUNTS_DOMAIN = "zohocloud.ca";
+const ZOHO_MAIL_DOMAIN = "zohocloud.ca";
 
-// Zoho Mail's own REST API doesn't necessarily live on the same domain as
-// the accounts server (confirmed the hard way: mail.zohocloud.ca returned
-// URL_RULE_NOT_CONFIGURED even with a valid token/account). Try each
-// candidate in order and remember whichever one actually works, so this
-// only pays the extra round-trip once per warm instance.
-const ZOHO_MAIL_DOMAIN_CANDIDATES = ["zohocloud.ca", "zoho.com"];
-let cachedZohoMailDomain = null;
+// The Mail REST API's accountId is NOT the same value as Zoho Flow's
+// "Account" trigger variable (confirmed empirically: Flow sends
+// 50669000000002002, but GET /api/accounts for this mailbox returns
+// 49913000000002002 - a different ID system entirely, not a typo). This
+// is a single fixed mailbox for the org, so hardcode the real one rather
+// than trust whatever Flow's variable picker happens to label "Account".
+const ZOHO_MAIL_ACCOUNT_ID = "49913000000002002";
 
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
 const ROLES_DOC = admin.firestore().doc("campground/data");
@@ -455,42 +457,31 @@ async function uploadAttachmentToStorage(buffer, originalName, contentType) {
 // attachment, just guarding the function's memory against something absurd.
 const ZOHO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
-// GETs a Zoho Mail API path, trying each candidate mail domain in turn
-// until one responds 2xx, then sticks with that domain for the rest of
-// this warm instance's life. Returns null (having logged every attempt)
-// if every candidate fails - callers treat that as "no attachments".
+// GETs a Zoho Mail API path. Returns null (having logged the failure) if
+// the request doesn't come back 2xx - callers treat that as "no
+// attachments" rather than losing the whole correspondence entry.
 async function zohoMailGet(path, accessToken) {
-  const domains = cachedZohoMailDomain ? [cachedZohoMailDomain] : ZOHO_MAIL_DOMAIN_CANDIDATES;
-  let lastFailure = null;
-  for (const domain of domains) {
-    const response = await fetch(`https://mail.${domain}${path}`, {
-      headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }
-    });
-    if (response.ok) {
-      if (cachedZohoMailDomain !== domain) {
-        console.log("Zoho Mail API working domain confirmed:", domain);
-      }
-      cachedZohoMailDomain = domain;
-      return response;
-    }
-    lastFailure = { domain, status: response.status, body: await response.text() };
-  }
-  console.error("Zoho Mail API request failed on every candidate domain:", path, lastFailure);
+  const response = await fetch(`https://mail.${ZOHO_MAIL_DOMAIN}${path}`, {
+    headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }
+  });
+  if (response.ok) return response;
+  console.error("Zoho Mail API request failed:", path, response.status, await response.text());
   return null;
 }
 
 // Zoho Flow's Mail trigger doesn't expose attachment content directly, only
-// the accountId/folderId/messageId needed to go fetch it ourselves via the
-// Zoho Mail REST API. Best-effort: any failure here (bad OAuth setup, a
-// huge attachment, a transient Zoho error) is logged and skipped rather
-// than blocking the correspondence entry from being written.
-async function fetchZohoAttachments({ accountId, folderId, messageId }) {
-  if (!accountId || !folderId || !messageId) return [];
-  console.log("Fetching Zoho attachments for", { accountId, folderId, messageId });
+// the folderId/messageId needed to go fetch it ourselves via the Zoho Mail
+// REST API (accountId is hardcoded above - see ZOHO_MAIL_ACCOUNT_ID).
+// Best-effort: any failure here (bad OAuth setup, a huge attachment, a
+// transient Zoho error) is logged and skipped rather than blocking the
+// correspondence entry from being written.
+async function fetchZohoAttachments({ folderId, messageId }) {
+  if (!folderId || !messageId) return [];
+  console.log("Fetching Zoho attachments for", { folderId, messageId });
   try {
     const accessToken = await getZohoAccessToken();
     const infoResponse = await zohoMailGet(
-      `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
+      `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
       accessToken
     );
     if (!infoResponse) return [];
@@ -507,7 +498,7 @@ async function fetchZohoAttachments({ accountId, folderId, messageId }) {
       }
       try {
         const fileResponse = await zohoMailGet(
-          `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
+          `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${messageId}/attachments/${item.attachmentId}`,
           accessToken
         );
         if (!fileResponse) continue;
@@ -546,9 +537,10 @@ exports.serviceCorrespondence = onRequest(
     //   From Address  => fromEmail
     //   Subject        => subject
     //   Body / Plain Text => body
-    //   Account        => accountId (optional - enables attachment fetching)
     //   Folder ID      => folderId (optional - enables attachment fetching)
     //   Message ID     => messageId (optional - enables attachment fetching)
+    // (Flow's "Account" variable is intentionally unused - it isn't the
+    // Zoho Mail REST API's accountId; see ZOHO_MAIL_ACCOUNT_ID above.)
     const fromEmail = toStr(body.fromEmail).toLowerCase();
 
     if (!fromEmail) {
@@ -599,7 +591,6 @@ exports.serviceCorrespondence = onRequest(
         classifyUrgency(toStr(body.subject), storedBody),
         classifyNeedsReply(toStr(body.subject), storedBody),
         fetchZohoAttachments({
-          accountId: toStr(body.accountId),
           folderId: toStr(body.folderId),
           messageId: toStr(body.messageId)
         })
