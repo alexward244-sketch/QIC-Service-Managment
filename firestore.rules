@@ -40,6 +40,13 @@ service cloud.firestore {
       return role() == 'admin';
     }
 
+    // The roles the app already treats as handling money (isAdminOrManager
+    // in index.html): they get the Quotes, Invoices and Parts screens, the
+    // customer card's quote/invoice buttons, backups and Trash.
+    function isMoneyRole() {
+      return role() in ['admin', 'manager', 'accounting'];
+    }
+
     // The one shared document holding settings, deals, trash, the activity
     // log, loginCodes (a per-device PIN convenience feature — not the
     // authorization boundary, left as a normal client-writable field), and —
@@ -63,21 +70,45 @@ service cloud.firestore {
     // restriction above, so campground/data is deliberately left out of any
     // wildcard here.
     //
-    // These stay "any signed-in user" for now, matching today's behavior —
-    // tightening them to match each role's actual allowed tabs (Sales data
-    // hidden from Service-only staff, etc.) is real, separate follow-up
-    // work, not attempted in this pass.
+    // Quotes, invoices and hydro readings are limited by role below; the
+    // rest stay "any signed-in user". Hiding Sales data (stored in
+    // campground/data) from service-only staff needs that document split up
+    // first - separate follow-up work.
     match /pendingSignups/{id} { allow read, write: if isSignedIn(); }
     match /propaneRequests/{id} { allow read, write: if isSignedIn(); }
     match /winterizingRequests/{id} { allow read, write: if isSignedIn(); }
     match /treeRequests/{id} { allow read, write: if isSignedIn(); }
     match /workOrders/{id} { allow read, write: if isSignedIn(); }
     match /customers/{id} { allow read, write: if isSignedIn(); }
-    match /quotes/{id} { allow read, write: if isSignedIn(); }
-    match /invoices/{id} { allow read, write: if isSignedIn(); }
+    // Quotes: everyone can read them (a work order shows the quote it came
+    // from, the customer card lists them), only money roles change them.
+    match /quotes/{id} {
+      allow read: if isSignedIn();
+      allow write: if isMoneyRole();
+    }
+    // Invoices: office and field screens create some automatically (a
+    // prepaid propane fill or an anode rod marked done), and General
+    // Service adds a note to an existing one - so any signed-in user may
+    // create an invoice or change only those note fields. Anything else
+    // (amounts, paid/sent status, deleting) is money roles only.
+    match /invoices/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isMoneyRole()
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['notes', 'linkedFromGeneralServiceRequestAt']));
+      allow delete: if isMoneyRole();
+    }
     match /correspondence/{id} { allow read, write: if isSignedIn(); }
     match /sites/{id} { allow read, write: if isSignedIn(); }
     match /cottages/{id} { allow read, write: if isSignedIn(); }
-    match /hydroReadings/{id} { allow read, write: if isSignedIn(); }
+    // Hydro readings: anyone can enter one (office meter screen, field
+    // hydro pad); confirming and invoicing it happens on the Hydro Review
+    // screen, which only Accounting and Admin have.
+    match /hydroReadings/{id} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if role() in ['admin', 'accounting'];
+    }
   }
 }
