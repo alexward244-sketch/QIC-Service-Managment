@@ -86,7 +86,11 @@ exports.setUserRole = onCall(async (request) => {
   // any other UI reading db.userRoles) keeps working unchanged. This write
   // uses the Admin SDK, which bypasses firestore.rules entirely — it's the
   // one trusted path allowed to touch this field; see firestore.rules.
-  await ROLES_DOC.update({ [`userRoles.${email}`]: role });
+  // FieldPath, not a "userRoles.<email>" string: Firestore splits string
+  // paths on dots, so the old form wrote userRoles["name@example"]["com"]
+  // instead of updating the email's entry. checkUserRoles cleans up the
+  // entries that left behind.
+  await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), role);
 
   return { ok: true, email, role };
 });
@@ -108,7 +112,7 @@ exports.removeUserRole = onCall(async (request) => {
     }
     await admin.auth().setCustomUserClaims(user.uid, { role: null });
   }
-  await ROLES_DOC.update({ [`userRoles.${email}`]: admin.firestore.FieldValue.delete() });
+  await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), admin.firestore.FieldValue.delete());
 
   return { ok: true };
 });
@@ -132,7 +136,21 @@ exports.checkUserRoles = onCall(async (request) => {
   } while (pageToken);
 
   const rolesSnap = await ROLES_DOC.get();
-  const appRoles = (rolesSnap.exists && rolesSnap.data().userRoles) || {};
+  const rawRoles = (rolesSnap.exists && rolesSnap.data().userRoles) || {};
+  // Remove the nested entries setUserRole/removeUserRole used to create
+  // when an email's dots were read as a path (see setUserRole). Each one
+  // mirrored a claim that was set at the same time, so the claim and the
+  // flat entry are what count; the nested copy is safe to drop.
+  const mangledKeys = Object.keys(rawRoles).filter((k) => typeof rawRoles[k] !== "string");
+  if (mangledKeys.length > 0) {
+    const args = [];
+    mangledKeys.forEach((k) => args.push(new admin.firestore.FieldPath("userRoles", k), admin.firestore.FieldValue.delete()));
+    await ROLES_DOC.update(...args);
+  }
+  const appRoles = {};
+  Object.keys(rawRoles).forEach((k) => {
+    if (typeof rawRoles[k] === "string") appRoles[k] = rawRoles[k];
+  });
 
   const rows = new Map();
   Object.entries(appRoles).forEach(([email, role]) => {
@@ -163,6 +181,7 @@ exports.checkUserRoles = onCall(async (request) => {
     return "ok";
   };
   return {
+    cleanedUp: mangledKeys.length,
     rows: Array.from(rows.values()).map((r) => ({ ...r, status: statusOf(r) })).sort((a, b) => a.email.localeCompare(b.email))
   };
 });
