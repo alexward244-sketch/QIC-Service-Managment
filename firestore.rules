@@ -47,6 +47,11 @@ service cloud.firestore {
       return role() in ['admin', 'manager', 'accounting'];
     }
 
+    // The roles with Sales mode in the app.
+    function isSalesRole() {
+      return role() in ['admin', 'salesmanager'];
+    }
+
     // The one shared document holding settings, deals, trash, the activity
     // log, loginCodes (a per-device PIN convenience feature — not the
     // authorization boundary, left as a normal client-writable field), and —
@@ -70,10 +75,8 @@ service cloud.firestore {
     // restriction above, so campground/data is deliberately left out of any
     // wildcard here.
     //
-    // Quotes, invoices and hydro readings are limited by role below; the
-    // rest stay "any signed-in user". Hiding Sales data (stored in
-    // campground/data) from service-only staff needs that document split up
-    // first - separate follow-up work.
+    // Quotes, invoices, hydro readings and sales records are limited by role
+    // below; the rest stay "any signed-in user".
     match /pendingSignups/{id} { allow read, write: if isSignedIn(); }
     match /propaneRequests/{id} { allow read, write: if isSignedIn(); }
     match /winterizingRequests/{id} { allow read, write: if isSignedIn(); }
@@ -106,6 +109,12 @@ service cloud.firestore {
     // Hydro readings: anyone can enter one (office meter screen, field
     // hydro pad); confirming and invoicing it happens on the Hydro Review
     // screen, which only Accounting and Admin have.
+    // Sales records, moved out of campground/data so service staff can't
+    // read them: Admin and Sales Manager only.
+    match /deals/{id} { allow read, write: if isSalesRole(); }
+    match /cottageOrders/{id} { allow read, write: if isSalesRole(); }
+    match /consignmentListings/{id} { allow read, write: if isSalesRole(); }
+    match /salesAppointments/{id} { allow read, write: if isSalesRole(); }
     match /hydroReadings/{id} {
       allow read, create: if isSignedIn();
       allow update, delete: if role() in ['admin', 'accounting'];
