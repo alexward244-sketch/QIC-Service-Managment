@@ -7,12 +7,15 @@ rules_version = '2';
 // when that feature shipped without a matching rule here. Every path must
 // be explicitly allowed; Storage denies anything unmatched by default.
 //
-// Read is intentionally open (`if true`) on every path below, not gated to
-// signed-in users: the app displays these files via plain <img>/<a> tags,
-// which can't carry a Firebase ID token, so a signed-in-only read rule
-// would just show broken images/links to everyone, including staff. The
-// files aren't listable or guessable without the exact download URL, which
-// is the accepted tradeoff already in place for campground-map.
+// Reads require a signed-in user. That doesn't break the app's plain
+// <img>/<a> tags, or links in emails sent to customers: every URL the app
+// and the mail-ingest function hand out is a download URL carrying its own
+// access token (getDownloadURL on the client, firebaseStorageDownloadTokens
+// in functions/index.js), and Firebase serves a file for a valid token
+// without checking these rules. What these rules do govern is access
+// without a token: with an open read rule, anyone who knew or guessed a
+// file's path (a timestamp plus the original filename) could download
+// that customer attachment.
 //
 // Deploy with: firebase deploy --only storage
 
@@ -20,13 +23,13 @@ service firebase.storage {
   match /b/{bucket}/o {
     // The campground map image shown on the Site Map tab.
     match /campground-map/{fileName} {
-      allow read: if true;
+      allow read: if request.auth != null;
       allow write: if request.auth != null;
     }
     // Files attached to outgoing correspondence emails (Correspondence
     // reply box, Work Order "Email Customer", service request replies).
     match /correspondence-attachments/{fileName} {
-      allow read: if true;
+      allow read: if request.auth != null;
       allow write: if request.auth != null;
     }
   }
