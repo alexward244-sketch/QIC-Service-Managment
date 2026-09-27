@@ -886,12 +886,37 @@ exports.draftCorrespondenceReply = onCall(
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to draft replies.");
     const data = request.data || {};
-    const customerId = toStr(data.customerId);
+    let customerId = toStr(data.customerId);
     const correspondenceId = toStr(data.correspondenceId);
     const workOrderId = toStr(data.workOrderId);
+    const pendingSignupId = toStr(data.pendingSignupId);
     const notes = draftClip(data.notes, 2000);
-    if (!customerId && !correspondenceId) {
-      throw new HttpsError("invalid-argument", "A customer or email is required.");
+    if (!customerId && !correspondenceId && !pendingSignupId) {
+      throw new HttpsError("invalid-argument", "A customer, email or service request is required.");
+    }
+
+    // A web-form service request (General Service) isn't an email, so it's
+    // turned into one for the thread below; if its email matches a
+    // customer, their records come along too.
+    let formRequest = null;
+    if (pendingSignupId) {
+      const snap = await db.collection("pendingSignups").doc(pendingSignupId).get();
+      if (snap.exists) {
+        const p = snap.data();
+        formRequest = {
+          id: `form_${pendingSignupId}`,
+          direction: "in",
+          fromEmail: toStr(p.submittedEmail),
+          subject: "Service request form",
+          body: [p.submittedSiteNumber ? `Site: ${toStr(p.submittedSiteNumber)}` : "", p.submittedPhone ? `Phone: ${toStr(p.submittedPhone)}` : "", toStr(p.submittedDescription)].filter(Boolean).join("\n"),
+          receivedAt: toStr(p.receivedAt),
+          submittedName: toStr(p.submittedName)
+        };
+        if (!customerId && formRequest.fromEmail) customerId = (await findCustomerByEmail(formRequest.fromEmail)) || "";
+      }
+      if (!formRequest && !customerId && !correspondenceId) {
+        throw new HttpsError("not-found", "That service request no longer exists.");
+      }
     }
 
     const [customerSnap, sharedSnap, replyToSnap, workOrderSnap] = await Promise.all([
@@ -902,7 +927,7 @@ exports.draftCorrespondenceReply = onCall(
     ]);
     const customer = customerSnap && customerSnap.exists ? customerSnap.data() : null;
     const shared = sharedSnap.exists ? sharedSnap.data() : {};
-    const replyTo = replyToSnap && replyToSnap.exists ? replyToSnap.data() : null;
+    const replyTo = replyToSnap && replyToSnap.exists ? replyToSnap.data() : formRequest;
     const focusWO = workOrderSnap && workOrderSnap.exists ? workOrderSnap.data() : null;
 
     // The thread: this customer's correspondence, or (for an email that
@@ -912,7 +937,7 @@ exports.draftCorrespondenceReply = onCall(
       const snap = await db.collection("correspondence").where("customerId", "==", customerId).get();
       thread = snap.docs.map((d) => d.data());
     } else if (replyTo && replyTo.fromEmail) {
-      const snap = await db.collection("correspondence").where("fromEmail", "==", replyTo.fromEmail).get();
+      const snap = await db.collection("correspondence").where("fromEmail", "==", replyTo.fromEmail.toLowerCase()).get();
       thread = snap.docs.map((d) => d.data());
     }
     if (replyTo && !thread.some((c) => c.id === replyTo.id)) thread.push(replyTo);
@@ -949,7 +974,7 @@ exports.draftCorrespondenceReply = onCall(
 
     const context = [
       `Today's date: ${todayEasternISO()}`,
-      `<customer>\nName: ${customer ? toStr(customer.name) : "unknown (not linked to a customer record)"}${siteNumbers.length ? `\nSite(s): ${siteNumbers.join(", ")}` : ""}\n</customer>`,
+      `<customer>\nName: ${customer ? toStr(customer.name) : formRequest && formRequest.submittedName ? `${formRequest.submittedName} (from the web form; not linked to a customer record)` : "unknown (not linked to a customer record)"}${siteNumbers.length ? `\nSite(s): ${siteNumbers.join(", ")}` : ""}\n</customer>`,
       `<work_orders>\n${woText || "(none on file)"}\n</work_orders>`,
       `<canned_replies>\n${cannedReplies.map((r) => `## ${toStr(r.title)}\n${draftClip(r.body, 1500)}`).join("\n\n") || "(none)"}\n</canned_replies>`,
       `<thread>\n${threadText || "(no emails yet)"}\n</thread>`,

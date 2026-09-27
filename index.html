@@ -12879,6 +12879,7 @@ function GeneralServiceView({ db, persist, saveWorkOrder, saveInvoice, saveCorre
     toName: replyingTo.submittedName || replyingTo.submittedEmail,
     defaultSubject: replyingTo.submittedCategory ? `Re: ${replyingTo.submittedCategory}` : "Re: your service request",
     draftKey: `pending:${replyingTo.id}`,
+    draftContext: { pendingSignupId: replyingTo.id },
     onClose: () => setReplyingTo(null),
     onSend: async ({ toEmail, subject, message, attachment }) => {
       await sendEmail({ toEmail, toName: replyingTo.submittedName, subject, message, department: "service", source: "Service Request reply", attachmentBase64: attachment == null ? void 0 : attachment.base64, attachmentName: attachment == null ? void 0 : attachment.name });
