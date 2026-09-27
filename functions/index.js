@@ -113,6 +113,60 @@ exports.removeUserRole = onCall(async (request) => {
   return { ok: true };
 });
 
+// Read-only report for the "Check server roles" panel in Manage Access.
+// The app decides which screens someone sees from the userRoles map, but
+// Firestore rules can only see the `role` claim on their sign-in token -
+// and people assigned a role before claims existed only got one once an
+// Admin re-saved them. This lists every sign-in account next to both, so
+// mismatches can be fixed (via setUserRole) before any rule relies on the
+// claim. Changes nothing itself.
+exports.checkUserRoles = onCall(async (request) => {
+  requireCallerIsAdmin(request);
+
+  const users = [];
+  let pageToken;
+  do {
+    const page = await admin.auth().listUsers(1000, pageToken);
+    users.push(...page.users);
+    pageToken = page.pageToken;
+  } while (pageToken);
+
+  const rolesSnap = await ROLES_DOC.get();
+  const appRoles = (rolesSnap.exists && rolesSnap.data().userRoles) || {};
+
+  const rows = new Map();
+  Object.entries(appRoles).forEach(([email, role]) => {
+    rows.set(email.toLowerCase(), { email: email.toLowerCase(), appRole: role || null, serverRole: null, hasAccount: false, lastSignIn: null, disabled: false });
+  });
+  users.forEach((u) => {
+    const email = (u.email || "").toLowerCase();
+    if (!email) return;
+    const row = rows.get(email) || { email, appRole: null, serverRole: null, hasAccount: false, lastSignIn: null, disabled: false };
+    row.hasAccount = true;
+    row.serverRole = (u.customClaims && u.customClaims.role) || null;
+    row.lastSignIn = u.metadata && u.metadata.lastSignInTime ? new Date(u.metadata.lastSignInTime).toISOString() : null;
+    row.disabled = !!u.disabled;
+    rows.set(email, row);
+  });
+
+  // ok: both agree. missing: has a role in the app but not on the server.
+  // mismatch: both set, different. noAccount: listed in the app but has
+  // never signed in (setUserRole needs an account). serverOnly: a server
+  // role with no entry in the app. default: signed in before, listed
+  // nowhere - the app and the rules both treat them as Office.
+  const statusOf = (r) => {
+    if (r.appRole && !r.hasAccount) return "noAccount";
+    if (r.appRole && !r.serverRole) return "missing";
+    if (r.appRole && r.serverRole !== r.appRole) return "mismatch";
+    if (!r.appRole && r.serverRole) return "serverOnly";
+    if (!r.appRole) return "default";
+    return "ok";
+  };
+  return {
+    rows: Array.from(rows.values()).map((r) => ({ ...r, status: statusOf(r) })).sort((a, b) => a.email.localeCompare(b.email))
+  };
+});
+
 // ---------------------------------------------------------------------
 // Zoho Flow webhooks — mail ingest and public sign-up forms
 // ---------------------------------------------------------------------

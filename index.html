@@ -2045,6 +2045,70 @@ function LoginCodesPanel({ email, config, onSetRequired, onAddCode, onToggleCode
     maxLength: 4
   }), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submitAdd, className: "text-xs px-2.5 py-1.5 rounded-md border border-[#377249]/30 text-[#377249] hover:bg-[#377249]/10 font-medium whitespace-nowrap" }, "Add")), error && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#a8532a] mt-1.5" }, error)));
 }
+const ROLE_LABELS = { admin: "Admin", manager: "Service Manager", salesmanager: "Sales Manager", accounting: "Accounting", office: "Office" };
+const ROLE_CHECK_STATUS = {
+  ok: { label: "Matches", cls: "bg-[#DDF1E1] text-[#28633C]" },
+  missing: { label: "Missing on server", cls: "bg-[#F5E3D9] text-[#a8532a]" },
+  mismatch: { label: "Different on server", cls: "bg-[#F5E3D9] text-[#a8532a]" },
+  serverOnly: { label: "Only on server", cls: "bg-[#FBEEDA] text-[#9A6B1F]" },
+  noAccount: { label: "Hasn't signed in yet", cls: "bg-[#F1EEE9] text-[#75716A]" },
+  default: { label: "Office by default", cls: "bg-[#F1EEE9] text-[#75716A]" }
+};
+// "Check server roles" in Manage Access. The list above decides which
+// screens someone sees; the database can only see the role stored on their
+// sign-in account (set by setUserRole). This compares the two - via the
+// admin-only checkUserRoles function - and fixes a mismatch by re-saving
+// the role from the list, which is what the database will enforce once
+// its rules check roles. Nothing changes until an Admin presses Fix.
+function RoleClaimsCheck() {
+  const [rows, setRows] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const run = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await functions_.httpsCallable("checkUserRoles")({});
+      setRows(res.data.rows || []);
+    } catch (e) {
+      setError(e && e.code === "functions/permission-denied" ? "Your own account doesn't have the Admin role on the server yet, so it can't run this check. Ask whoever set up the first Admin (see functions/README.md) to fix that first." : (e && e.message) || "Couldn't run the check. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const fixable = (rows || []).filter((r) => r.status === "missing" || r.status === "mismatch");
+  const fix = async (targets) => {
+    setError(null);
+    for (const r of targets) {
+      setBusy(r.email);
+      try {
+        await functions_.httpsCallable("setUserRole")({ email: r.email, role: r.appRole });
+      } catch (e) {
+        setError(`Couldn't fix ${r.email}: ${(e && e.message) || "try again."}`);
+        break;
+      }
+    }
+    setBusy(null);
+    run();
+  };
+  const removeServerRole = async (r) => {
+    setError(null);
+    setBusy(r.email);
+    try {
+      await functions_.httpsCallable("removeUserRole")({ email: r.email });
+    } catch (e) {
+      setError(`Couldn't remove the server role for ${r.email}: ${(e && e.message) || "try again."}`);
+    }
+    setBusy(null);
+    run();
+  };
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString() : "never";
+  return /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4 mt-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h4", { className: "text-sm font-semibold text-[#1E1A13]" }, "Server roles"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "The database checks the role saved on each person's sign-in account, not this list. Check they match.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, fixable.length > 1 && /* @__PURE__ */ React.createElement("button", { onClick: () => fix(fixable), disabled: !!busy || loading, className: "px-3 py-1.5 text-xs rounded-md border border-[#377249] text-[#377249] font-semibold hover:bg-[#EAF3EC] disabled:opacity-50" }, `Fix all ${fixable.length}`), /* @__PURE__ */ React.createElement("button", { onClick: run, disabled: loading || !!busy, className: "px-3 py-1.5 text-xs rounded-md bg-[#377249] text-[#F9F5EC] font-semibold hover:bg-[#135C30] disabled:opacity-50" }, loading ? "Checking\u2026" : rows ? "Check again" : "Check server roles"))), error && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, error), rows && (rows.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No accounts found.") : /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-xs" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "text-left text-[#75716A]" }, /* @__PURE__ */ React.createElement("th", { className: "py-1.5 pr-3 font-medium" }, "Email"), /* @__PURE__ */ React.createElement("th", { className: "py-1.5 pr-3 font-medium" }, "In this list"), /* @__PURE__ */ React.createElement("th", { className: "py-1.5 pr-3 font-medium" }, "On server"), /* @__PURE__ */ React.createElement("th", { className: "py-1.5 pr-3 font-medium" }, "Last sign-in"), /* @__PURE__ */ React.createElement("th", { className: "py-1.5 pr-3 font-medium" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "py-1.5 font-medium" }))), /* @__PURE__ */ React.createElement("tbody", null, rows.map((r) => {
+    const st = ROLE_CHECK_STATUS[r.status] || ROLE_CHECK_STATUS.default;
+    return /* @__PURE__ */ React.createElement("tr", { key: r.email, className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "py-1.5 pr-3 text-[#1E1A13] break-all" }, r.email, r.disabled && /* @__PURE__ */ React.createElement("span", { className: "ml-1 text-[#9A968D]" }, "(disabled)")), /* @__PURE__ */ React.createElement("td", { className: "py-1.5 pr-3" }, r.appRole ? ROLE_LABELS[r.appRole] || r.appRole : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "py-1.5 pr-3" }, r.serverRole ? ROLE_LABELS[r.serverRole] || r.serverRole : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "py-1.5 pr-3 whitespace-nowrap text-[#75716A]" }, fmtDate(r.lastSignIn)), /* @__PURE__ */ React.createElement("td", { className: "py-1.5 pr-3" }, /* @__PURE__ */ React.createElement("span", { className: `inline-block px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap ${st.cls}` }, st.label)), /* @__PURE__ */ React.createElement("td", { className: "py-1.5 text-right whitespace-nowrap" }, busy === r.email ? /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D]" }, "Saving\u2026") : r.status === "missing" || r.status === "mismatch" ? /* @__PURE__ */ React.createElement("button", { onClick: () => fix([r]), disabled: !!busy, className: "font-semibold text-[#377249] hover:underline disabled:opacity-50" }, `Fix \u2192 ${ROLE_LABELS[r.appRole] || r.appRole}`) : r.status === "serverOnly" ? /* @__PURE__ */ React.createElement("button", { onClick: () => removeServerRole(r), disabled: !!busy, className: "font-semibold text-[#a8532a] hover:underline disabled:opacity-50" }, "Remove server role") : null));
+  }))))), rows && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-2" }, "A fixed role applies the next time that person signs in, or within about an hour. \"Office by default\" accounts can sign in but aren't in this list \u2014 check any you don't recognise, such as former staff."));
+}
 function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("office");
@@ -2147,7 +2211,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
       className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium whitespace-nowrap disabled:opacity-50"
     },
     "Add"
-  )), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
+  )), /* @__PURE__ */ React.createElement(RoleClaimsCheck, null), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
 function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly, filterPrefill }) {
