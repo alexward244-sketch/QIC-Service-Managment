@@ -78,5 +78,6 @@ service cloud.firestore {
     match /correspondence/{id} { allow read, write: if isSignedIn(); }
     match /sites/{id} { allow read, write: if isSignedIn(); }
     match /cottages/{id} { allow read, write: if isSignedIn(); }
+    match /hydroReadings/{id} { allow read, write: if isSignedIn(); }
   }
 }
