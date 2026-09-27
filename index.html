@@ -99,6 +99,34 @@ const HYDRO_READINGS_REF = db_.collection("hydroReadings");
 function saveHydroReading(reading) {
   return HYDRO_READINGS_REF.doc(reading.id).set(reading);
 }
+// Sales records (deals, cottage orders, consignment listings, sales
+// appointments) used to live in campground/data, which every signed-in user
+// can read. Each one is now a document in its own collection that
+// firestore.rules only lets Admin and Sales Manager read or write. Deleting
+// one marks it `deletedAt` in place instead of copying it into the shared
+// trash; the shared trash keeps only a stub (type, label, date) so Admin
+// and Sales Manager can still restore it.
+const SALES_COLLECTIONS = [
+  { key: "deals", ref: db_.collection("deals"), trashType: "deal" },
+  { key: "cottageOrders", ref: db_.collection("cottageOrders"), trashType: "cottageOrder" },
+  { key: "consignmentListings", ref: db_.collection("consignmentListings"), trashType: "consignmentListing" },
+  { key: "salesAppointments", ref: db_.collection("salesAppointments"), trashType: "salesAppointment" }
+];
+const SALES_KEYS = SALES_COLLECTIONS.map((c) => c.key);
+const SALES_BY_TRASH_TYPE = Object.fromEntries(SALES_COLLECTIONS.map((c) => [c.trashType, c]));
+function withoutDeletedAt(record) {
+  const { deletedAt, ...rest } = record;
+  return rest;
+}
+// A collection's live records plus any legacy copies from campground/data
+// that haven't been moved yet. Any id the collection has - including a
+// soft-deleted one - wins over the legacy copy.
+function mergeLegacyRecords(collectionList, legacyList) {
+  const live = (collectionList || []).filter((r) => !r.deletedAt);
+  if (!legacyList || legacyList.length === 0) return live;
+  const known = new Set((collectionList || []).map((r) => r.id));
+  return [...live, ...legacyList.filter((r) => r && r.id && !known.has(r.id))];
+}
 // Readings still sitting in the old array (not moved yet, or written by a
 // device running the previous version of the app) are shown alongside
 // the collection until useDb moves them over; the collection copy wins.
@@ -1075,6 +1103,8 @@ function useDb() {
   const [sitesList, setSitesList] = useState(null);
   const [cottagesList, setCottagesList] = useState(null);
   const [hydroList, setHydroList] = useState(null);
+  // null = not loaded yet; "denied" = this user's role can't read sales data.
+  const [salesLists, setSalesLists] = useState(() => Object.fromEntries(SALES_KEYS.map((k) => [k, null])));
   const [pendingSignups, setPendingSignups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
@@ -1084,12 +1114,22 @@ function useDb() {
   const woNumberMigratedRef = useRef(false);
   const legacyHydroRef = useRef([]);
   const hydroMigratingRef = useRef(false);
+  // Every record object handed out by a snapshot. persist() writes a sales
+  // record only if it isn't one of these, i.e. a screen created or edited
+  // it - so saving from a slightly stale screen never reverts records it
+  // didn't touch.
+  const seenRecordsRef = useRef(/* @__PURE__ */ new WeakSet());
+  const docMainRef = useRef(null);
+  const salesAccessRef = useRef(false);
+  const salesMigratingRef = useRef(false);
   useEffect(() => {
     const unsub = DOC_REF.onSnapshot(
       (snap) => {
         const data = snap.exists ? snap.data() : null;
         const merged = migrateCottageOrderStatuses(purgeExpiredTrash({ ...emptyDb(), ...data && typeof data === "object" ? data : {} }));
         legacyHydroRef.current = merged.hydroReadings || [];
+        SALES_KEYS.forEach((k) => (merged[k] || []).forEach((r) => r && typeof r === "object" && seenRecordsRef.current.add(r)));
+        docMainRef.current = merged;
         setMainData(merged);
         setLoading(false);
         setConnectionError(null);
@@ -1249,6 +1289,21 @@ function useDb() {
       () => {
       }
     );
+    const unsubSales = SALES_COLLECTIONS.map(({ key, ref }) => ref.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => {
+          const rec = { id: d.id, ...d.data() };
+          seenRecordsRef.current.add(rec);
+          list.push(rec);
+        });
+        salesAccessRef.current = true;
+        setSalesLists((cur) => ({ ...cur, [key]: list }));
+      },
+      () => {
+        setSalesLists((cur) => ({ ...cur, [key]: "denied" }));
+      }
+    ));
     const unsubHydro = HYDRO_READINGS_REF.onSnapshot(
       (snap) => {
         const list = [];
@@ -1272,6 +1327,7 @@ function useDb() {
       unsubSites();
       unsubCottages();
       unsubHydro();
+      unsubSales.forEach((u) => u());
     };
   }, []);
   // Moves readings out of campground/data's old hydroReadings array into
@@ -1300,15 +1356,122 @@ function useDb() {
       hydroMigratingRef.current = false;
     });
   }, [mainData, hydroList]);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], treeRequests: treeList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [], hydroReadings: mergeHydroReadings(hydroList, mainData.hydroReadings) } : null;
+  // Moves sales records out of campground/data into their collections, the
+  // same way as hydro readings above. Only a user who can read the sales
+  // collections (Admin, Sales Manager) can do it, so until one of them opens
+  // the app the old arrays stay put - and persist() keeps writing them back
+  // unchanged so nobody else's save drops them. Also turns any sales items
+  // sitting in the shared trash (full copies) into stubs, with the full
+  // record kept as a deleted document in its own collection.
+  useEffect(() => {
+    if (!mainData || salesMigratingRef.current) return;
+    if (SALES_KEYS.some((k) => !Array.isArray(salesLists[k]))) return;
+    const hasLegacy = SALES_KEYS.some((k) => (mainData[k] || []).length > 0);
+    const hasFullSalesTrash = (mainData.trash || []).some((t) => SALES_BY_TRASH_TYPE[t.type] && t.data && !t.stub);
+    if (!hasLegacy && !hasFullSalesTrash) return;
+    salesMigratingRef.current = true;
+    const known = Object.fromEntries(SALES_KEYS.map((k) => [k, new Set(salesLists[k].map((r) => r.id))]));
+    const ops = [];
+    SALES_COLLECTIONS.forEach(({ key, ref }) => {
+      (mainData[key] || []).forEach((r) => {
+        if (r && r.id && !known[key].has(r.id)) ops.push({ type: "set", ref: ref.doc(r.id), data: r });
+      });
+    });
+    (mainData.trash || []).forEach((t) => {
+      const c = SALES_BY_TRASH_TYPE[t.type];
+      if (c && t.data && t.data.id && !t.stub && !known[c.key].has(t.data.id)) ops.push({ type: "set", ref: c.ref.doc(t.data.id), data: { ...t.data, deletedAt: t.deletedAt || (/* @__PURE__ */ new Date()).toISOString() } });
+    });
+    const moved = Object.fromEntries(SALES_KEYS.map((k) => [k, /* @__PURE__ */ new Set([...known[k], ...(mainData[k] || []).map((r) => r && r.id)])]));
+    commitInChunks(ops).then(() => db_.runTransaction(async (tx) => {
+      const snap = await tx.get(DOC_REF);
+      const data = snap.exists ? snap.data() : {};
+      if (SALES_KEYS.some((k) => (data[k] || []).some((r) => r && r.id && !moved[k].has(r.id)))) return;
+      const trash = (data.trash || []).map((t) => SALES_BY_TRASH_TYPE[t.type] && t.data && !t.stub ? { id: t.id, type: t.type, label: t.label, deletedAt: t.deletedAt, stub: true, itemId: t.data.id } : t);
+      const update = { trash };
+      SALES_KEYS.forEach((k) => {
+        if (k in data) update[k] = firebase.firestore.FieldValue.delete();
+      });
+      tx.update(DOC_REF, update);
+    })).catch(() => {
+    }).finally(() => {
+      salesMigratingRef.current = false;
+    });
+  }, [mainData, salesLists]);
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], treeRequests: treeList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [], hydroReadings: mergeHydroReadings(hydroList, mainData.hydroReadings), ...composeSales(mainData, salesLists) } : null;
+  // Sales lists for the db object: collection records (live ones) plus any
+  // not-yet-moved legacy copies, and the shared trash with each sales stub
+  // given its deleted record back so Trash can show and restore it. Users
+  // who can't read sales data get empty lists and no sales stubs.
+  function composeSales(main, lists) {
+    const canRead = SALES_KEYS.every((k) => Array.isArray(lists[k]));
+    const out = {};
+    SALES_KEYS.forEach((k) => {
+      out[k] = Array.isArray(lists[k]) ? mergeLegacyRecords(lists[k], main[k]) : lists[k] === "denied" ? [] : main[k] || [];
+    });
+    out.cottageOrders = migrateCottageOrderStatuses({ cottageOrders: out.cottageOrders }).cottageOrders;
+    out.trash = (main.trash || []).flatMap((t) => {
+      const c = SALES_BY_TRASH_TYPE[t.type];
+      if (!c || !t.stub) return [t];
+      if (!canRead) return [];
+      const data = lists[c.key].find((r) => r.id === t.itemId);
+      return data ? [{ ...t, data }] : [];
+    });
+    return out;
+  }
   const persist = useCallback(async (next) => {
     // Everything backed by its own collection is left out of the shared
     // document. Hydro readings are saved with saveHydroReading; any not yet
     // moved out of the old array are written back unchanged so a save here
     // can't drop them before the move above finishes.
-    const { propaneRequests, treeRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, sites, cottages, hydroReadings, ...docFields } = next;
-    const rest = legacyHydroRef.current.length > 0 ? { ...docFields, hydroReadings: legacyHydroRef.current } : docFields;
+    const { propaneRequests, treeRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, sites, cottages, hydroReadings, deals, cottageOrders, consignmentListings, salesAppointments, ...docFields } = next;
+    const rest = legacyHydroRef.current.length > 0 ? { ...docFields, hydroReadings: legacyHydroRef.current } : { ...docFields };
+    // Sales: write each record a screen created or changed (or restored from
+    // Trash) to its collection; a newly trashed one is saved there as
+    // deleted, and only a stub goes into the shared trash. Legacy arrays not
+    // moved yet are written back unchanged.
+    const canWriteSales = salesAccessRef.current;
+    const salesOps = [];
+    if (canWriteSales) {
+      SALES_COLLECTIONS.forEach(({ key, ref }) => {
+        (next[key] || []).forEach((r) => {
+          if (!r || !r.id) return;
+          if (r.deletedAt) salesOps.push({ type: "set", ref: ref.doc(r.id), data: withoutDeletedAt(r) });
+          else if (!seenRecordsRef.current.has(r)) salesOps.push({ type: "set", ref: ref.doc(r.id), data: r });
+        });
+      });
+    }
+    const docMain = docMainRef.current || {};
+    const trashOut = [];
+    (next.trash || []).forEach((t) => {
+      const c = SALES_BY_TRASH_TYPE[t.type];
+      if (!c) return trashOut.push(t);
+      if (t.stub) return trashOut.push({ id: t.id, type: t.type, label: t.label, deletedAt: t.deletedAt, stub: true, itemId: t.itemId });
+      if (t.data && t.data.id && canWriteSales) {
+        salesOps.push({ type: "set", ref: c.ref.doc(t.data.id), data: { ...t.data, deletedAt: t.deletedAt } });
+        return trashOut.push({ id: t.id, type: t.type, label: t.label, deletedAt: t.deletedAt, stub: true, itemId: t.data.id });
+      }
+      trashOut.push(t);
+    });
+    if (!canWriteSales) {
+      // This user can't see sales stubs, so keep the ones already saved.
+      const have = new Set(trashOut.map((t) => t.id));
+      (docMain.trash || []).forEach((t) => {
+        if (SALES_BY_TRASH_TYPE[t.type] && t.stub && !have.has(t.id)) trashOut.push(t);
+      });
+    }
+    rest.trash = trashOut;
+    SALES_KEYS.forEach((k) => {
+      if ((docMain[k] || []).length > 0) rest[k] = docMain[k];
+    });
     setMainData(rest);
+    if (salesOps.length > 0) {
+      try {
+        await commitInChunks(salesOps);
+      } catch (e) {
+        setSaveError(`Couldn't save that sales change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+        return;
+      }
+    }
     const attempt = () => DOC_REF.set(rest);
     lastAttempt.current = attempt;
     try {
@@ -3371,7 +3534,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, save
       note: composedOffSiteInfo
     };
     const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
-    const activityLog = addLog(db, actor, `${cottage.name} (Site ${site.number}) sold and taken off-site${listing ? ` (${formatPrice(soldPriceNum)})` : ""} \u2014 kept on file for future service`);
+    const activityLog = addLog(db, actor, `${cottage.name} (Site ${site.number}) sold and taken off-site \u2014 kept on file for future service`);
     persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
     saveCottage(updatedCottage);
     saveSite(updatedSite);
@@ -3408,7 +3571,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, save
         cottageName: cottage.name
       };
       const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
-      const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
+      const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to existing customer ${target.name}`);
       persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
       saveSite(updatedSite);
       commitInChunks(changedCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
@@ -3441,7 +3604,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, save
       cottageName: cottage.name
     };
     const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
-    const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}${listing ? ` (${formatPrice(soldPriceNum)})` : ""}`);
+    const activityLog = addLog(db, actor, `Transferred ${cottage.name} (Site ${site.number}) to ${newCustomer.name}`);
     persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
     saveSite(updatedSite);
     commitInChunks([...changedOldCustomers, newCustomer].map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
@@ -7729,7 +7892,7 @@ function CottageOrdersView({ db, persist, saveCustomer, saveCottage }) {
   const confirmMarkSold = (price) => {
     const order = salePriceTarget;
     const updated = { ...order, totalPrice: price, depositAmount: price, paidInFullDate: todayISO(), soldDate: todayISO() };
-    const activityLog = addLog(db, actor, `Cottage order "${order.model || "Unnamed"}" marked Sold and Paid in Full (${formatPrice(price)})`);
+    const activityLog = addLog(db, actor, `Cottage order "${order.model || "Unnamed"}" marked Sold and Paid in Full`);
     persist({ ...db, cottageOrders: db.cottageOrders.map((o) => o.id === order.id ? updated : o), activityLog });
     setSalePriceTarget(null);
   };
@@ -9120,7 +9283,7 @@ function CloseUnitSaleModal({ deal, order, db, persist, saveCustomer, saveSite, 
     );
     const entry = { id: uid(), text: `Deal closed \u2014 marked Sold and Paid in Full on ${todayISO()} (${formatPrice(priceNum)})${noteExtra}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Sold", commentLog: [entry, ...d.commentLog || []] } : d);
-    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold (${formatPrice(priceNum)})${takingOffSite ? " \u2014 taken off-site" : ` \u2014 Site ${(db.sites.find((s) => s.id === siteId) || {}).number || ""}`}${noteExtra}`);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold${takingOffSite ? " \u2014 taken off-site" : ` \u2014 Site ${(db.sites.find((s) => s.id === siteId) || {}).number || ""}`}${noteExtra}`);
     persist({ ...dbNext, cottageOrders, deals, activityLog });
     if (savedCottage) saveCottage(savedCottage);
     if (removedCottageId) deleteCottage(removedCottageId);
@@ -9411,7 +9574,7 @@ function DealsView({ db, persist, saveWorkOrder, saveCustomer, saveSite, saveCot
     }
     const entry = { id: uid(), text: `Deal closed \u2014 marked Sold and Paid in Full on ${todayISO()} (${formatPrice(price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Sold", commentLog: [entry, ...d.commentLog || []] } : d);
-    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold (${formatPrice(price)})`);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold`);
     persist({ ...db, cottageOrders, deals, activityLog });
     setCloseDealPriceTarget(null);
     setToast("Marked Sold");
@@ -9421,6 +9584,7 @@ function DealsView({ db, persist, saveWorkOrder, saveCustomer, saveSite, saveCot
     let noteText = "Deal fell through";
     let consignmentListings = db.consignmentListings;
     let cottageOrders = db.cottageOrders;
+    let cancelledOrder = null;
     if (deal.saleType === "consignment") {
       consignmentListings = db.consignmentListings.map((l) => l.id === deal.saleRefId ? { ...l, status: "Listed", soldDate: null, soldPrice: null, dealId: null } : l);
       noteText = "Deal fell through \u2014 listing reopened";
@@ -9432,14 +9596,14 @@ function DealsView({ db, persist, saveWorkOrder, saveCustomer, saveSite, saveCot
         cottageOrders = db.cottageOrders.map((o) => o.id === deal.saleRefId ? { ...o, type: "Display Model", customerId: null, dealId: null } : o);
         noteText = "Deal fell through \u2014 order converted to a display model";
       } else if (action === "cancel-build") {
-        cottageOrders = db.cottageOrders.filter((o) => o.id !== deal.saleRefId);
+        cancelledOrder = db.cottageOrders.find((o) => o.id === deal.saleRefId) || null;
         noteText = "Deal fell through \u2014 build cancelled";
       }
     }
     const entry = { id: uid(), text: `${noteText} on ${todayISO()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Interested", saleType: null, saleRefId: null, commentLog: [entry, ...d.commentLog || []] } : d);
     const activityLog = addLog(db, actor, `${deal.name}'s deal: ${noteText.toLowerCase()}`);
-    persist({ ...db, consignmentListings, cottageOrders, deals, activityLog });
+    persist(cancelledOrder ? trashItem({ ...db, consignmentListings, cottageOrders, deals, activityLog }, "cottageOrder", cancelledOrder, cancelledOrder.model || "Cottage Order") : { ...db, consignmentListings, cottageOrders, deals, activityLog });
     setFellThroughTarget(null);
     setToast("Moved back to Interested");
   };
@@ -14176,7 +14340,7 @@ function SystemHealthView({ db, persist }) {
   // deals, cottage orders, trash, the activity log, and so on) is one
   // document - once it's full, every save that touches it fails. Collection-
   // backed lists aren't part of it, so they're left out of this estimate.
-  const { propaneRequests: _pr, treeRequests: _tr, winterizingRequests: _wr, workOrders: _wo, customers: _cu, quotes: _qu, invoices: _in, correspondence: _co, sites: _si, cottages: _ct, hydroReadings: _hr, ...sharedRecordFields } = db;
+  const { propaneRequests: _pr, treeRequests: _tr, winterizingRequests: _wr, workOrders: _wo, customers: _cu, quotes: _qu, invoices: _in, correspondence: _co, sites: _si, cottages: _ct, hydroReadings: _hr, deals: _de, cottageOrders: _cor, consignmentListings: _cl, salesAppointments: _sa, ...sharedRecordFields } = db;
   const sharedRecordKB = new Blob([JSON.stringify(sharedRecordFields)]).size / 1024;
   const sharedRecordPct = Math.min(100, Math.round(sharedRecordKB / 1024 * 100));
   const estimatedMB = estimatedBytes / (1024 * 1024);
@@ -16531,7 +16695,7 @@ function SalesDealsScreen({ db, persist, actor, saveWorkOrder, saveCustomer, sav
     }
     const entry = { id: uid(), text: `Deal closed — marked Sold and Paid in Full on ${todayISO()} (${formatPrice(price)})`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Sold", commentLog: [entry, ...d.commentLog || []] } : d);
-    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold (${formatPrice(price)})`);
+    const activityLog = addLog(db, actor, `${deal.name}'s deal marked Sold`);
     persist({ ...db, cottageOrders, deals, activityLog });
     setCloseDealPriceTarget(null);
     setToast("Marked Sold");
@@ -16541,6 +16705,7 @@ function SalesDealsScreen({ db, persist, actor, saveWorkOrder, saveCustomer, sav
     let noteText = "Deal fell through";
     let consignmentListings = db.consignmentListings;
     let cottageOrders = db.cottageOrders;
+    let cancelledOrder = null;
     if (deal.saleType === "consignment") {
       consignmentListings = db.consignmentListings.map((l) => l.id === deal.saleRefId ? { ...l, status: "Listed", soldDate: null, soldPrice: null, dealId: null } : l);
       noteText = "Deal fell through — listing reopened";
@@ -16552,14 +16717,14 @@ function SalesDealsScreen({ db, persist, actor, saveWorkOrder, saveCustomer, sav
         cottageOrders = db.cottageOrders.map((o) => o.id === deal.saleRefId ? { ...o, type: "Display Model", customerId: null, dealId: null } : o);
         noteText = "Deal fell through — order converted to a display model";
       } else if (action === "cancel-build") {
-        cottageOrders = db.cottageOrders.filter((o) => o.id !== deal.saleRefId);
+        cancelledOrder = db.cottageOrders.find((o) => o.id === deal.saleRefId) || null;
         noteText = "Deal fell through — build cancelled";
       }
     }
     const entry = { id: uid(), text: `${noteText} on ${todayISO()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
     const deals = db.deals.map((d) => d.id === deal.id ? { ...d, stage: "Interested", saleType: null, saleRefId: null, commentLog: [entry, ...d.commentLog || []] } : d);
     const activityLog = addLog(db, actor, `${deal.name}'s deal: ${noteText.toLowerCase()}`);
-    persist({ ...db, consignmentListings, cottageOrders, deals, activityLog });
+    persist(cancelledOrder ? trashItem({ ...db, consignmentListings, cottageOrders, deals, activityLog }, "cottageOrder", cancelledOrder, cancelledOrder.model || "Cottage Order") : { ...db, consignmentListings, cottageOrders, deals, activityLog });
     setFellThroughTarget(null);
     setToast("Moved back to Interested");
   };
@@ -17138,7 +17303,14 @@ function AppContent() {
       const importedCorrespondence = next.correspondence || [];
       const importedSites = next.sites || [];
       const importedCottages = next.cottages || [];
-      persist(next);
+      const importedHydro = next.hydroReadings || [];
+      const importedSales = Object.fromEntries(SALES_KEYS.map((k) => [k, next[k] || []]));
+      // Sales and hydro readings live in their own collections, which the
+      // database only lets some roles write - restore those parts only for
+      // a role that's allowed, so the rest of the import isn't blocked.
+      const canImportSales = isAdmin || isSalesManager;
+      const canImportHydro = isAdmin || isAccounting;
+      persist({ ...next, ...Object.fromEntries(SALES_KEYS.map((k) => [k, []])) });
       try {
         const [existingPropaneSnap, existingTreesSnap, existingWinterizingSnap, existingWorkOrdersSnap, existingCustomersSnap, existingQuotesSnap, existingInvoicesSnap, existingCorrespondenceSnap, existingSitesSnap, existingCottagesSnap] = await Promise.all([PROPANE_REQUESTS_REF.get(), TREE_REQUESTS_REF.get(), WINTERIZING_REQUESTS_REF.get(), WORK_ORDERS_REF.get(), CUSTOMERS_REF.get(), QUOTES_REF.get(), INVOICES_REF.get(), CORRESPONDENCE_REF.get(), SITES_REF.get(), COTTAGES_REF.get()]);
         const ops = [];
@@ -17162,6 +17334,24 @@ function AppContent() {
         importedCorrespondence.forEach((c) => ops.push({ type: "set", ref: CORRESPONDENCE_REF.doc(c.id || uid()), data: c }));
         importedSites.forEach((s) => ops.push({ type: "set", ref: SITES_REF.doc(s.id || uid()), data: s }));
         importedCottages.forEach((c) => ops.push({ type: "set", ref: COTTAGES_REF.doc(c.id || uid()), data: c }));
+        if (canImportHydro) {
+          const existingHydroSnap = await HYDRO_READINGS_REF.get();
+          const keep = new Set(importedHydro.map((r) => r.id));
+          existingHydroSnap.forEach((d) => {
+            if (!keep.has(d.id)) ops.push({ type: "delete", ref: d.ref });
+          });
+          importedHydro.forEach((r) => r && r.id && ops.push({ type: "set", ref: HYDRO_READINGS_REF.doc(r.id), data: r }));
+        }
+        if (canImportSales) {
+          for (const { key, ref, trashType } of SALES_COLLECTIONS) {
+            const existingSnap = await ref.get();
+            const keep = new Set([...importedSales[key].map((r) => r && r.id), ...(next.trash || []).filter((t) => t.type === trashType).map((t) => t.itemId || (t.data && t.data.id))]);
+            existingSnap.forEach((d) => {
+              if (!keep.has(d.id)) ops.push({ type: "delete", ref: d.ref });
+            });
+            importedSales[key].forEach((r) => r && r.id && ops.push({ type: "set", ref: ref.doc(r.id), data: withoutDeletedAt(r) }));
+          }
+        }
         await commitInChunks(ops);
       } catch (e) {
       }
