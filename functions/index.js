@@ -1022,7 +1022,7 @@ exports.draftCorrespondenceReply = onCall(
 // ---------------------------------------------------------------------
 // Morning summary (Claude API)
 // ---------------------------------------------------------------------
-// Every day at 7:00 am Eastern: gathers what needs attention today, has
+// Every day at 7:45 am Eastern: gathers what needs attention today, has
 // Claude write a short summary, saves it to dailySummaries/{date} (shown on
 // the Service dashboard to every role) and emails it to Admins and Service
 // Managers. Because every role can read it, it leaves out invoice amounts
@@ -1192,7 +1192,7 @@ async function buildMorningSummary({ sendEmail }) {
 }
 
 exports.morningSummary = onSchedule(
-  { schedule: "0 7 * * *", timeZone: "America/Toronto", secrets: [ANTHROPIC_API_KEY, EMAILJS_PRIVATE_KEY], timeoutSeconds: 300 },
+  { schedule: "45 7 * * *", timeZone: "America/Toronto", secrets: [ANTHROPIC_API_KEY, EMAILJS_PRIVATE_KEY], timeoutSeconds: 300 },
   async () => {
     const mainSnap = await ROLES_DOC.get();
     const season = mainSnap.exists && mainSnap.data().settings ? mainSnap.data().settings.morningSummarySeason : null;
