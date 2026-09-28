@@ -115,6 +115,12 @@ service cloud.firestore {
     match /cottageOrders/{id} { allow read, write: if isSalesRole(); }
     match /consignmentListings/{id} { allow read, write: if isSalesRole(); }
     match /salesAppointments/{id} { allow read, write: if isSalesRole(); }
+    // Morning summaries are written only by the morningSummary Cloud
+    // Function (Admin SDK); every signed-in user can read them.
+    match /dailySummaries/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
     match /hydroReadings/{id} {
       allow read, create: if isSignedIn();
       allow update, delete: if role() in ['admin', 'accounting'];

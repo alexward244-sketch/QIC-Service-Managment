@@ -6047,7 +6047,97 @@ function UnrecognizedSignupsModal({ entries, onDiscard, onClose }) {
 }
 // Decided: all stat tiles stay visible to anyone who can reach this tab, gated only by
 // existing tab permissions — no per-role hiding of individual figures.
+// The morning summary only runs between these month-days (Admin Settings ->
+// Morning Summary); same rule as summaryInSeason in functions/index.js.
+const DEFAULT_SUMMARY_SEASON = { enabled: true, start: "05-01", end: "10-31" };
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function getSummarySeason(db) {
+  return { ...DEFAULT_SUMMARY_SEASON, ...((db && db.settings && db.settings.morningSummarySeason) || {}) };
+}
+function morningSummaryInSeason(today, season) {
+  if (season.enabled === false) return false;
+  const md = today.slice(5);
+  return season.start <= season.end ? md >= season.start && md <= season.end : md >= season.start || md <= season.end;
+}
+function monthDayLabel(md) {
+  const [m, d] = (md || "").split("-").map(Number);
+  return m && d ? `${MONTH_NAMES[m - 1]} ${d}` : "";
+}
+const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+function MonthDayPicker({ id, value, onChange }) {
+  const [m, d] = (value || "01-01").split("-").map(Number);
+  const set = (nm, nd) => onChange(`${String(nm).padStart(2, "0")}-${String(Math.min(nd, DAYS_IN_MONTH[nm - 1])).padStart(2, "0")}`);
+  const selectCls = "rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 text-sm text-[#1E1A13]";
+  return /* @__PURE__ */ React.createElement("span", { className: "inline-flex gap-1.5" }, /* @__PURE__ */ React.createElement("select", { id: `${id}-month`, className: selectCls, value: m, onChange: (e) => set(Number(e.target.value), d) }, MONTH_NAMES.map((name, i) => /* @__PURE__ */ React.createElement("option", { key: name, value: i + 1 }, name))), /* @__PURE__ */ React.createElement("select", { id: `${id}-day`, className: selectCls, value: d, onChange: (e) => set(m, Number(e.target.value)) }, Array.from({ length: DAYS_IN_MONTH[m - 1] }, (_, i) => /* @__PURE__ */ React.createElement("option", { key: i + 1, value: i + 1 }, i + 1))));
+}
+function MorningSummaryPane({ db, persist }) {
+  const season = getSummarySeason(db);
+  const save = (patch) => persist({ ...db, settings: { ...db.settings || {}, morningSummarySeason: { ...season, ...patch } } });
+  const inSeasonNow = morningSummaryInSeason(todayISO(), season);
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Morning Summary"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Written by Claude at 7:45 am and emailed to Admins and Service Managers, and shown on the Service dashboard. Set the part of the year it runs \u2014 outside these dates nothing is written or emailed."), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#1E1A13] mb-4" }, /* @__PURE__ */ React.createElement("input", { id: "summary-enabled", type: "checkbox", checked: season.enabled !== false, onChange: (e) => save({ enabled: e.target.checked }) }), "Send the morning summary"), /* @__PURE__ */ React.createElement("div", { className: `space-y-3 ${season.enabled === false ? "opacity-50 pointer-events-none" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "w-20" }, "Starts"), /* @__PURE__ */ React.createElement(MonthDayPicker, { id: "summary-start", value: season.start, onChange: (v) => save({ start: v }) })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap text-sm text-[#75716A]" }, /* @__PURE__ */ React.createElement("span", { className: "w-20" }, "Stops after"), /* @__PURE__ */ React.createElement(MonthDayPicker, { id: "summary-end", value: season.end, onChange: (v) => save({ end: v }) }))), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-4" }, season.enabled === false ? "Off \u2014 no summaries until you turn it back on." : inSeasonNow ? `Running now, every day until ${monthDayLabel(season.end)}.` : `Paused \u2014 resumes ${monthDayLabel(season.start)}.`));
+}
+// Today's morning summary, written at 7:45 am by the morningSummary Cloud
+// Function into dailySummaries/{date}. Admins and Service Managers can
+// refresh it on demand (e.g. right after deploying, or later in the day).
+function MorningSummaryCard({ canRefresh, season }) {
+  const [summary, setSummary] = useState(void 0);
+  const [collapsed, setCollapsed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+  const today = todayISO();
+  useEffect(() => {
+    const unsub = db_.collection("dailySummaries").doc(today).onSnapshot(
+      (snap) => setSummary(snap.exists ? snap.data() : null),
+      () => setSummary(null)
+    );
+    return unsub;
+  }, [today]);
+  const refresh = async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      await functions_.httpsCallable("generateMorningSummary", { timeout: 18e4 })({ sendEmail: false });
+    } catch (e) {
+      setError((e && e.message) || "Couldn't refresh the summary. Try again.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  if (summary === void 0) return null;
+  const time = summary && summary.generatedAt ? new Date(summary.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+  return /* @__PURE__ */ React.createElement("div", { className: "mb-5 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setCollapsed((c) => !c), className: "text-left", "aria-expanded": !collapsed }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "\u2728 Morning summary"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, summary ? `Written by Claude at ${time}${collapsed ? " \u2014 tap to show" : ""}` : season && !morningSummaryInSeason(today, season) ? season.enabled === false ? "Morning summaries are turned off." : `Paused for the off-season \u2014 resumes ${monthDayLabel(season.start)}.` : "Today's summary is written at 7:45 am.")), canRefresh && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: refresh, disabled: refreshing, className: "text-xs font-semibold text-[#377249] hover:underline disabled:opacity-50" }, refreshing ? "Refreshing\u2026" : summary ? "Refresh" : "Write it now")), error && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-2" }, error), summary && !collapsed && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap mt-3 leading-relaxed" }, summary.text));
+}
+// "Ask the park": a question box answered by the askThePark Cloud Function,
+// where Claude looks things up with read-only tools limited to what the
+// asker's role can see. Keeps this session's last few answers.
+const ASK_EXAMPLES = ["What's open on site 42?", "Which propane fills are overdue?", "Any urgent work orders assigned to nobody?"];
+function AskTheParkCard() {
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [error, setError] = useState(null);
+  const [history, setHistory] = useState([]);
+  const ask = async (q) => {
+    const text = (q || question).trim();
+    if (!text || asking) return;
+    setAsking(true);
+    setError(null);
+    try {
+      const res = await functions_.httpsCallable("askThePark", { timeout: 18e4 })({ question: text });
+      setHistory((h) => [{ id: uid(), question: text, answer: res.data.answer }, ...h].slice(0, 5));
+      setQuestion("");
+    } catch (e) {
+      setError((e && e.message) || "Couldn't get an answer. Try again.");
+    } finally {
+      setAsking(false);
+    }
+  };
+  return /* @__PURE__ */ React.createElement("div", { className: "mb-5 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Ask the park"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Ask about customers, sites, work orders, emails or requests. Claude looks it up \u2014 check anything important before acting on it."), /* @__PURE__ */ React.createElement("form", { className: "flex gap-2", onSubmit: (e) => {
+    e.preventDefault();
+    ask();
+  } }, /* @__PURE__ */ React.createElement("input", { id: "ask-the-park", className: inputCls + " flex-1 min-w-0", value: question, onChange: (e) => setQuestion(e.target.value), placeholder: "e.g. What's open on site 42?", maxLength: 1e3, disabled: asking }), /* @__PURE__ */ React.createElement("button", { type: "submit", disabled: asking || !question.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50 whitespace-nowrap" }, asking ? "Looking\u2026" : "Ask")), history.length === 0 && !asking && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-2 mt-2" }, ASK_EXAMPLES.map((ex) => /* @__PURE__ */ React.createElement("button", { key: ex, type: "button", onClick: () => ask(ex), className: "text-[11px] px-2 py-1 rounded-full border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]" }, ex))), error && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-2" }, error), history.map((h) => /* @__PURE__ */ React.createElement("div", { key: h.id, className: "mt-3 pt-3 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs font-semibold text-[#75716A] mb-1" }, h.question), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, h.answer))));
+}
 function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }) {
+  const summaryRole = useUserRole(db);
   const actor = useCurrentActor();
   const [viewingWO, setViewingWO] = useState(null);
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
@@ -6111,7 +6201,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
   const daysSinceBackup = db.lastBackupAt ? Math.floor((Date.now() - new Date(db.lastBackupAt).getTime()) / (24 * 60 * 60 * 1e3)) : null;
   const backupStale = daysSinceBackup === null || daysSinceBackup >= 7;
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, reviewChooserOpen && /* @__PURE__ */ React.createElement(ReviewTypeChooserModal, { options: activeReviewTypes, onSelect: (tabKey) => { setReviewChooserOpen(false); onGoToTab(tabKey); }, onClose: () => setReviewChooserOpen(false) }), unrecognizedOpen && /* @__PURE__ */ React.createElement(UnrecognizedSignupsModal, { entries: unrecognizedSignups, onDiscard: (id) => removePendingSignup(id), onClose: () => setUnrecognizedOpen(false) }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-start justify-between gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), /* @__PURE__ */ React.createElement(DashboardSearch, { db, onJump: onSearchJump })), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, reviewChooserOpen && /* @__PURE__ */ React.createElement(ReviewTypeChooserModal, { options: activeReviewTypes, onSelect: (tabKey) => { setReviewChooserOpen(false); onGoToTab(tabKey); }, onClose: () => setReviewChooserOpen(false) }), unrecognizedOpen && /* @__PURE__ */ React.createElement(UnrecognizedSignupsModal, { entries: unrecognizedSignups, onDiscard: (id) => removePendingSignup(id), onClose: () => setUnrecognizedOpen(false) }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-start justify-between gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), /* @__PURE__ */ React.createElement(DashboardSearch, { db, onJump: onSearchJump })), /* @__PURE__ */ React.createElement(MorningSummaryCard, { canRefresh: summaryRole === "admin" || summaryRole === "manager", season: getSummarySeason(db) }), /* @__PURE__ */ React.createElement(AskTheParkCard, null), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => exportDatabase(db, persist),
@@ -12879,6 +12969,7 @@ function GeneralServiceView({ db, persist, saveWorkOrder, saveInvoice, saveCorre
     toName: replyingTo.submittedName || replyingTo.submittedEmail,
     defaultSubject: replyingTo.submittedCategory ? `Re: ${replyingTo.submittedCategory}` : "Re: your service request",
     draftKey: `pending:${replyingTo.id}`,
+    draftContext: { pendingSignupId: replyingTo.id },
     onClose: () => setReplyingTo(null),
     onSend: async ({ toEmail, subject, message, attachment }) => {
       await sendEmail({ toEmail, toName: replyingTo.submittedName, subject, message, department: "service", source: "Service Request reply", attachmentBase64: attachment == null ? void 0 : attachment.base64, attachmentName: attachment == null ? void 0 : attachment.name });
@@ -14205,6 +14296,9 @@ const ADMIN_SETTINGS_NAV = [
   { group: "Invoicing", items: [
     { key: "invoicing", label: "Company & Payment" },
     { key: "hydrobilling", label: "Hydro Billing" }
+  ] },
+  { group: "Notifications", items: [
+    { key: "morningsummary", label: "Morning Summary" }
   ] }
 ];
 function AdminSettingsView({ db, persist, saveSite, bulkWriteSites }) {
@@ -14214,6 +14308,7 @@ function AdminSettingsView({ db, persist, saveSite, bulkWriteSites }) {
   else if (pane === "laborrates") content = React.createElement(LaborRatesPane, { db, persist });
   else if (pane === "taxcommission") content = React.createElement(TaxCommissionPane, { db, persist });
   else if (pane === "invoicing") content = React.createElement(InvoicingPane, { db, persist });
+  else if (pane === "morningsummary") content = React.createElement(MorningSummaryPane, { db, persist });
   else content = React.createElement(HydroBillingPane, { db, persist });
   return React.createElement(
     "div",
