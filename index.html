@@ -96,6 +96,21 @@ const HYDRO_READINGS_REF = db_.collection("hydroReadings");
 // which counts against Firestore's 1 MB per-document limit and was
 // rewritten whole on every save anywhere in the app (so two people saving
 // at once could drop a reading). Each reading is now its own document.
+// A tree entry that has a work order stays open until that work order is
+// completed, then completes with the work order's completion date; it
+// reopens if the work order is reopened, and loses the link (staying open)
+// if the work order is deleted. Called from saveWorkOrder/deleteWorkOrder,
+// and by the tree tab to catch up entries changed some other way.
+function syncTreeEntriesForWorkOrder(wo, deleted) {
+  return TREE_REQUESTS_REF.where("workOrderId", "==", wo.id).get().then((snap) => Promise.all(snap.docs.map((d) => {
+    const t = d.data();
+    if (deleted) return d.ref.update({ workOrderId: null, completed: false, completedDate: null });
+    const done = wo.status === "Completed";
+    const completedDate = done ? wo.completedDate || todayISO() : null;
+    if (!!t.completed === done && (t.completedDate || null) === completedDate) return null;
+    return d.ref.update({ completed: done, completedDate });
+  })));
+}
 function saveHydroReading(reading) {
   return HYDRO_READINGS_REF.doc(reading.id).set(reading);
 }
@@ -1572,6 +1587,8 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      syncTreeEntriesForWorkOrder(wo, false).catch(() => {
+      });
     } catch (e) {
       setSaveError(`Couldn't save that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
@@ -1582,6 +1599,8 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      syncTreeEntriesForWorkOrder({ id }, true).catch(() => {
+      });
     } catch (e) {
       setSaveError(`Couldn't remove that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
@@ -12612,7 +12631,10 @@ function TreeRow({ tree, db, onEdit, onDelete, onCreateWorkOrder, onSetStage, on
   const cottage = tree.cottageId ? db.cottages.find((c) => c.id === tree.cottageId) : null;
   const customer = tree.customerId ? db.customers.find((c) => c.id === tree.customerId) : null;
   const location = [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" — ") || "No location set";
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, location), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${PRIORITY_STYLES[tree.priority] || PRIORITY_STYLES.Medium}` }, tree.priority)), customer && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-0.5" }, "Reported by ", customer.name), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 whitespace-pre-wrap" }, tree.description)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#9A968D] whitespace-nowrap flex-shrink-0" }, tree.notedDate)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-2 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("select", { value: tree.stage || "To be Inspected", onChange: (e) => onSetStage(tree, e.target.value), className: `text-xs font-semibold rounded-md px-2 py-1 border-0 ${TREE_STAGE_STYLES[tree.stage] || TREE_STAGE_STYLES["To be Inspected"]}` }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))), tree.workOrderId ? /* @__PURE__ */ React.createElement("button", { onClick: () => onViewWorkOrder(tree), className: "text-xs font-semibold text-[#B8752F] hover:underline" }, "View Work Order") : onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(tree), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Create Work Order"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(tree), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(tree.id), className: "text-xs font-semibold text-[#a8532a] hover:underline ml-auto" }, "Delete")));
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, location), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${PRIORITY_STYLES[tree.priority] || PRIORITY_STYLES.Medium}` }, tree.priority)), customer && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-0.5" }, "Reported by ", customer.name), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 whitespace-pre-wrap" }, tree.description)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#9A968D] whitespace-nowrap flex-shrink-0" }, tree.notedDate)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-2 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("select", { value: tree.stage || "To be Inspected", onChange: (e) => onSetStage(tree, e.target.value), className: `text-xs font-semibold rounded-md px-2 py-1 border-0 ${TREE_STAGE_STYLES[tree.stage] || TREE_STAGE_STYLES["To be Inspected"]}` }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))), tree.workOrderId ? /* @__PURE__ */ React.createElement("span", { className: "inline-flex items-center gap-2" }, (() => {
+    const wo = (db.workOrders || []).find((w) => w.id === tree.workOrderId);
+    return wo ? /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${wo.status === "Completed" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#F2E3D0] text-[#B8752F]"}` }, `Work order: ${wo.status || "Open"}`) : null;
+  })(), /* @__PURE__ */ React.createElement("button", { onClick: () => onViewWorkOrder(tree), className: "text-xs font-semibold text-[#B8752F] hover:underline" }, "View Work Order")) : onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(tree), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Create Work Order"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(tree), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(tree.id), className: "text-xs font-semibold text-[#a8532a] hover:underline ml-auto" }, "Delete")));
 }
 function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }) {
   const actor = useCurrentActor();
@@ -12657,6 +12679,20 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
   const setStage = (tree, stage) => {
     saveTreeRequest({ ...tree, stage });
   };
+  // Bring linked entries in line with their work order (e.g. ones completed
+  // under the old rule, when creating the work order closed the entry).
+  // Only touches entries whose work order is loaded, so it never acts on a
+  // partly loaded list.
+  useEffect(() => {
+    requests.forEach((t) => {
+      if (!t.workOrderId) return;
+      const wo = (db.workOrders || []).find((w) => w.id === t.workOrderId);
+      if (!wo) return;
+      const done = wo.status === "Completed";
+      const completedDate = done ? wo.completedDate || t.completedDate || todayISO() : null;
+      if (!!t.completed !== done || (t.completedDate || null) !== completedDate) saveTreeRequest({ ...t, completed: done, completedDate });
+    });
+  }, [requests, db.workOrders]);
   const header = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Trees"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Tree work spotted by staff or reported by customers — track it here, then create a work order when it's ready to schedule.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " w-full sm:w-56",
     placeholder: "Search by site, cottage, or customer…",
@@ -12679,7 +12715,7 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
     db,
     saveWorkOrder: (wo) => {
       saveWorkOrder(wo);
-      saveTreeRequest({ ...creatingFrom, completed: true, completedDate: todayISO(), workOrderId: wo.id, stage: creatingFrom.stage === "Hire Out" ? "Hire Out" : "QIC Job" });
+      saveTreeRequest({ ...creatingFrom, completed: false, completedDate: null, workOrderId: wo.id, stage: creatingFrom.stage === "Hire Out" ? "Hire Out" : "QIC Job" });
     },
     onClose: () => setCreatingFrom(null),
     initial: {
