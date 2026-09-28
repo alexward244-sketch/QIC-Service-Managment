@@ -362,6 +362,7 @@ async function commitInChunks(operations) {
     const batch = db_.batch();
     operations.slice(i, i + CHUNK).forEach((op) => {
       if (op.type === "delete") batch.delete(op.ref);
+      else if (op.type === "update") batch.update(op.ref, op.data);
       else batch.set(op.ref, op.data);
     });
     await batch.commit();
@@ -10302,14 +10303,30 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       return next;
     });
   };
-  const confirmArchiveSelected = () => {
+  // Saves first and only then logs and confirms, so the activity log never
+  // claims an archive that didn't happen. If the save fails, the selection
+  // stays so it can be retried.
+  const [archiving, setArchiving] = useState(false);
+  const confirmArchiveSelected = async () => {
     const toArchive = db.workOrders.filter((w) => archiveSelected.has(w.id) && w.status === "Completed" && !w.archived);
-    if (toArchive.length) {
-      const activityLog = addLog(db, actor, `Archived ${toArchive.length} completed work order${toArchive.length === 1 ? "" : "s"}`);
-      persist({ ...db, activityLog });
-      commitInChunks(toArchive.map((w) => ({ type: "set", ref: WORK_ORDERS_REF.doc(w.id), data: { ...w, archived: true, archivedAt: todayISO() } }))).catch(() => {
-      });
+    if (toArchive.length === 0) {
+      setArchiveSelectMode(false);
+      setArchiveSelected(/* @__PURE__ */ new Set());
+      return;
     }
+    setArchiving(true);
+    try {
+      await commitInChunks(toArchive.map((w) => ({ type: "update", ref: WORK_ORDERS_REF.doc(w.id), data: { archived: true, archivedAt: todayISO() } })));
+    } catch (e) {
+      console.error("Archiving work orders failed:", e);
+      setArchiving(false);
+      setToast("Couldn't archive those work orders. Check your connection and press Confirm again.");
+      return;
+    }
+    setArchiving(false);
+    const label = `${toArchive.length} completed work order${toArchive.length === 1 ? "" : "s"}`;
+    persist({ ...db, activityLog: addLog(db, actor, `Archived ${label}`) });
+    setToast(`Archived ${label}`);
     setArchiveSelectMode(false);
     setArchiveSelected(/* @__PURE__ */ new Set());
   };
@@ -10424,7 +10441,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     return /* @__PURE__ */ React.createElement("div", { key: status }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 px-1" }, /* @__PURE__ */ React.createElement("span", { className: `w-2 h-2 rounded-full flex-shrink-0 ${status === "Completed" ? "bg-[#28633C]" : status === "In Progress" ? "bg-[#3E7A72]" : "bg-[#9A968D]"}` }), /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, status), /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] bg-[#F1EEE9] rounded-full px-1.5" }, list.length), status === "Completed" && list.length > 0 && (archiveSelectMode ? /* @__PURE__ */ React.createElement("div", { className: "ml-auto flex items-center gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => {
     setArchiveSelectMode(false);
     setArchiveSelected(/* @__PURE__ */ new Set());
-  }, className: "text-[10px] text-[#75716A] hover:underline font-medium whitespace-nowrap" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: confirmArchiveSelected, disabled: archiveSelected.size === 0, className: "text-[10px] text-[#377249] hover:underline font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed" }, "Confirm (", archiveSelected.size, ")")) : /* @__PURE__ */ React.createElement("button", { onClick: () => setArchiveSelectMode(true), className: "ml-auto text-[10px] text-[#377249] hover:underline font-medium whitespace-nowrap" }, "Select Work Orders to Archive"))), /* @__PURE__ */ React.createElement(
+  }, className: "text-[10px] text-[#75716A] hover:underline font-medium whitespace-nowrap" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: confirmArchiveSelected, disabled: archiveSelected.size === 0 || archiving, className: "text-[10px] text-[#377249] hover:underline font-medium whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed" }, archiving ? "Archiving\u2026" : `Confirm (${archiveSelected.size})`)) : /* @__PURE__ */ React.createElement("button", { onClick: () => setArchiveSelectMode(true), className: "ml-auto text-[10px] text-[#377249] hover:underline font-medium whitespace-nowrap" }, "Select Work Orders to Archive"))), /* @__PURE__ */ React.createElement(
       "div",
       {
         onDragOver: (e) => {
