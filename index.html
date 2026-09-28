@@ -96,6 +96,16 @@ const HYDRO_READINGS_REF = db_.collection("hydroReadings");
 // which counts against Firestore's 1 MB per-document limit and was
 // rewritten whole on every save anywhere in the app (so two people saving
 // at once could drop a reading). Each reading is now its own document.
+// Work orders created from a tree entry live in the Trees tab: they're left
+// out of the Work Orders tab and the dashboard (but still show on the
+// calendar, the field app's Jobs list and customer/site history).
+function treeWorkOrderIds(db) {
+  return new Set(((db && db.treeRequests) || []).map((t) => t.workOrderId).filter(Boolean));
+}
+function withoutTreeWorkOrders(db, list) {
+  const ids = treeWorkOrderIds(db);
+  return ids.size === 0 ? list : list.filter((w) => !ids.has(w.id));
+}
 // A tree entry that has a work order stays open until that work order is
 // completed, then completes with the work order's completion date; it
 // reopens if the work order is reopened, and loses the link (staying open)
@@ -6179,7 +6189,8 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const summaryRole = useUserRole(db);
   const actor = useCurrentActor();
   const [viewingWO, setViewingWO] = useState(null);
-  const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
+  const dashboardWorkOrders = withoutTreeWorkOrders(db, db.workOrders);
+  const openWorkOrders = dashboardWorkOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const [reviewChooserOpen, setReviewChooserOpen] = useState(false);
   const [unrecognizedOpen, setUnrecognizedOpen] = useState(false);
@@ -6217,9 +6228,9 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
     fourPmPropane.length > 0 && `${fourPmPropane.length} on 4pm run`
   ].filter(Boolean);
   const pendingPropaneSubtitle = pendingPropaneParts.length > 0 ? pendingPropaneParts.join(" \xB7 ") : "All caught up";
-  const recentWorkOrders = db.workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
+  const recentWorkOrders = dashboardWorkOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
   const upcomingAppointments = (db.serviceAppointments || []).filter((a) => !a.completedDate).map((a) => ({ ...a, itemType: "appointment" }));
-  const scheduledWorkOrders = db.workOrders.filter((w) => w.status !== "Completed" && w.date && w.date > todayISO()).map((w) => ({ id: w.id, title: w.title, date: w.date, time: "", itemType: "workOrder", wo: w }));
+  const scheduledWorkOrders = dashboardWorkOrders.filter((w) => w.status !== "Completed" && w.date && w.date > todayISO()).map((w) => ({ id: w.id, title: w.title, date: w.date, time: "", itemType: "workOrder", wo: w }));
   const upcomingItems = [...upcomingAppointments, ...scheduledWorkOrders].sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
   const completeAppointment = (appt) => {
     const next = (db.serviceAppointments || []).map((a) => a.id === appt.id ? { ...a, completedDate: todayISO() } : a);
@@ -10336,8 +10347,9 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     });
     setBulkEditOpen(false);
   };
-  const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
-  const filtered = db.workOrders.filter((w) => {
+  const listedWorkOrders = withoutTreeWorkOrders(db, db.workOrders);
+  const workGroups = Array.from(new Set(listedWorkOrders.map((w) => w.workGroup).filter(Boolean))).sort();
+  const filtered = listedWorkOrders.filter((w) => {
     if (groupFilter === "__ungrouped__" && w.workGroup) return false;
     if (groupFilter && groupFilter !== "__ungrouped__" && w.workGroup !== groupFilter) return false;
     if (!filter) return true;
@@ -10385,7 +10397,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Templates"
-  ), db.workOrders.length > 0 && /* @__PURE__ */ React.createElement(
+  ), listedWorkOrders.length > 0 && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setBulkEditOpen(true),
@@ -10400,7 +10412,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     },
     "Print ",
     filter ? "results" : "all"
-  ))), db.workOrders.length === 0 ? /* @__PURE__ */ React.createElement(
+  ))), listedWorkOrders.length === 0 ? /* @__PURE__ */ React.createElement(
     EmptyState,
     {
       text: "No work orders yet. Log your first job.",
@@ -10473,7 +10485,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
   ))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setApplianceLogPrompt(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Skip"))), recurringOpen && /* @__PURE__ */ React.createElement(RecurringTasksModal, { db, persist, onClose: () => setRecurringOpen(false) }), templatesOpen && /* @__PURE__ */ React.createElement(WorkOrderTemplatesModal, { db, persist, onClose: () => setTemplatesOpen(false) }), bulkEditOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Actions", onClose: () => setBulkEditOpen(false), wide: true }, /* @__PURE__ */ React.createElement(
     BulkEditWorkOrdersForm,
     {
-      workOrders: db.workOrders,
+      workOrders: listedWorkOrders,
       staff: db.staff,
       sites: db.sites,
       cottages: db.cottages,
@@ -12626,14 +12638,17 @@ function TreeRequestForm({ initial, db, onSave, onCancel }) {
     noneLabel: "No customer linked"
   })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Stage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: stage, onChange: (e) => setStage(e.target.value) }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement(Field, { label: "Noted Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: notedDate, onChange: (e) => setNotedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: 'What & where — e.g. "Large dead oak leaning over the driveway near Site 42"', autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !description.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, initial ? "Save Changes" : "Log Tree")));
 }
-function TreeRow({ tree, db, onEdit, onDelete, onCreateWorkOrder, onSetStage, onViewWorkOrder }) {
+function TreeRow({ tree, db, onEdit, onDelete, onCreateWorkOrder, onSetStage, onViewWorkOrder, onWorkOrderStatus, onEditWorkOrder }) {
   const site = tree.siteId ? db.sites.find((s) => s.id === tree.siteId) : null;
   const cottage = tree.cottageId ? db.cottages.find((c) => c.id === tree.cottageId) : null;
   const customer = tree.customerId ? db.customers.find((c) => c.id === tree.customerId) : null;
   const location = [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" — ") || "No location set";
   return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, location), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${PRIORITY_STYLES[tree.priority] || PRIORITY_STYLES.Medium}` }, tree.priority)), customer && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mt-0.5" }, "Reported by ", customer.name), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 whitespace-pre-wrap" }, tree.description)), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#9A968D] whitespace-nowrap flex-shrink-0" }, tree.notedDate)), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-2 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("select", { value: tree.stage || "To be Inspected", onChange: (e) => onSetStage(tree, e.target.value), className: `text-xs font-semibold rounded-md px-2 py-1 border-0 ${TREE_STAGE_STYLES[tree.stage] || TREE_STAGE_STYLES["To be Inspected"]}` }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))), tree.workOrderId ? /* @__PURE__ */ React.createElement("span", { className: "inline-flex items-center gap-2" }, (() => {
     const wo = (db.workOrders || []).find((w) => w.id === tree.workOrderId);
-    return wo ? /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${wo.status === "Completed" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#F2E3D0] text-[#B8752F]"}` }, `Work order: ${wo.status || "Open"}`) : null;
+    if (!wo) return null;
+    const open = wo.status !== "Completed";
+    const actionCls = "px-2.5 py-1 rounded-md text-xs font-semibold";
+    return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("span", { className: `text-[10px] font-bold px-1.5 py-0.5 rounded-full ${open ? "bg-[#F2E3D0] text-[#B8752F]" : "bg-[#DDF1E1] text-[#28633C]"}` }, `Work order: ${wo.status || "Open"}`), open && onWorkOrderStatus && wo.status !== "In Progress" && /* @__PURE__ */ React.createElement("button", { onClick: () => onWorkOrderStatus(tree, wo, "In Progress"), className: `${actionCls} border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]` }, "Start"), open && onWorkOrderStatus && /* @__PURE__ */ React.createElement("button", { onClick: () => onWorkOrderStatus(tree, wo, "Completed"), className: `${actionCls} bg-[#377249] text-[#F9F5EC] hover:bg-[#135C30]` }, "Mark complete"), onEditWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onEditWorkOrder(wo), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit"));
   })(), /* @__PURE__ */ React.createElement("button", { onClick: () => onViewWorkOrder(tree), className: "text-xs font-semibold text-[#B8752F] hover:underline" }, "View Work Order")) : onCreateWorkOrder && /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(tree), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Create Work Order"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(tree), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(tree.id), className: "text-xs font-semibold text-[#a8532a] hover:underline ml-auto" }, "Delete")));
 }
 function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }) {
@@ -12679,6 +12694,23 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
   const setStage = (tree, stage) => {
     saveTreeRequest({ ...tree, stage });
   };
+  // Tree work orders aren't on the Work Orders tab, so they're started and
+  // finished here. Completing works like the Work Orders tab: dated today,
+  // parts used deducted from stock. saveWorkOrder then completes the entry.
+  const [editingWO, setEditingWO] = useState(null);
+  const setWorkOrderStatus = (tree, wo, status) => {
+    if (!saveWorkOrder || wo.status === status) return;
+    const updated = { ...wo, status };
+    let parts = db.parts;
+    if (status === "Completed") {
+      updated.completedDate = todayISO();
+      updated.archived = false;
+      parts = deductPartsUsed(db.parts, wo.partsUsed);
+    }
+    const activityLog = addLog(db, actor, `Tree work order "${wo.title}" moved to ${status}`);
+    persist({ ...db, parts, activityLog });
+    saveWorkOrder(updated);
+  };
   // Bring linked entries in line with their work order (e.g. ones completed
   // under the old rule, when creating the work order closed the entry).
   // Only touches entries whose work order is loaded, so it never acts on a
@@ -12707,7 +12739,9 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
     onDelete: (id) => confirm.ask(id),
     onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null,
     onSetStage: setStage,
-    onViewWorkOrder: (t) => setViewingWO((db.workOrders || []).find((w) => w.id === t.workOrderId))
+    onViewWorkOrder: (t) => setViewingWO((db.workOrders || []).find((w) => w.id === t.workOrderId)),
+    onWorkOrderStatus: saveWorkOrder ? setWorkOrderStatus : null,
+    onEditWorkOrder: saveWorkOrder ? setEditingWO : null
   }))));
   const completedSection = completedList.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Recently Completed"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, completedList.map((tree) => /* @__PURE__ */ React.createElement("div", { key: tree.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-white px-4 py-2.5 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 truncate" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, siteLabel(tree)), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " — ", tree.description), tree.workOrderId && /* @__PURE__ */ React.createElement("button", { onClick: () => setViewingWO((db.workOrders || []).find((w) => w.id === tree.workOrderId)), className: "ml-2 text-xs font-semibold text-[#B8752F] hover:underline whitespace-nowrap" }, "View Work Order")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap flex-shrink-0" }, tree.completedDate)))));
   const modalEl = modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Tree Entry" : "Edit Tree Entry", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(TreeRequestForm, { initial: modal.data, db, onSave: save, onCancel: () => setModal(null) }));
@@ -12729,7 +12763,28 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
     }
   });
   const viewModal = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" });
-  return /* @__PURE__ */ React.createElement("div", null, header, pendingSection, completedSection, modalEl, creatingModal, viewModal, confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
+  const editWOModal = editingWO && saveWorkOrder && /* @__PURE__ */ React.createElement(Modal, { title: "Edit Tree Work Order", onClose: () => setEditingWO(null), wide: true }, /* @__PURE__ */ React.createElement(WorkOrderForm, {
+    initial: editingWO,
+    sites: db.sites,
+    cottages: db.cottages,
+    staff: db.staff,
+    parts: db.parts,
+    customers: db.customers,
+    workGroups: Array.from(new Set((db.workOrders || []).map((w) => w.workGroup).filter(Boolean))).sort(),
+    templates: db.workOrderTemplates,
+    taxRate: (db.settings || {}).taxRate != null ? db.settings.taxRate : 13,
+    workOrders: db.workOrders,
+    rateOptions: getLaborRateOptions(db),
+    onSave: (wo) => {
+      persist({ ...db, activityLog: addLog(db, actor, `Updated tree work order "${wo.title}"`) });
+      saveWorkOrder(wo);
+      setEditingWO(null);
+    },
+    onCancel: () => setEditingWO(null),
+    onDirtyChange: () => {
+    }
+  }));
+  return /* @__PURE__ */ React.createElement("div", null, header, pendingSection, completedSection, modalEl, creatingModal, viewModal, editWOModal, confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
     label: "this tree entry",
     onConfirm: () => remove(confirm.target),
     onCancel: confirm.clear
@@ -17424,7 +17479,7 @@ function AppContent() {
   const visibleGroup = isAdmin || isSalesManager || isAccounting ? mode : "service";
   const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : visibleGroup === "accounting" ? "hydroreview" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
-  const openCount = db.workOrders.filter((w) => w.status !== "Completed").length;
+  const openCount = withoutTreeWorkOrders(db, db.workOrders).filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
