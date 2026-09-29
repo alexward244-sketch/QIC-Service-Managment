@@ -372,6 +372,7 @@ async function triageCorrespondence(subject, body) {
     } else {
       console.error("Failed to triage correspondence:", err);
     }
+    await reportServerProblem("emailTriage", `Couldn't triage an email ("${toStr(subject).slice(0, 80)}"): ${err.message || err}`, { email: false });
     return fallback;
   }
 }
@@ -465,8 +466,64 @@ async function checkAiRateLimit(uid, feature, maxPerHour) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Server problem alerts. The web forms, email intake and morning summary run
+// with nobody watching, so when one fails it's recorded in serverAlerts
+// (shown in Admin > System Health) and - for failures that lose or delay
+// something - Admins get an email, at most once per problem type per day.
+// Never throws: reporting a problem must not cause another one.
+// ---------------------------------------------------------------------------
+const SERVER_ALERT_SOURCES = {
+  winterizingSignup: { label: "Winterizing sign-up web form", check: "Check the Zoho Flow for the winterizing form, and look in Zoho for the sign-up so it can be entered by hand." },
+  generalServiceRequest: { label: "General service request web form", check: "Check the Zoho Flow for the service request form, and look in Zoho for the request so it can be entered by hand." },
+  webhookRejected: { label: "Web form / email intake rejected (wrong secret key)", check: "If sign-ups or emails stopped arriving, the secret key in Zoho Flow no longer matches the app's. Otherwise this can be someone probing the address, and nothing needs doing." },
+  serviceCorrespondence: { label: "Incoming email intake", check: "Check the service inbox in Zoho for emails that didn't show up in the app's Correspondence tab." },
+  zohoAttachments: { label: "Email attachments from Zoho", check: "The email arrived but its attachments may be missing - open the email in Zoho to see them. If this keeps happening, the Zoho connection may need to be re-authorized." },
+  emailTriage: { label: "Email triage (Claude)", check: "Emails still arrive, just without the suggested flag and summary. Usually a brief Claude outage; nothing to do unless it keeps happening." },
+  morningSummary: { label: "Morning summary", check: "The summary may be missing or only have the plain counts today. Check the dashboard; you can regenerate it there." }
+};
+
+async function reportServerProblem(source, message, { email = true } = {}) {
+  try {
+    const meta = SERVER_ALERT_SOURCES[source] || { label: source, check: "" };
+    const day = todayEasternISO();
+    const now = new Date().toISOString();
+    const detail = toStr(message).slice(0, 500);
+    const ref = db.collection("serverAlerts").doc(`${source}_${day}`);
+    const isFirstToday = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists) {
+        tx.update(ref, { count: (snap.data().count || 0) + 1, lastAt: now, lastMessage: detail });
+        return false;
+      }
+      tx.set(ref, { source, label: meta.label, check: meta.check, day, firstAt: now, lastAt: now, count: 1, lastMessage: detail, emailed: email });
+      return true;
+    });
+    if (!email || !isFirstToday) return;
+    let privateKey = "";
+    try { privateKey = EMAILJS_PRIVATE_KEY.value(); } catch (e) { privateKey = ""; }
+    if (!privateKey) return;
+    const mainSnap = await ROLES_DOC.get();
+    const admins = Object.entries((mainSnap.exists && mainSnap.data().userRoles) || {}).filter(([, r]) => r === "admin").map(([e]) => e);
+    const text = [
+      `Something went wrong with: ${meta.label}`,
+      "",
+      `What happened: ${detail || "(no details)"}`,
+      "",
+      meta.check ? `What to check: ${meta.check}` : "",
+      "",
+      "You'll get at most one email a day for this problem. Every occurrence is listed in Admin > System Health."
+    ].filter((l, i, a) => l || a[i - 1]).join("\n");
+    for (const to of admins) {
+      await sendSummaryEmail(to, `QIC app problem: ${meta.label}`, text).catch((err) => console.error("Couldn't email server alert to", to, err.message || err));
+    }
+  } catch (err) {
+    console.error("Couldn't record server problem:", source, err);
+  }
+}
+
 exports.winterizingSignup = onRequest(
-  { secrets: [WEBHOOK_SECRET], cors: false },
+  { secrets: [WEBHOOK_SECRET, EMAILJS_PRIVATE_KEY], cors: false },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("Method not allowed");
@@ -474,6 +531,7 @@ exports.winterizingSignup = onRequest(
     }
 
     if (!webhookSecretMatches(req.get("x-webhook-secret"))) {
+      await reportServerProblem("webhookRejected", `A request to ${req.path || "a web form address"} had a missing or wrong secret key.`, { email: false });
       res.status(401).send("Unauthorized");
       return;
     }
@@ -501,6 +559,7 @@ exports.winterizingSignup = onRequest(
     };
 
     if (!entry.submittedSiteNumber) {
+      await reportServerProblem("winterizingSignup", `A sign-up arrived without a site number and wasn't saved: ${[entry.submittedName, entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(", ") || "no contact details"}.`);
       res.status(400).json({ ok: false, error: "siteNumber is required" });
       return;
     }
@@ -510,13 +569,14 @@ exports.winterizingSignup = onRequest(
       res.status(200).json({ ok: true, id: entry.id });
     } catch (err) {
       console.error("Failed to write winterizing signup:", err);
+      await reportServerProblem("winterizingSignup", `Couldn't save a sign-up from ${entry.submittedName || entry.submittedEmail || "a customer"} (site ${entry.submittedSiteNumber}): ${err.message || err}`);
       res.status(500).json({ ok: false, error: "Internal error" });
     }
   }
 );
 
 exports.generalServiceRequest = onRequest(
-  { secrets: [WEBHOOK_SECRET], cors: false },
+  { secrets: [WEBHOOK_SECRET, EMAILJS_PRIVATE_KEY], cors: false },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("Method not allowed");
@@ -524,6 +584,7 @@ exports.generalServiceRequest = onRequest(
     }
 
     if (!webhookSecretMatches(req.get("x-webhook-secret"))) {
+      await reportServerProblem("webhookRejected", `A request to ${req.path || "a web form address"} had a missing or wrong secret key.`, { email: false });
       res.status(401).send("Unauthorized");
       return;
     }
@@ -552,6 +613,7 @@ exports.generalServiceRequest = onRequest(
     };
 
     if (!entry.submittedSiteNumber) {
+      await reportServerProblem("generalServiceRequest", `A service request arrived without a site number and wasn't saved: ${[entry.submittedName, entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(", ") || "no contact details"}.`);
       res.status(400).json({ ok: false, error: "siteNumber is required" });
       return;
     }
@@ -561,6 +623,7 @@ exports.generalServiceRequest = onRequest(
       res.status(200).json({ ok: true, id: entry.id });
     } catch (err) {
       console.error("Failed to write general service request:", err);
+      await reportServerProblem("generalServiceRequest", `Couldn't save a request from ${entry.submittedName || entry.submittedEmail || "a customer"} (site ${entry.submittedSiteNumber}): ${err.message || err}`);
       res.status(500).json({ ok: false, error: "Internal error" });
     }
   }
@@ -696,6 +759,7 @@ async function fetchZohoAttachments({ fromEmail }) {
     const messageId = await findRealMessageId(accessToken, fromEmail);
     if (!messageId) {
       console.error("Couldn't find a matching Zoho message for attachment lookup:", fromEmail);
+      await reportServerProblem("zohoAttachments", `Couldn't find the email from ${fromEmail} in Zoho to check it for attachments.`, { email: false });
       return [];
     }
     console.log("Fetching Zoho attachments for", { fromEmail, messageId });
@@ -706,7 +770,10 @@ async function fetchZohoAttachments({ fromEmail }) {
       `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${ZOHO_MAIL_INBOX_FOLDER_ID}/messages/${messageId}/attachmentinfo?includeInline=true`,
       accessToken
     );
-    if (!infoResponse) return [];
+    if (!infoResponse) {
+      await reportServerProblem("zohoAttachments", `Zoho wouldn't list the attachments on an email from ${fromEmail}, so any attachments are missing in the app.`);
+      return [];
+    }
     const infoData = await infoResponse.json();
     const items = [...((infoData.data && infoData.data.attachments) || []), ...((infoData.data && infoData.data.inline) || [])];
     console.log(`Zoho attachmentinfo returned ${items.length} attachment(s)`);
@@ -735,12 +802,13 @@ async function fetchZohoAttachments({ fromEmail }) {
     return results;
   } catch (err) {
     console.error("Failed to fetch Zoho attachments:", err);
+    await reportServerProblem("zohoAttachments", `Couldn't fetch attachments for an email from ${fromEmail}: ${err.message || err}`);
     return [];
   }
 }
 
 exports.serviceCorrespondence = onRequest(
-  { secrets: [WEBHOOK_SECRET, ANTHROPIC_API_KEY, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN], cors: false, timeoutSeconds: 120 },
+  { secrets: [WEBHOOK_SECRET, ANTHROPIC_API_KEY, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY], cors: false, timeoutSeconds: 120 },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("Method not allowed");
@@ -748,6 +816,7 @@ exports.serviceCorrespondence = onRequest(
     }
 
     if (!webhookSecretMatches(req.get("x-webhook-secret"))) {
+      await reportServerProblem("webhookRejected", `A request to ${req.path || "a web form address"} had a missing or wrong secret key.`, { email: false });
       res.status(401).send("Unauthorized");
       return;
     }
@@ -833,6 +902,7 @@ exports.serviceCorrespondence = onRequest(
       res.status(200).json({ ok: true, id: entry.id, matched: Boolean(customerId), forwardedBy, suggestedFlag, needsReply });
     } catch (err) {
       console.error("Failed to write correspondence:", err);
+      await reportServerProblem("serviceCorrespondence", `Couldn't save an incoming email from ${toStr(body.fromEmail) || "unknown sender"} (subject: ${toStr(body.subject) || "none"}): ${err.message || err}`);
       res.status(500).json({ ok: false, error: "Internal error" });
     }
   }
@@ -1215,6 +1285,7 @@ async function buildMorningSummary({ sendEmail }) {
     }
   } catch (err) {
     console.error("Morning summary: Claude request failed:", err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
+    await reportServerProblem("morningSummary", `The written summary wasn't available, so today's summary has the plain counts only: ${err.message || err}`, { email: false });
   }
   if (!text) {
     // Claude unavailable: fall back to the plain counts so the day still starts with something.
@@ -1239,6 +1310,7 @@ async function buildMorningSummary({ sendEmail }) {
         summary.emailedTo.push(email);
       } catch (err) {
         console.error(`Morning summary: couldn't email ${email}:`, err.message || err);
+        await reportServerProblem("morningSummary", `Couldn't email the morning summary to ${email}: ${err.message || err}`, { email: false });
       }
     }
   }
@@ -1443,7 +1515,13 @@ exports.morningSummary = onSchedule(
       console.log(`Morning summary skipped for ${today}: outside the season set in Admin Settings.`);
       return;
     }
-    await buildMorningSummary({ sendEmail: true });
+    try {
+      await buildMorningSummary({ sendEmail: true });
+    } catch (err) {
+      console.error("Morning summary failed:", err);
+      await reportServerProblem("morningSummary", `Today's morning summary couldn't be built: ${err.message || err}`);
+      throw err;
+    }
   }
 );
 
