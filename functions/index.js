@@ -132,10 +132,27 @@ exports.removeUserRole = onCall(async (request) => {
       }
     }
     await admin.auth().setCustomUserClaims(user.uid, { role: null });
+    // Removing someone should take effect now, not when their sign-in
+    // happens to renew: this ends every signed-in session they have, on
+    // every device (the app notices within a few minutes and signs out).
+    await admin.auth().revokeRefreshTokens(user.uid);
   }
   await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), admin.firestore.FieldValue.delete());
 
   return { ok: true };
+});
+
+// "Sign out everywhere" in Manage Access, for a lost or stolen phone: ends
+// every signed-in session the person has without changing their role. They
+// can sign straight back in with their password on their own devices.
+exports.signOutUserEverywhere = onCall(async (request) => {
+  requireCallerIsAdmin(request);
+  const email = ((request.data && request.data.email) || "").trim().toLowerCase();
+  if (!email) throw new HttpsError("invalid-argument", "Missing email.");
+  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
+  await admin.auth().revokeRefreshTokens(user.uid);
+  return { ok: true, email };
 });
 
 // Read-only report for the "Check server roles" panel in Manage Access.

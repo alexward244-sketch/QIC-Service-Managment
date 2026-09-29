@@ -2463,6 +2463,8 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   const [codesOpenFor, setCodesOpenFor] = useState(null);
   const [busyEmail, setBusyEmail] = useState(null);
   const [roleError, setRoleError] = useState(null);
+  const [roleNotice, setRoleNotice] = useState(null);
+  const [confirming, setConfirming] = useState(null);
   const roles = db.userRoles || {};
   const loginCodes = db.loginCodes || {};
   // Skip malformed entries (a nested object from the old dotted-path save
@@ -2483,11 +2485,28 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
   };
   const removeRole = async (email) => {
     setRoleError(null);
+    setRoleNotice(null);
+    setConfirming(null);
     setBusyEmail(email);
     try {
       await functions_.httpsCallable("removeUserRole")({ email });
+      setRoleNotice(`Removed ${email}. They're being signed out of every device (within a few minutes on any device that's open).`);
     } catch (e) {
       setRoleError((e == null ? void 0 : e.message) || `Couldn't remove ${email}. Try again.`);
+    } finally {
+      setBusyEmail(null);
+    }
+  };
+  const signOutEverywhere = async (email) => {
+    setRoleError(null);
+    setRoleNotice(null);
+    setConfirming(null);
+    setBusyEmail(email);
+    try {
+      await functions_.httpsCallable("signOutUserEverywhere")({ email });
+      setRoleNotice(`${email} is being signed out of every device. They can sign back in with their password.`);
+    } catch (e) {
+      setRoleError((e == null ? void 0 : e.message) || `Couldn't sign out ${email}. Try again.`);
     } finally {
       setBusyEmail(null);
     }
@@ -2525,7 +2544,7 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     const codes = (current.codes || []).filter((c) => c.id !== codeId);
     persist({ ...db, loginCodes: { ...loginCodes, [key]: { ...current, codes } } });
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Manage Access", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Assign Admin or Office access to specific logins \u2014 the email must match exactly what they sign in with. Anyone not listed here defaults to Office access", hasAnyAdmin ? "" : " (until at least one Admin is set)", ". They need to have signed in at least once before you can set their role, and a change takes effect the next time they sign in."), roleError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2 mb-3" }, roleError), entries.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No roles assigned yet \u2014 everyone currently has full Admin access.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, entries.map(([email, role]) => /* @__PURE__ */ React.createElement("div", { key: email }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2 mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13] truncate" }, email, email === currentEmail ? " (you)" : "", (loginCodes[email] || {}).required && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#DDF1E1] text-[#28633C] px-1.5 py-0.5 rounded-full align-middle" }, "Code Required")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Manage Access", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Assign Admin or Office access to specific logins \u2014 the email must match exactly what they sign in with. Anyone not listed here can't see anything in the app. They need to have signed in at least once before you can set their role, and a change reaches their open app within a few minutes."), roleError && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] bg-[#F5E3D9] border border-[#e0bfa6] rounded-md px-3 py-2 mb-3" }, roleError), roleNotice && React.createElement("p", { className: "text-xs text-[#28633C] bg-[#E4EFE6] border border-[#b9d6bf] rounded-md px-3 py-2 mb-3" }, roleNotice), entries.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No roles assigned yet \u2014 everyone currently has full Admin access.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, entries.map(([email, role]) => /* @__PURE__ */ React.createElement("div", { key: email }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2 mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#1E1A13] truncate" }, email, email === currentEmail ? " (you)" : "", (loginCodes[email] || {}).required && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#DDF1E1] text-[#28633C] px-1.5 py-0.5 rounded-full align-middle" }, "Code Required")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, /* @__PURE__ */ React.createElement(
     "select",
     {
       className: "text-xs rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-2 py-1 disabled:opacity-50",
@@ -2538,7 +2557,17 @@ function ManageRolesModal({ db, persist, currentEmail, onClose }) {
     /* @__PURE__ */ React.createElement("option", { value: "salesmanager" }, "Sales Manager"),
     /* @__PURE__ */ React.createElement("option", { value: "accounting" }, "Accounting"),
     /* @__PURE__ */ React.createElement("option", { value: "office" }, "Office")
-  ), busyEmail === email && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D]" }, "Saving…"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline whitespace-nowrap", onClick: () => setCodesOpenFor(codesOpenFor === email ? null : email) }, codesOpenFor === email ? "Hide codes" : "Login codes"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline disabled:opacity-50", disabled: busyEmail === email, onClick: () => removeRole(email) }, "Remove"))), codesOpenFor === email && /* @__PURE__ */ React.createElement(LoginCodesPanel, {
+  ), busyEmail === email && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D]" }, "Saving…"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline whitespace-nowrap", onClick: () => setCodesOpenFor(codesOpenFor === email ? null : email) }, codesOpenFor === email ? "Hide codes" : "Login codes"), email !== currentEmail && React.createElement("button", { className: "text-xs text-[#75716A] hover:underline whitespace-nowrap disabled:opacity-50", disabled: busyEmail === email, onClick: () => setConfirming({ email, kind: "signout" }) }, "Sign out everywhere"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#a8532a] hover:underline disabled:opacity-50", disabled: busyEmail === email, onClick: () => setConfirming({ email, kind: "remove" }) }, "Remove"))), confirming && confirming.email === email && React.createElement(
+    "div",
+    { className: "flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 mb-1.5 text-xs text-[#4B4740]" },
+    React.createElement("span", null, confirming.kind === "remove" ? `Remove ${email}'s access and sign them out of every device?` : `Sign ${email} out of every device? Their role stays; they can sign back in with their password.`),
+    React.createElement(
+      "span",
+      { className: "flex gap-2" },
+      React.createElement("button", { type: "button", className: "px-2.5 py-1 rounded-md bg-[#a8532a] text-white font-medium", onClick: () => confirming.kind === "remove" ? removeRole(email) : signOutEverywhere(email) }, confirming.kind === "remove" ? "Yes, remove" : "Yes, sign out"),
+      React.createElement("button", { type: "button", className: "px-2.5 py-1 rounded-md text-[#75716A] hover:bg-[#F1EEE9]", onClick: () => setConfirming(null) }, "Cancel")
+    )
+  ), codesOpenFor === email && /* @__PURE__ */ React.createElement(LoginCodesPanel, {
     email,
     config: loginCodes[email],
     onSetRequired: (required) => setLoginRequired(email, required),
@@ -17961,6 +17990,38 @@ function LoginScreen() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [resetNotice, setResetNotice] = useState(null);
+  const [resetting, setResetting] = useState(false);
+  // Emails a password-reset link from Firebase. The message is the same
+  // whether or not the email has an account, so this can't be used to find
+  // out who works here.
+  const forgotPassword = async () => {
+    setError(null);
+    setResetNotice(null);
+    if (!email.trim()) {
+      setError("Enter your email above, then tap Forgot password.");
+      return;
+    }
+    setResetting(true);
+    try {
+      await firebase.auth().sendPasswordResetEmail(email.trim());
+      setResetNotice(null);
+    } catch (e) {
+      const code = e && e.code;
+      if (code === "auth/invalid-email") {
+        setError("That doesn't look like an email address.");
+        setResetting(false);
+        return;
+      }
+      if (code === "auth/too-many-requests" || code === "auth/network-request-failed") {
+        setError(code === "auth/too-many-requests" ? "Too many tries - please wait a few minutes." : "No connection - try again when you're online.");
+        setResetting(false);
+        return;
+      }
+    }
+    setResetting(false);
+    setResetNotice(`If ${email.trim()} has an account, a reset link is on its way. Check your inbox (and junk folder).`);
+  };
   const submit = async () => {
     setError(null);
     if (!email.trim() || !password) {
@@ -18012,7 +18073,7 @@ function LoginScreen() {
         className: "w-full px-4 py-2.5 text-sm bg-[#377249] text-white rounded-[9px] hover:bg-[#135C30] font-semibold disabled:opacity-60"
       },
       loading ? "Signing in\u2026" : "Sign In"
-    ))
+    ), React.createElement("button", { type: "button", onClick: forgotPassword, disabled: resetting, className: "w-full text-center text-xs text-[#75716A] hover:text-[#1E1A13] underline mt-3 disabled:opacity-60" }, resetting ? "Sending\u2026" : "Forgot password?"), resetNotice && React.createElement("p", { className: "text-xs text-[#28633C] bg-[#E4EFE6] border border-[#b9d6bf] rounded-md px-3 py-2 mt-3" }, resetNotice))
   );
 }
 function CodeEntryScreen({ email, onVerify, onSignOut }) {
@@ -18060,11 +18121,15 @@ function CodeEntryScreen({ email, onVerify, onSignOut }) {
   );
 }
 const STAFF_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
+// Sign-in errors that mean an Admin ended this account's sessions ("Sign out
+// everywhere" / Remove) or disabled it - as opposed to just being offline.
+const SESSION_ENDED_CODES = ["auth/user-token-expired", "auth/user-disabled", "auth/user-not-found", "auth/invalid-user-token"];
 // Whether this account has a role from an Admin on its sign-in token - the
 // database only lets those accounts in (see firestore.rules). Checked with a
 // fresh token when possible, so a role granted a moment ago counts; offline,
 // the saved token decides, and if even that can't be read we let the app
-// load rather than lock field staff out.
+// load rather than lock field staff out. A session an Admin has ended is
+// signed out here.
 async function accountHasStaffRole(user, forceRefresh) {
   try {
     const result = await user.getIdTokenResult(forceRefresh);
@@ -18073,9 +18138,16 @@ async function accountHasStaffRole(user, forceRefresh) {
     const fresh = await user.getIdTokenResult(true);
     return STAFF_ROLES.includes(fresh.claims.role);
   } catch (e) {
+    if (e && SESSION_ENDED_CODES.includes(e.code)) {
+      firebase.auth().signOut();
+      return false;
+    }
     return true;
   }
 }
+// How often an open app re-checks its sign-in with the server, so a removed
+// person or a lost phone is signed out within minutes.
+const SESSION_RECHECK_MS = 5 * 60 * 1e3;
 function AccessPendingScreen({ email, onCheckAgain, checking }) {
   return React.createElement(
     "div",
@@ -18103,10 +18175,35 @@ function AuthGate() {
       setUser(u);
       if (u) accountHasStaffRole(u, false).then((ok) => {
         if (current === u) setHasRole(ok);
+        // Then confirm with the server (the saved token can be up to an
+        // hour old), in case access was removed while the app was closed.
+        if (ok && current === u) accountHasStaffRole(u, true).then((still) => {
+          if (current === u && !still) setHasRole(false);
+        });
       });
     });
     return () => unsub();
   }, []);
+  useEffect(() => {
+    if (!user || !hasRole) return;
+    let last = Date.now();
+    const recheck = (force) => {
+      if (!force && Date.now() - last < SESSION_RECHECK_MS) return;
+      last = Date.now();
+      accountHasStaffRole(user, true).then((ok) => {
+        if (!ok) setHasRole(false);
+      });
+    };
+    const timer = setInterval(() => recheck(true), SESSION_RECHECK_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") recheck(false);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [user, hasRole]);
   const checkAgain = async () => {
     setChecking(true);
     const ok = await accountHasStaffRole(user, true);
