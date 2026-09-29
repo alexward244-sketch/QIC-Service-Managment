@@ -833,6 +833,147 @@ function siteCustomerMismatchWarning(entry, guessSite, db) {
   }
   return null;
 }
+function signupSiteKey(value) {
+  return (value || "").toString().trim().toLowerCase().replace(/^(site|lot|unit|no\.?)\s*/, "").replace(/[#\s-]/g, "").replace(/^0+(?=\w)/, "");
+}
+function findSiteByTypedNumber(sites, typed) {
+  if (!typed || !typed.trim()) return null;
+  const exact = (sites || []).find((s) => s.number && s.number.trim().toLowerCase() === typed.trim().toLowerCase());
+  if (exact) return exact;
+  const key = signupSiteKey(typed);
+  return key ? (sites || []).find((s) => s.number && signupSiteKey(s.number) === key) || null : null;
+}
+function matchCustomerByPhone(customers, phone) {
+  const digits = (phone || "").replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  const key = digits.slice(-10);
+  return (customers || []).find((c) => [c.phone, c.phone2].some((p) => {
+    const d = (p || "").replace(/\D/g, "");
+    return d.length >= 10 && d.slice(-10) === key;
+  })) || null;
+}
+// Works out the starting match for a web-form sign-up from the details that
+// can be checked exactly: email, phone and the site number typed. "confident"
+// means those details agree; otherwise the review form asks Claude.
+function computeSignupMatch(entry, db) {
+  const customers = db.customers || [];
+  const site = findSiteByTypedNumber(db.sites, entry.submittedSiteNumber);
+  const byEmail = matchCustomerByEmail(customers, entry.submittedEmail);
+  const byPhone = byEmail ? null : matchCustomerByPhone(customers, entry.submittedPhone);
+  const contact = byEmail || byPhone;
+  const how = byEmail ? "email" : "phone";
+  const cottageOn = (siteId) => siteId ? (db.cottages || []).find((c) => c.siteId === siteId) || null : null;
+  const siteById = (id) => (db.sites || []).find((s) => s.id === id) || null;
+  const siteOwner = site ? customers.find((c) => customerSiteIds(c).includes(site.id)) || null : null;
+  if (contact) {
+    const contactSites = customerSiteIds(contact);
+    if (site && contactSites.includes(site.id)) {
+      return { site, cottage: cottageOn(site.id), customer: contact, confident: true, basis: `${how} + site number match`, warning: null };
+    }
+    if (!site && contactSites.length === 1) {
+      const onlySite = siteById(contactSites[0]);
+      return { site: onlySite, cottage: cottageOn(contactSites[0]), customer: contact, confident: Boolean(onlySite), basis: `${how} match`, warning: null };
+    }
+    if (!site) {
+      return { site: null, cottage: null, customer: contact, confident: false, basis: `${how} match`, warning: contactSites.length > 1 ? `${contact.name} has more than one site — check which one this is for.` : null };
+    }
+    const siteNames = siteOwner ? [siteOwner.name, siteOwner.name2].filter(Boolean).join(", ") : "";
+    return {
+      site,
+      cottage: cottageOn(site.id),
+      customer: siteOwner,
+      confident: false,
+      basis: null,
+      warning: `The ${how} belongs to ${contact.name}, but Site ${site.number} is ${siteNames ? `on file for ${siteNames}` : "not linked to them"} — please verify.`
+    };
+  }
+  const warning = siteCustomerMismatchWarning(entry, site, db);
+  return { site, cottage: cottageOn(site && site.id), customer: siteOwner, confident: Boolean(site && !warning), basis: site && !warning ? "site number + name match" : null, warning };
+}
+// Adds a sign-up's email to the customer's known emails, so the next sign-up
+// or email from that address matches them straight away.
+function rememberCustomerEmail(customer, email) {
+  const target = (email || "").trim().toLowerCase();
+  if (!customer || !target) return;
+  const known = [customer.email, customer.email2, ...(customer.matchEmails || [])].filter(Boolean).map((e) => e.trim().toLowerCase());
+  if (known.includes(target)) return;
+  CUSTOMERS_REF.doc(customer.id).update({ matchEmails: firebase.firestore.FieldValue.arrayUnion(target) }).catch((e) => console.error("Couldn't remember sign-up email:", e));
+}
+const SIGNUP_MATCH_TONE = { high: "bg-[#E4EFE6] text-[#28633C]", medium: "bg-[#F5EBD9] text-[#9A6B1F]", low: "bg-[#F1EEE9] text-[#75716A]" };
+// Claude's suggestion for a sign-up the exact checks couldn't settle, plus the
+// "remember this email" choice. Nothing is saved until staff confirm.
+function useSignupMatchAssist(entry, db, match, current, apply) {
+  const [ai, setAi] = useState(() => entry.aiMatch ? { status: "done", suggestion: entry.aiMatch } : match.confident ? { status: "off" } : { status: "loading" });
+  const [autoApplied, setAutoApplied] = useState(false);
+  const [rememberEmail, setRememberEmail] = useState(true);
+  const ask = (refresh) => {
+    setAi({ status: "loading" });
+    setAutoApplied(false);
+    functions_.httpsCallable("suggestSignupMatch")({ pendingSignupId: entry.id, refresh: Boolean(refresh) }).then((res) => {
+      setAi({ status: "done", suggestion: res.data && res.data.suggestion || null });
+    }).catch((e) => {
+      setAi({ status: "error", message: e && e.code === "functions/not-found" ? "This sign-up was already reviewed." : "Couldn't get a suggestion — please pick manually." });
+    });
+  };
+  useEffect(() => {
+    if (ai.status === "loading") ask(false);
+  }, []);
+  const s = ai.status === "done" ? ai.suggestion : null;
+  const sCustomer = s && s.customerId ? (db.customers || []).find((c) => c.id === s.customerId) : null;
+  const sSite = s && s.siteId ? (db.sites || []).find((x) => x.id === s.siteId) : null;
+  const sCottage = s && s.cottageId ? (db.cottages || []).find((x) => x.id === s.cottageId) : null;
+  const hasSuggestion = Boolean(sCustomer || sSite || sCottage);
+  const picked = { siteId: sSite ? sSite.id : "", cottageId: sCottage ? sCottage.id : "", customerId: sCustomer ? sCustomer.id : "" };
+  const alreadyApplied = hasSuggestion && picked.siteId === (current.siteId || "") && picked.cottageId === (current.cottageId || "") && picked.customerId === (current.customerId || "");
+  const formEmpty = !current.siteId && !current.cottageId && !current.customerId;
+  useEffect(() => {
+    // A confident suggestion fills an empty form; anything else waits for a click.
+    if (hasSuggestion && s.confidence === "high" && formEmpty && !autoApplied) {
+      apply(picked);
+      setAutoApplied(true);
+    }
+  }, [ai]);
+  let suggestionEl = null;
+  if (ai.status === "off" && match.basis) {
+    suggestionEl = React.createElement("div", { className: "text-[#28633C] font-medium mt-1" }, `✓ Matched by ${match.basis}`);
+  } else if (ai.status === "loading") {
+    suggestionEl = React.createElement("div", { className: "text-[#75716A] italic mt-1" }, "Claude is looking for the matching customer…");
+  } else if (ai.status === "error") {
+    suggestionEl = React.createElement("div", { className: "text-[#75716A] mt-1" }, ai.message);
+  } else if (ai.status === "done") {
+    const label = [sCustomer && sCustomer.name, sSite && `Site ${sSite.number}`, sCottage && sCottage.name].filter(Boolean).join(" \xB7 ");
+    suggestionEl = React.createElement(
+      "div",
+      { className: "mt-2 rounded-md border border-[#E2DED5] bg-white px-2.5 py-2" },
+      React.createElement(
+        "div",
+        { className: "flex items-center gap-2 flex-wrap" },
+        React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, hasSuggestion ? `Claude suggests: ${label}` : "Claude couldn't find a likely match"),
+        hasSuggestion && React.createElement("span", { className: `text-[10px] font-semibold uppercase tracking-wider rounded px-1.5 py-0.5 ${SIGNUP_MATCH_TONE[s.confidence] || SIGNUP_MATCH_TONE.low}` }, `${s.confidence} confidence`)
+      ),
+      s && s.reason && React.createElement("div", { className: "text-[#4B4740] mt-0.5" }, s.reason),
+      React.createElement(
+        "div",
+        { className: "flex items-center gap-3 mt-1.5" },
+        hasSuggestion && (alreadyApplied ? React.createElement("span", { className: "text-[#28633C] font-medium" }, autoApplied ? "✓ Filled in below — check before confirming" : "✓ Matches the selection below") : React.createElement("button", { type: "button", onClick: () => apply(picked), className: "px-2.5 py-1 rounded-md bg-[#377249] text-[#F9F5EC] font-medium hover:bg-[#135C30]" }, "Use this match")),
+        React.createElement("button", { type: "button", onClick: () => ask(true), className: "text-[#75716A] hover:text-[#1E1A13] underline" }, "Check again")
+      )
+    );
+  }
+  const chosenCustomer = current.customerId ? (db.customers || []).find((c) => c.id === current.customerId) : null;
+  const submittedEmail = (entry.submittedEmail || "").trim().toLowerCase();
+  const emailIsNew = Boolean(chosenCustomer && submittedEmail && !matchCustomerByEmail([chosenCustomer], submittedEmail));
+  const rememberEl = emailIsNew ? React.createElement(
+    "label",
+    { className: "flex items-start gap-2 text-xs text-[#4B4740] mb-3" },
+    React.createElement("input", { type: "checkbox", className: "mt-0.5", checked: rememberEmail, onChange: (e) => setRememberEmail(e.target.checked) }),
+    React.createElement("span", null, "Remember ", React.createElement("b", null, submittedEmail), ` for ${chosenCustomer.name} so future sign-ups and emails match automatically`)
+  ) : null;
+  const commitRemember = () => {
+    if (emailIsNew && rememberEmail) rememberCustomerEmail(chosenCustomer, submittedEmail);
+  };
+  return { suggestionEl, rememberEl, commitRemember };
+}
 function buildCustomerFromContact(name, phone, email) {
   return {
     id: uid(),
@@ -6069,7 +6210,7 @@ function ReviewTypeChooserModal({ options, onSelect, onClose }) {
 function UnrecognizedSignupsModal({ entries, onDiscard, onClose }) {
   const FIELD_ORDER = ["submittedName", "submittedEmail", "submittedPhone", "submittedSiteNumber", "requestedDate", "notes"];
   return /* @__PURE__ */ React.createElement(Modal, { title: "Sign-Ups Needing Manual Review", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "These online submissions came in with a type the app doesn't recognize (\"winterizing\", \"propane\", or \"generalservice\" expected), so they never showed up in any of those tabs. Handle each one manually — create the record yourself if it's a real request — then discard it here once you're done."), entries.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "Nothing needs manual review right now." }) : /* @__PURE__ */ React.createElement("div", { className: "space-y-3 max-h-[60vh] overflow-y-auto" }, entries.map((entry) => {
-    const shown = new Set(["id", "type", ...FIELD_ORDER]);
+    const shown = new Set(["id", "type", "aiMatch", ...FIELD_ORDER]);
     const extraKeys = Object.keys(entry).filter((k) => !shown.has(k));
     const renderField = (key, value) => /* @__PURE__ */ React.createElement("div", { key, className: "flex gap-2 text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A] font-medium min-w-[9rem] flex-shrink-0" }, key, ":"), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] break-words" }, value === null || value === void 0 || value === "" ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value)));
     return /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-2" }, "Type on record: ", /* @__PURE__ */ React.createElement("span", { className: "font-mono text-[#a8532a]" }, entry.type ? `"${entry.type}"` : "(missing)")), /* @__PURE__ */ React.createElement("div", { className: "space-y-1 mb-3" }, FIELD_ORDER.map((key) => renderField(key, entry[key])), extraKeys.map((key) => renderField(key, entry[key]))), /* @__PURE__ */ React.createElement("button", { onClick: () => onDiscard(entry.id), className: "px-3 py-1.5 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md font-medium border border-[#a8532a]/30" }, "Discard — handled manually"));
@@ -11478,13 +11619,19 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   )));
 }
 function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
-  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
-  const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
-  const guessCustomer = guessSite ? (db.customers || []).find((c) => customerSiteIds(c).includes(guessSite.id)) : null;
-  const nameMismatchWarning = siteCustomerMismatchWarning(entry, guessSite, db);
+  const signupMatch = useMemo(() => computeSignupMatch(entry, db), [entry.id]);
+  const guessSite = signupMatch.site;
+  const guessCottage = signupMatch.cottage;
+  const guessCustomer = signupMatch.customer;
+  const nameMismatchWarning = signupMatch.warning;
   const [siteId, setSiteId] = useState((guessSite == null ? void 0 : guessSite.id) || "");
   const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
   const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
+  const matchAssist = useSignupMatchAssist(entry, db, signupMatch, { siteId, cottageId, customerId }, (m) => {
+    setSiteId(m.siteId);
+    setCottageId(m.cottageId);
+    setCustomerId(m.customerId);
+  });
   const [requestedDate, setRequestedDate] = useState(entry.requestedDate || todayISO());
   const [run, setRun] = useState(defaultPropaneRun(entry.requestedDate || todayISO()));
   const [notes, setNotes] = useState(entry.notes || "");
@@ -11548,6 +11695,7 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   };
   const confirm = () => {
     if (!cottageId || !requestedDate) return;
+    matchAssist.commitRemember();
     onConfirm({
       id: uid(),
       cottageId,
@@ -11565,7 +11713,7 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning)), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning), matchAssist.suggestionEl), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
     onChange: pickSite,
@@ -11586,7 +11734,7 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
     onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
-  })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => changeDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Run" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, PROPANE_RUNS.map((r) => /* @__PURE__ */ React.createElement(
+  })), matchAssist.rememberEl, /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => changeDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Run" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, PROPANE_RUNS.map((r) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: r,
@@ -11648,13 +11796,19 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   ))));
 }
 function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
-  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
-  const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
-  const guessCustomer = guessSite ? (db.customers || []).find((c) => customerSiteIds(c).includes(guessSite.id)) : null;
-  const nameMismatchWarning = siteCustomerMismatchWarning(entry, guessSite, db);
+  const signupMatch = useMemo(() => computeSignupMatch(entry, db), [entry.id]);
+  const guessSite = signupMatch.site;
+  const guessCottage = signupMatch.cottage;
+  const guessCustomer = signupMatch.customer;
+  const nameMismatchWarning = signupMatch.warning;
   const [siteId, setSiteId] = useState((guessSite == null ? void 0 : guessSite.id) || "");
   const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
   const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
+  const matchAssist = useSignupMatchAssist(entry, db, signupMatch, { siteId, cottageId, customerId }, (m) => {
+    setSiteId(m.siteId);
+    setCottageId(m.cottageId);
+    setCustomerId(m.customerId);
+  });
   const [requestedDate, setRequestedDate] = useState(entry.requestedDate || "");
   const [notes, setNotes] = useState(entry.notes || "");
   const [options, setOptions] = useState(entry.options || {});
@@ -11698,6 +11852,7 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   };
   const confirm = () => {
     if (!cottageId || !requestedDate) return;
+    matchAssist.commitRemember();
     onConfirm({
       id: uid(),
       cottageId,
@@ -11710,7 +11865,7 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning)), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), !guessCottage && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning), matchAssist.suggestionEl), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: db.sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
     onChange: pickSite,
@@ -11731,7 +11886,7 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
     onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "What's Included"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, WINTERIZING_OPTIONS.map((opt) => /* @__PURE__ */ React.createElement("label", { key: opt.key, className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", {
+  })), matchAssist.rememberEl, /* @__PURE__ */ React.createElement(Field, { label: "Requested Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: requestedDate, onChange: (e) => setRequestedDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "What's Included"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5" }, WINTERIZING_OPTIONS.map((opt) => /* @__PURE__ */ React.createElement("label", { key: opt.key, className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", {
     type: "checkbox",
     checked: Boolean(options[opt.key]),
     onChange: () => toggleOption(opt.key),
@@ -12809,19 +12964,25 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
 }
 
 function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLinkInvoice, onDiscard, onCancel }) {
-  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
-  const guessCottage = guessSite ? (db.cottages || []).find((c) => c.siteId === guessSite.id) : null;
-  const guessCustomer = guessSite ? (db.customers || []).find((c) => customerSiteIds(c).includes(guessSite.id)) : null;
+  const signupMatch = useMemo(() => computeSignupMatch(entry, db), [entry.id]);
+  const guessSite = signupMatch.site;
+  const guessCottage = signupMatch.cottage;
+  const guessCustomer = signupMatch.customer;
   const [mode, setMode] = useState("new");
   const [siteId, setSiteId] = useState((guessSite == null ? void 0 : guessSite.id) || "");
   const [cottageId, setCottageId] = useState((guessCottage == null ? void 0 : guessCottage.id) || "");
   const [customerId, setCustomerId] = useState((guessCustomer == null ? void 0 : guessCustomer.id) || "");
+  const matchAssist = useSignupMatchAssist(entry, db, signupMatch, { siteId, cottageId, customerId }, (m) => {
+    setSiteId(m.siteId);
+    setCottageId(m.cottageId);
+    setCustomerId(m.customerId);
+  });
   const [title, setTitle] = useState(entry.submittedCategory || "Service Request");
   const [description, setDescription] = useState(entry.submittedDescription || "");
   const [priority, setPriority] = useState(entry.submittedUrgency && PRIORITY.includes(entry.submittedUrgency) ? entry.submittedUrgency : "Medium");
   const [linkWorkOrderId, setLinkWorkOrderId] = useState("");
   const [linkInvoiceId, setLinkInvoiceId] = useState("");
-  const nameMismatchWarning = siteCustomerMismatchWarning(entry, guessSite, db);
+  const nameMismatchWarning = signupMatch.warning;
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -12861,6 +13022,7 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
   };
   const confirm = () => {
     if (!siteId && !cottageId) return;
+    matchAssist.commitRemember();
     const contactLines = [entry.submittedName ? `Submitted by: ${entry.submittedName}` : "", entry.submittedPhone ? `Phone: ${entry.submittedPhone}` : "", entry.submittedEmail ? `Email: ${entry.submittedEmail}` : ""].filter(Boolean).join("\n");
     const fullDescription = [description.trim(), contactLines].filter(Boolean).join("\n\n");
     onConfirm({
@@ -12904,7 +13066,7 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
     const inv = (db.invoices || []).find((i) => i.id === linkInvoiceId);
     if (inv) onLinkInvoice(inv);
   };
-  const contactInfoEl = /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessSite && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning));
+  const contactInfoEl = /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] px-3 py-2.5 mb-4 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "font-semibold text-[11px] uppercase tracking-wider text-[#75716A] mb-1" }, "As Submitted"), /* @__PURE__ */ React.createElement("div", null, entry.submittedName || "(no name given)"), (entry.submittedEmail || entry.submittedPhone) && /* @__PURE__ */ React.createElement("div", null, [entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(" \xB7 ")), /* @__PURE__ */ React.createElement("div", null, "Site typed: ", entry.submittedSiteNumber || "\u2014"), entry.receivedAt && /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D]" }, formatReceivedTime(entry.receivedAt)), !guessSite && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, "No matching site/cottage found automatically \u2014 please select manually."), nameMismatchWarning && /* @__PURE__ */ React.createElement("div", { className: "text-[#a8532a] font-medium mt-1" }, nameMismatchWarning), matchAssist.suggestionEl);
   const modeBtn = (key, label) => /* @__PURE__ */ React.createElement("button", { type: "button", key, onClick: () => setMode(key), className: `flex-1 px-2.5 py-2 rounded-md text-xs font-semibold border transition ${mode === key ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}` }, label);
   const modeSelectorEl = /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-4" }, modeBtn("new", "Create Work Order"), modeBtn("workorder", "Link to Work Order"), modeBtn("invoice", "Link to Invoice"));
   const footer = (label, onConfirmClick, disabled) => /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onDiscard, className: "px-3 py-2 text-xs text-[#a8532a] hover:underline" }, "Discard submission"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
@@ -12956,7 +13118,7 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
     onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: description, onChange: (e) => setDescription(e.target.value) })), footer("Create Work Order", confirm, !siteId && !cottageId));
+  })), matchAssist.rememberEl, /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: description, onChange: (e) => setDescription(e.target.value) })), footer("Create Work Order", confirm, !siteId && !cottageId));
 }
 function GeneralServiceView({ db, persist, saveWorkOrder, saveInvoice, saveCorrespondence, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, onBackToDashboard }) {
   const [reviewingEntry, setReviewingEntry] = useState(null);
