@@ -232,11 +232,19 @@ exports.checkUserRoles = onCall(async (request) => {
 // console, invisible to this repo. No functional change from what's live;
 // see git history for what's added on top afterward.
 
-// Your own mail domains. Anything arriving with a From address on one of
-// these is your own staff/system mail (a sent reply echoing back, or a
-// form notification forwarded through your own inbox) - never a real
-// customer, so it's always safe to skip as correspondence.
+// Your own mail domains. Mail from these is staff or system mail, not a
+// customer: forwards are read for the original customer, the addresses in
+// the "skip" list (Admin > Settings > Email Intake - by default just the
+// service inbox itself, whose sent replies echo back) are ignored, and any
+// other staff email comes in marked as from staff.
 const INTERNAL_DOMAINS = ["qicampark.com", "quintesisle.ca"];
+const DEFAULT_SKIPPED_SENDERS = ["service@qicampark.com"];
+
+async function skippedSenders() {
+  const snap = await ROLES_DOC.get();
+  const list = snap.exists && snap.data().settings ? snap.data().settings.correspondenceSkipSenders : null;
+  return (Array.isArray(list) ? list : DEFAULT_SKIPPED_SENDERS).map((e) => toStr(e).toLowerCase()).filter(Boolean);
+}
 
 function toBool(v) {
   if (typeof v === "boolean") return v;
@@ -875,6 +883,7 @@ exports.serviceCorrespondence = onRequest(
       // mail should still count as real correspondence.
       let effectiveFrom = fromEmail;
       let forwardedBy = null;
+      let fromStaff = false;
       const isForward = looksForwarded(body.subject, plainBody);
       if (isInternalSender(fromEmail)) {
         const forwardedSender = extractForwardedSender(plainBody);
@@ -885,9 +894,13 @@ exports.serviceCorrespondence = onRequest(
           // A staff forward whose original sender couldn't be read (or was
           // also staff): keep it, under the forwarder, rather than lose it.
           forwardedBy = fromEmail;
-        } else {
-          res.status(200).json({ ok: true, skipped: true, reason: "internal-sender" });
+          fromStaff = true;
+        } else if ((await skippedSenders()).includes(fromEmail)) {
+          res.status(200).json({ ok: true, skipped: true, reason: "skipped-sender" });
           return;
+        } else {
+          // A coworker emailing the service inbox directly.
+          fromStaff = true;
         }
       }
 
@@ -922,6 +935,7 @@ exports.serviceCorrespondence = onRequest(
         status: "new",
         fromEmail: effectiveFrom,
         forwardedBy,
+        fromStaff,
         suggestedFlag,
         needsReply,
         triage,
