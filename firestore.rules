@@ -23,17 +23,19 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // A staff member: signed in AND given a role by an Admin (the `role`
+    // claim setUserRole stamps on their token). Being signed in alone isn't
+    // enough - if Firebase Auth sign-up were ever left open, anyone could
+    // create an account with the app's public API key, and that account
+    // must not see or change anything until an Admin assigns it a role.
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office'];
     }
 
-    // The role stamped onto this user's token by setUserRole. Defaults to
-    // the least-privileged tier if no claim has been set yet (e.g. before
-    // the very first admin is bootstrapped — see functions/README.md).
+    // The role stamped onto this user's token by setUserRole.
     function role() {
-      return isSignedIn() && request.auth.token.role != null
-        ? request.auth.token.role
-        : 'office';
+      return isSignedIn() ? request.auth.token.role : 'none';
     }
 
     function isAdmin() {

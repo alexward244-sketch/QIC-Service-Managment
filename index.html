@@ -18059,17 +18059,68 @@ function CodeEntryScreen({ email, onVerify, onSignOut }) {
     ), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSignOut, className: "w-full text-center text-xs text-[#75716A] hover:text-[#1E1A13] underline" }, "Not on this device? Sign out"))
   );
 }
+const STAFF_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
+// Whether this account has a role from an Admin on its sign-in token - the
+// database only lets those accounts in (see firestore.rules). Checked with a
+// fresh token when possible, so a role granted a moment ago counts; offline,
+// the saved token decides, and if even that can't be read we let the app
+// load rather than lock field staff out.
+async function accountHasStaffRole(user, forceRefresh) {
+  try {
+    const result = await user.getIdTokenResult(forceRefresh);
+    if (STAFF_ROLES.includes(result.claims.role)) return true;
+    if (forceRefresh) return false;
+    const fresh = await user.getIdTokenResult(true);
+    return STAFF_ROLES.includes(fresh.claims.role);
+  } catch (e) {
+    return true;
+  }
+}
+function AccessPendingScreen({ email, onCheckAgain, checking }) {
+  return React.createElement(
+    "div",
+    { className: "min-h-screen flex items-center justify-center bg-[#F9F5EC] px-4" },
+    React.createElement(
+      "div",
+      { className: "w-full max-w-sm bg-[#FFFDFA] border border-[#E2DED5] rounded-[14px] p-7 shadow-sm" },
+      React.createElement("h1", { className: "text-lg font-semibold text-[#1E1A13] mb-2" }, "Waiting for access"),
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-1" }, "You're signed in as ", React.createElement("b", null, email), ", but an Admin hasn't given this account a role yet."),
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Ask an Admin to add you under Manage Access, then tap Check again."),
+      React.createElement("button", { type: "button", onClick: onCheckAgain, disabled: checking, className: "w-full px-4 py-2.5 text-sm bg-[#377249] text-white rounded-[9px] hover:bg-[#135C30] font-semibold disabled:opacity-60 mb-3" }, checking ? "Checking\u2026" : "Check again"),
+      React.createElement("button", { type: "button", onClick: () => firebase.auth().signOut(), className: "w-full text-center text-xs text-[#75716A] hover:text-[#1E1A13] underline" }, "Sign out")
+    )
+  );
+}
 function AuthGate() {
   const [user, setUser] = useState(void 0);
+  const [hasRole, setHasRole] = useState(void 0);
+  const [checking, setChecking] = useState(false);
   useEffect(() => {
-    const unsub = firebase.auth().onAuthStateChanged((u) => setUser(u));
+    let current = null;
+    const unsub = firebase.auth().onAuthStateChanged((u) => {
+      current = u;
+      setHasRole(void 0);
+      setUser(u);
+      if (u) accountHasStaffRole(u, false).then((ok) => {
+        if (current === u) setHasRole(ok);
+      });
+    });
     return () => unsub();
   }, []);
-  if (user === void 0) {
+  const checkAgain = async () => {
+    setChecking(true);
+    const ok = await accountHasStaffRole(user, true);
+    setChecking(false);
+    setHasRole(ok);
+  };
+  if (user === void 0 || user && hasRole === void 0) {
     return /* @__PURE__ */ React.createElement("div", { className: "min-h-screen flex items-center justify-center bg-[#F9F5EC]" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#75716A] text-sm" }, "Checking sign-in\u2026"));
   }
   if (!user) {
     return /* @__PURE__ */ React.createElement(LoginScreen, null);
+  }
+  if (!hasRole) {
+    return React.createElement(AccessPendingScreen, { email: user.email, onCheckAgain: checkAgain, checking });
   }
   return /* @__PURE__ */ React.createElement(CurrentUserContext.Provider, { value: user.email }, /* @__PURE__ */ React.createElement(AppContent, null));
 }

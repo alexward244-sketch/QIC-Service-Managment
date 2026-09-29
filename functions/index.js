@@ -48,6 +48,18 @@ const ZOHO_MAIL_INBOX_FOLDER_ID = "50669000000002014";
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
 const ROLES_DOC = admin.firestore().doc("campground/data");
 
+// A staff member: signed in with a role an Admin has assigned. An account
+// that merely exists (e.g. one someone created for themselves) gets nothing.
+function isStaffToken(token) {
+  return Boolean(token && VALID_ROLES.includes(token.role));
+}
+function requireStaff(request, action) {
+  if (!request.auth) throw new HttpsError("unauthenticated", `Sign in to ${action}.`);
+  if (!isStaffToken(request.auth.token)) {
+    throw new HttpsError("permission-denied", "Your account hasn't been given access yet - ask an Admin.");
+  }
+}
+
 function requireCallerIsAdmin(request) {
   const callerRole = request.auth && request.auth.token && request.auth.token.role;
   if (!request.auth || callerRole !== "admin") {
@@ -839,6 +851,10 @@ exports.generateWorkOrderSummary = onRequest(
       res.status(401).json({ ok: false, error: "Invalid auth token" });
       return;
     }
+    if (!isStaffToken(caller)) {
+      res.status(403).json({ ok: false, error: "Your account hasn't been given access yet - ask an Admin." });
+      return;
+    }
 
     const rawNotes = toStr((req.body || {}).rawNotes).slice(0, 8000);
     if (!rawNotes) {
@@ -914,7 +930,7 @@ function draftClip(text, max) {
 exports.draftCorrespondenceReply = onCall(
   { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 },
   async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to draft replies.");
+    requireStaff(request, "draft replies");
     await checkAiRateLimit(request.auth.uid, "draftReply", 60);
     const data = request.data || {};
     let customerId = toStr(data.customerId);
@@ -1305,7 +1321,7 @@ function matchCandidates(p, customers, sites) {
 exports.suggestSignupMatch = onCall(
   { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
   async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to match sign-ups.");
+    requireStaff(request, "match sign-ups");
     await checkAiRateLimit(request.auth.uid, "signupMatch", 100);
     const pendingId = toStr((request.data || {}).pendingSignupId);
     if (!pendingId) throw new HttpsError("invalid-argument", "A sign-up is required.");
@@ -1639,11 +1655,11 @@ async function runAskTool(name, input, load, today) {
 exports.askThePark = onCall(
   { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 180 },
   async (request) => {
-    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to ask a question.");
+    requireStaff(request, "ask a question");
     await checkAiRateLimit(request.auth.uid, "askThePark", 60);
     const question = toStr((request.data || {}).question).slice(0, 1000);
     if (!question) throw new HttpsError("invalid-argument", "Type a question first.");
-    const role = (request.auth.token && request.auth.token.role) || "office";
+    const role = request.auth.token.role;
     const tools = askTools(role);
     const allowed = new Set(tools.map((t) => t.name));
     const load = askLoader();
