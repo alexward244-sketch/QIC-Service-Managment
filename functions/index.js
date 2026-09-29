@@ -267,13 +267,34 @@ function isInternalSender(email) {
 // that a staff member manually forwarded in (e.g. sales relaying a question
 // to service) rather than noise. Look for a forwarded-message block and
 // pull out the original sender so real customer content isn't lost.
+// Handles Gmail ("---------- Forwarded message ---------"), Apple Mail
+// ("Begin forwarded message:") and Outlook, which has no marker line at all -
+// just a "From: ... / Sent: ..." header block, often with the address as
+// "Name [mailto:x@y.com]" or on the next line.
 function extractForwardedSender(plainBody) {
   const text = plainBody || "";
-  const markerIdx = text.toLowerCase().indexOf("forwarded message");
-  if (markerIdx === -1) return null;
-  const after = text.slice(markerIdx);
-  const match = after.match(/From:\s*(?:.*?<)?([\w.+-]+@[\w.-]+\.\w+)>?/i);
-  return match ? match[1].toLowerCase() : null;
+  const lines = text.split("\n");
+  const emailIn = (s) => {
+    const m = toStr(s).match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+    return m ? m[0].toLowerCase() : null;
+  };
+  const markerIdx = lines.findIndex((l) => /forwarded message/i.test(l));
+  for (let i = markerIdx === -1 ? 0 : markerIdx; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!/^from:/i.test(line)) continue;
+    // Without a marker, only trust a real header block (From: then Sent:/Date:/To:).
+    if (markerIdx === -1 && !/^(sent|date|to|subject):/i.test((lines[i + 1] || "").trim()) && !/^(sent|date|to|subject):/i.test((lines[i + 2] || "").trim())) continue;
+    const found = emailIn(line) || emailIn(lines[i + 1]);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Whether a message is a forward (as opposed to a reply with a quoted
+// chain): a Fw:/Fwd: subject, or a forwarded-message marker in the body.
+// A forward's content is the forwarded part, so it must never be trimmed.
+function looksForwarded(subject, plainBody) {
+  return /^\s*(re:\s*)*(fwd?|fw)\s*:/i.test(toStr(subject)) || /forwarded message/i.test(plainBody || "");
 }
 
 // Best-effort triage of an inbound email in a single Claude call. Returns
@@ -384,10 +405,15 @@ async function triageCorrespondence(subject, body) {
 function htmlToPlainText(html) {
   if (!html) return "";
   return html
+    // A plain-text "Name <name@example.com>" (e.g. a forwarded message's
+    // From: line) isn't a tag - set the address aside so it survives.
+    .replace(/<([\w.+-]+@[\w-]+(?:\.[\w-]+)+)>/g, "\u0001$1\u0002")
     .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, "")
     .replace(/<meta[^>]*>/gi, "")
     .replace(/<(br|\/p|\/div|\/li|\/tr)\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, "")
+    .replace(/\u0001/g, "<")
+    .replace(/\u0002/g, ">")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
@@ -849,10 +875,15 @@ exports.serviceCorrespondence = onRequest(
       // mail should still count as real correspondence.
       let effectiveFrom = fromEmail;
       let forwardedBy = null;
+      const isForward = looksForwarded(body.subject, plainBody);
       if (isInternalSender(fromEmail)) {
         const forwardedSender = extractForwardedSender(plainBody);
         if (forwardedSender && !isInternalSender(forwardedSender)) {
           effectiveFrom = forwardedSender;
+          forwardedBy = fromEmail;
+        } else if (isForward) {
+          // A staff forward whose original sender couldn't be read (or was
+          // also staff): keep it, under the forwarder, rather than lose it.
           forwardedBy = fromEmail;
         } else {
           res.status(200).json({ ok: true, skipped: true, reason: "internal-sender" });
@@ -874,7 +905,9 @@ exports.serviceCorrespondence = onRequest(
       // A staff-forwarded message's content IS the forwarded block, not a
       // redundant quote riding along under it, so only trim the reply chain
       // for a direct customer message.
-      const storedBody = forwardedBy ? plainBody : stripQuotedReplyText(plainBody);
+      // A customer forwarding something to us (e.g. their contractor's
+      // email) is the same: the forwarded part is the context.
+      const storedBody = forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
 
       const customerId = await findCustomerByEmail(effectiveFrom);
       const [{ suggestedFlag, needsReply, triage }, attachments] = await Promise.all([
