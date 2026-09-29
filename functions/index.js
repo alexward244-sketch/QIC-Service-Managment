@@ -408,6 +408,34 @@ function todayEasternISO() {
   return `${map.year}-${map.month}-${map.day}`;
 }
 
+// Compares the webhook secret in constant time, so the time a request takes
+// doesn't hint at how much of a guessed secret was right. Both sides are
+// hashed first because timingSafeEqual needs equal-length inputs.
+function webhookSecretMatches(provided) {
+  if (!provided) return false;
+  const hash = (v) => crypto.createHash("sha256").update(String(v)).digest();
+  return crypto.timingSafeEqual(hash(provided), hash(WEBHOOK_SECRET.value()));
+}
+
+// Caps how often one staff account can trigger the Claude features, so a
+// stuck button or a runaway script can't run up the API bill. Counted per
+// user per hour in Firestore (aiUsage has no client rules, so only these
+// functions can touch it).
+async function checkAiRateLimit(uid, feature, maxPerHour) {
+  const hour = new Date().toISOString().slice(0, 13);
+  const ref = db.collection("aiUsage").doc(`${uid}_${feature}_${hour}`);
+  const allowed = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const count = snap.exists ? snap.data().count || 0 : 0;
+    if (count >= maxPerHour) return false;
+    tx.set(ref, { uid, feature, hour, count: count + 1, expiresAt: new Date(Date.now() + 2 * 3600e3) }, { merge: true });
+    return true;
+  });
+  if (!allowed) {
+    throw new HttpsError("resource-exhausted", "That's a lot of requests in the last hour - please wait a bit and try again.");
+  }
+}
+
 exports.winterizingSignup = onRequest(
   { secrets: [WEBHOOK_SECRET], cors: false },
   async (req, res) => {
@@ -416,8 +444,7 @@ exports.winterizingSignup = onRequest(
       return;
     }
 
-    const providedSecret = req.get("x-webhook-secret");
-    if (!providedSecret || providedSecret !== WEBHOOK_SECRET.value()) {
+    if (!webhookSecretMatches(req.get("x-webhook-secret"))) {
       res.status(401).send("Unauthorized");
       return;
     }
@@ -467,8 +494,7 @@ exports.generalServiceRequest = onRequest(
       return;
     }
 
-    const providedSecret = req.get("x-webhook-secret");
-    if (!providedSecret || providedSecret !== WEBHOOK_SECRET.value()) {
+    if (!webhookSecretMatches(req.get("x-webhook-secret"))) {
       res.status(401).send("Unauthorized");
       return;
     }
@@ -692,8 +718,7 @@ exports.serviceCorrespondence = onRequest(
       return;
     }
 
-    const providedSecret = req.get("x-webhook-secret");
-    if (!providedSecret || providedSecret !== WEBHOOK_SECRET.value()) {
+    if (!webhookSecretMatches(req.get("x-webhook-secret"))) {
       res.status(401).send("Unauthorized");
       return;
     }
@@ -807,44 +832,35 @@ exports.generateWorkOrderSummary = onRequest(
       res.status(401).json({ ok: false, error: "Missing auth token" });
       return;
     }
+    let caller;
     try {
-      await admin.auth().verifyIdToken(idToken);
+      caller = await admin.auth().verifyIdToken(idToken);
     } catch (err) {
       res.status(401).json({ ok: false, error: "Invalid auth token" });
       return;
     }
 
-    const rawNotes = toStr((req.body || {}).rawNotes);
+    const rawNotes = toStr((req.body || {}).rawNotes).slice(0, 8000);
     if (!rawNotes) {
       res.status(400).json({ ok: false, error: "rawNotes is required" });
       return;
     }
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": ANTHROPIC_API_KEY.value(),
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 300,
-          system: "You turn internal campground maintenance shop notes into a short, plain-language summary a customer can read on their invoice or service report. Write 1-3 sentences, friendly and clear, no technical jargon or part numbers unless the customer would recognize them. Do not invent details that aren't in the notes. Output only the summary text, nothing else.",
-          messages: [{ role: "user", content: rawNotes }]
-        })
+      await checkAiRateLimit(caller.uid, "workOrderSummary", 60);
+    } catch (err) {
+      res.status(429).json({ ok: false, error: err.message });
+      return;
+    }
+
+    try {
+      const response = await getAnthropicClient().messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 300,
+        system: "You turn internal campground maintenance shop notes into a short, plain-language summary a customer can read on their invoice or service report. Write 1-3 sentences, friendly and clear, no technical jargon or part numbers unless the customer would recognize them. Do not invent details that aren't in the notes. Output only the summary text, nothing else.",
+        messages: [{ role: "user", content: rawNotes }]
       });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("Anthropic API error:", response.status, errText);
-        res.status(502).json({ ok: false, error: "Claude API request failed" });
-        return;
-      }
-
-      const data = await response.json();
-      const textBlock = (data.content || []).find((b) => b.type === "text");
+      const textBlock = (response.content || []).find((b) => b.type === "text");
       const summary = textBlock ? textBlock.text.trim() : "";
 
       if (!summary) {
@@ -854,8 +870,13 @@ exports.generateWorkOrderSummary = onRequest(
 
       res.status(200).json({ ok: true, summary });
     } catch (err) {
-      console.error("Failed to generate work order summary:", err);
-      res.status(500).json({ ok: false, error: "Internal error" });
+      if (err instanceof Anthropic.APIError) {
+        console.error("Anthropic API error:", err.status, err.message);
+        res.status(502).json({ ok: false, error: "Claude API request failed" });
+      } else {
+        console.error("Failed to generate work order summary:", err);
+        res.status(500).json({ ok: false, error: "Internal error" });
+      }
     }
   }
 );
@@ -894,6 +915,7 @@ exports.draftCorrespondenceReply = onCall(
   { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120 },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to draft replies.");
+    await checkAiRateLimit(request.auth.uid, "draftReply", 60);
     const data = request.data || {};
     let customerId = toStr(data.customerId);
     const correspondenceId = toStr(data.correspondenceId);
@@ -1284,6 +1306,7 @@ exports.suggestSignupMatch = onCall(
   { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 60 },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to match sign-ups.");
+    await checkAiRateLimit(request.auth.uid, "signupMatch", 100);
     const pendingId = toStr((request.data || {}).pendingSignupId);
     if (!pendingId) throw new HttpsError("invalid-argument", "A sign-up is required.");
     const pendingRef = db.collection("pendingSignups").doc(pendingId);
@@ -1617,6 +1640,7 @@ exports.askThePark = onCall(
   { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 180 },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to ask a question.");
+    await checkAiRateLimit(request.auth.uid, "askThePark", 60);
     const question = toStr((request.data || {}).question).slice(0, 1000);
     if (!question) throw new HttpsError("invalid-argument", "Type a question first.");
     const role = (request.auth.token && request.auth.token.role) || "office";

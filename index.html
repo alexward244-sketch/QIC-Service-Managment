@@ -833,6 +833,19 @@ function siteCustomerMismatchWarning(entry, guessSite, db) {
   }
   return null;
 }
+const WORK_ORDER_SUMMARY_URL = "https://us-central1-qic-service-management-system.cloudfunctions.net/generateWorkOrderSummary";
+// Asks the generateWorkOrderSummary function to turn shop notes into a
+// customer-friendly summary (used by the work order form and view).
+async function requestWorkOrderSummary(rawNotes) {
+  const idToken = await firebase.auth().currentUser.getIdToken();
+  const resp = await fetch(WORK_ORDER_SUMMARY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ rawNotes })
+  });
+  const data = await resp.json();
+  return { resp, data };
+}
 function signupSiteKey(value) {
   return (value || "").toString().trim().toLowerCase().replace(/^(site|lot|unit|no\.?)\s*/, "").replace(/[#\s-]/g, "").replace(/^0+(?=\w)/, "");
 }
@@ -912,7 +925,7 @@ function useSignupMatchAssist(entry, db, match, current, apply) {
     functions_.httpsCallable("suggestSignupMatch")({ pendingSignupId: entry.id, refresh: Boolean(refresh) }).then((res) => {
       setAi({ status: "done", suggestion: res.data && res.data.suggestion || null });
     }).catch((e) => {
-      setAi({ status: "error", message: e && e.code === "functions/not-found" ? "This sign-up was already reviewed." : "Couldn't get a suggestion — please pick manually." });
+      setAi({ status: "error", message: e && e.code === "functions/not-found" ? "This sign-up was already reviewed." : e && e.code === "functions/resource-exhausted" ? e.message : "Couldn't get a suggestion — please pick manually." });
     });
   };
   useEffect(() => {
@@ -2978,13 +2991,7 @@ function WorkOrderViewModal({ wo: woProp, db, persist, saveWorkOrder, saveCorres
         setSummaryLoading(false);
         return;
       }
-      const idToken = await firebase.auth().currentUser.getIdToken();
-      const resp = await fetch("https://us-central1-qic-service-management-system.cloudfunctions.net/generateWorkOrderSummary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ rawNotes })
-      });
-      const data = await resp.json();
+      const { resp, data } = await requestWorkOrderSummary(rawNotes);
       if (!resp.ok || !data.ok) {
         setSummaryError((data && data.error) || "Something went wrong generating the summary.");
       } else {
@@ -11064,13 +11071,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
         setSummaryLoading(false);
         return;
       }
-      const idToken = await firebase.auth().currentUser.getIdToken();
-      const resp = await fetch("https://us-central1-qic-service-management-system.cloudfunctions.net/generateWorkOrderSummary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ rawNotes })
-      });
-      const data = await resp.json();
+      const { resp, data } = await requestWorkOrderSummary(rawNotes);
       if (!resp.ok || !data.ok) {
         setSummaryError((data && data.error) || "Something went wrong generating the summary.");
       } else {
