@@ -11066,6 +11066,56 @@ function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, on
 // section says whether the customer sees it: hours and parts become invoice
 // charges and the customer summary is printed as the invoice notes, while
 // "what was done" and the payment status stay internal.
+// Hours on a work order can be split between workers (e.g. two guys on one
+// job). The per-worker breakdown is kept on the work order as laborEntries
+// for your own records; laborHours is always the combined total, which is
+// all the invoice uses - customers only ever see the total labour price.
+function laborEntriesFrom(wo) {
+  if (wo && Array.isArray(wo.laborEntries) && wo.laborEntries.length) {
+    return wo.laborEntries.map((e) => ({ id: e.id || uid(), name: e.name || "", hours: Number(e.hours) > 0 ? String(e.hours) : "" }));
+  }
+  return [{ id: uid(), name: wo && wo.assignedTo || "", hours: wo && Number(wo.laborHours) > 0 ? String(wo.laborHours) : "" }];
+}
+function laborTotal(entries) {
+  return Math.round(entries.reduce((sum, e) => sum + (Number(e.hours) || 0), 0) * 100) / 100;
+}
+// null for a single worker, so ordinary jobs are stored exactly as before.
+function laborEntriesForSave(entries) {
+  if (entries.length < 2) return null;
+  return entries.map((e) => ({ id: e.id, name: (e.name || "").trim(), hours: Number(e.hours) || 0 }));
+}
+function LaborHoursInput({ entries, onChange, staff, listId }) {
+  const update = (id, patch) => onChange(entries.map((e) => e.id === id ? { ...e, ...patch } : e));
+  const addWorker = () => onChange([...entries, { id: uid(), name: "", hours: "" }]);
+  const remove = (id) => onChange(entries.filter((e) => e.id !== id));
+  const hoursInput = (e, extra) => React.createElement("input", { type: "number", min: "0", step: "0.25", inputMode: "decimal", className: inputCls + (extra || ""), value: e.hours, placeholder: "0", "aria-label": "Hours", onChange: (ev) => update(e.id, { hours: ev.target.value }) });
+  const addLink = React.createElement("button", { type: "button", onClick: addWorker, className: "text-xs text-[#377249] hover:underline font-medium mt-1" }, "+ Add another worker");
+  if (entries.length < 2) {
+    return React.createElement("div", null, hoursInput(entries[0] || { id: "x", hours: "" }), addLink);
+  }
+  return React.createElement(
+    "div",
+    null,
+    React.createElement("datalist", { id: listId }, (staff || []).map((s) => React.createElement("option", { key: s.id || s.name, value: s.name }))),
+    React.createElement(
+      "div",
+      { className: "space-y-1.5" },
+      entries.map((e) => React.createElement(
+        "div",
+        { key: e.id, className: "flex items-center gap-2" },
+        React.createElement("input", { className: inputCls + " flex-1 min-w-0", value: e.name, placeholder: "Worker", list: listId, "aria-label": "Worker", onChange: (ev) => update(e.id, { name: ev.target.value }) }),
+        hoursInput(e, " w-20 text-center flex-shrink-0"),
+        React.createElement("button", { type: "button", onClick: () => remove(e.id), className: "text-[#a8532a] w-9 h-9 rounded-full hover:bg-[#F5E3D9] flex-shrink-0", "aria-label": "Remove worker" }, "✕")
+      ))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between mt-1" },
+      addLink,
+      React.createElement("span", { className: "text-xs font-semibold text-[#1E1A13]" }, "Total: ", laborTotal(entries), " hrs")
+    )
+  );
+}
 function WrapUpAudience({ customer }) {
   return React.createElement(
     "span",
@@ -11077,7 +11127,8 @@ function WorkOrderWrapUpModal({ wo, db, actor, onComplete, onCreateInvoice, onCa
   const rateOptions = getLaborRateOptions(db);
   const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
   const parts = db.parts || [];
-  const [laborHours, setLaborHours] = useState(Number(wo.laborHours) > 0 ? String(wo.laborHours) : "");
+  const [laborEntries, setLaborEntries] = useState(() => laborEntriesFrom(wo));
+  const laborHours = laborTotal(laborEntries);
   const [laborRateType, setLaborRateType] = useState(wo.laborRateType || "N/A");
   const [partsUsed, setPartsUsed] = useState((wo.partsUsed || []).map((pu) => ({ ...pu })));
   const [workDone, setWorkDone] = useState("");
@@ -11128,7 +11179,8 @@ function WorkOrderWrapUpModal({ wo, db, actor, onComplete, onCreateInvoice, onCa
     const note = workDone.trim() ? [{ id: uid(), text: `Work done: ${workDone.trim()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() }] : [];
     return {
       ...wo,
-      laborHours: Number(laborHours) || 0,
+      laborHours,
+      laborEntries: laborEntriesForSave(laborEntries),
       laborRateType,
       laborRate: rate,
       partsUsed: cleanParts(),
@@ -11151,10 +11203,11 @@ function WorkOrderWrapUpModal({ wo, db, actor, onComplete, onCreateInvoice, onCa
       "div",
       { className: sectionCls },
       React.createElement("div", { className: headCls }, "Labour", React.createElement(WrapUpAudience, { customer: true })),
+      laborEntries.length > 1 && React.createElement("p", { className: "text-[11px] text-[#75716A] -mt-1 mb-2" }, "The invoice shows one labour price for the total hours \u2014 not who worked or how long each."),
       React.createElement(
         "div",
-        { className: "grid grid-cols-2 gap-3" },
-        React.createElement(Field, { label: "Hours worked" }, React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: laborHours, placeholder: "0", onChange: (e) => setLaborHours(e.target.value) })),
+        { className: laborEntries.length > 1 ? "grid gap-1" : "grid grid-cols-2 gap-3" },
+        React.createElement(Field, { label: "Hours worked" }, React.createElement(LaborHoursInput, { entries: laborEntries, onChange: setLaborEntries, staff: db.staff, listId: "wrapup-staff-list" })),
         React.createElement(Field, { label: "Rate type" }, React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)"))))
       )
     ),
@@ -11242,7 +11295,8 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [workGroup, setWorkGroup] = useState((initial == null ? void 0 : initial.workGroup) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
   const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
-  const [laborHours, setLaborHours] = useState((_a = initial == null ? void 0 : initial.laborHours) != null ? _a : "");
+  const [laborEntries, setLaborEntries] = useState(() => laborEntriesFrom(initial));
+  const laborHours = laborTotal(laborEntries);
   const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || "N/A");
   const [paymentStatus, setPaymentStatus] = useState((initial == null ? void 0 : initial.paymentStatus) || "");
   const [relatedWorkOrderId, setRelatedWorkOrderId] = useState((initial == null ? void 0 : initial.relatedWorkOrderId) || "");
@@ -11321,7 +11375,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [title, description, siteId, cottageId, customerId, assignedTo, status, priority, workGroup, date, partsUsed, laborHours, laborRateType, paymentStatus]);
+  }, [title, description, siteId, cottageId, customerId, assignedTo, status, priority, workGroup, date, partsUsed, laborEntries, laborRateType, paymentStatus]);
   const laborRate = (_c = (_b = rateOptions.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : rateOptions[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
   const relatedCandidates = (workOrders || []).filter((w) => {
@@ -11406,7 +11460,8 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       workGroup: workGroup.trim(),
       date,
       completedDate: (initial == null ? void 0 : initial.completedDate) || (status === "Completed" ? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) : null),
-      laborHours: Number(laborHours) || 0,
+      laborHours,
+      laborEntries: laborEntriesForSave(laborEntries),
       laborRate,
       laborRateType,
       paymentStatus,
@@ -11459,18 +11514,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       placeholder: "e.g. Tree Work Orders",
       list: "wo-group-list"
     }
-  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-group-list" }, (workGroups || []).map((g) => /* @__PURE__ */ React.createElement("option", { key: g, value: g })))), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.25",
-      className: inputCls,
-      value: laborHours,
-      onChange: (e) => setLaborHours(e.target.value),
-      placeholder: "0"
-    }
-  )), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labour cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), isNew && !moreOpen && React.createElement("button", { type: "button", onClick: () => setMoreOpen(true), className: "text-xs text-[#377249] hover:underline font-medium -mt-1 mb-2" }, "+ More details (status, work group, related job)"), isNew && !showLabor && !showParts && React.createElement("p", { className: "text-[11px] text-[#75716A] mb-1" }, "Hours, parts, payment and the customer summary are added when the job is done \u2014 edit the work order then to fill them in."), showParts && parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
+  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-group-list" }, (workGroups || []).map((g) => /* @__PURE__ */ React.createElement("option", { key: g, value: g })))), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, React.createElement(LaborHoursInput, { entries: laborEntries, onChange: setLaborEntries, staff, listId: "wo-labor-staff-list" })), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labour cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), isNew && !moreOpen && React.createElement("button", { type: "button", onClick: () => setMoreOpen(true), className: "text-xs text-[#377249] hover:underline font-medium -mt-1 mb-2" }, "+ More details (status, work group, related job)"), isNew && !showLabor && !showParts && React.createElement("p", { className: "text-[11px] text-[#75716A] mb-1" }, "Hours, parts, payment and the customer summary are added when the job is done \u2014 edit the work order then to fill them in."), showParts && parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
     const part = parts.find((p) => p.id === pu.partId);
     const partPrice = (Number(part == null ? void 0 : part.price) || 0) * (1 + (Number(taxRate) || 0) / 100);
     const lineTotal = partPrice * (Number(pu.quantity) || 0);
@@ -15939,6 +15983,17 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : null;
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
+  // Hours typed here are kept as text locally (so "1." isn't cut short) and
+  // saved as numbers; picked up again if they change elsewhere (e.g. wrap-up).
+  const [fieldLabor, setFieldLabor] = useState(() => laborEntriesFrom(wo));
+  const savedLaborKey = JSON.stringify([Number(wo.laborHours) || 0, wo.laborEntries || null]);
+  useEffect(() => {
+    if (JSON.stringify([laborTotal(fieldLabor), laborEntriesForSave(fieldLabor)]) !== savedLaborKey) setFieldLabor(laborEntriesFrom(wo));
+  }, [savedLaborKey]);
+  const changeFieldLabor = (next) => {
+    setFieldLabor(next);
+    updateBilling({ laborHours: laborTotal(next), laborEntries: laborEntriesForSave(next) });
+  };
   const changeJobStatus = (newStatus, base) => {
     const src = base || wo;
     if (newStatus === src.status) return;
@@ -16032,8 +16087,9 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         "div",
         { className: "grid grid-cols-2 gap-3 mb-3" },
         React.createElement(Field, { label: "Payment Status" }, React.createElement("select", { className: inputCls, value: wo.paymentStatus || "", onChange: (e) => setPayment(e.target.value) }, React.createElement("option", { value: "" }, "—"), PAYMENT_STATUS.map((p) => React.createElement("option", { key: p.value, value: p.value }, p.label)))),
-        React.createElement(Field, { label: "Labor Hours" }, React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: wo.laborHours != null ? wo.laborHours : "", onChange: (e) => updateBilling({ laborHours: Number(e.target.value) || 0 }) }))
+        fieldLabor.length < 2 && React.createElement(Field, { label: "Labor Hours" }, React.createElement(LaborHoursInput, { entries: fieldLabor, onChange: changeFieldLabor, staff: db.staff, listId: "field-labor-staff-list" }))
       ),
+      fieldLabor.length > 1 && React.createElement(Field, { label: "Labor Hours" }, React.createElement(LaborHoursInput, { entries: fieldLabor, onChange: changeFieldLabor, staff: db.staff, listId: "field-labor-staff-list" })),
       React.createElement(Field, { label: "Labor Rate" }, React.createElement("select", { className: inputCls, value: wo.laborRateType || "N/A", onChange: (e) => updateBilling({ laborRateType: e.target.value }) }, getLaborRateOptions(db).map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label))))
     ),
     React.createElement(
