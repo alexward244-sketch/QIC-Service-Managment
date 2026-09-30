@@ -17,20 +17,28 @@ rules_version = '2';
 // file's path (a timestamp plus the original filename) could download
 // that customer attachment.
 //
+// "Signed in" means a staff member with a role from an Admin (the `role`
+// claim on their token), same as firestore.rules - an account that only
+// exists isn't enough.
+//
 // Deploy with: firebase deploy --only storage
 
 service firebase.storage {
   match /b/{bucket}/o {
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office'];
+    }
     // The campground map image shown on the Site Map tab.
     match /campground-map/{fileName} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if isStaff();
+      allow write: if isStaff();
     }
     // Files attached to outgoing correspondence emails (Correspondence
     // reply box, Work Order "Email Customer", service request replies).
     match /correspondence-attachments/{fileName} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if isStaff();
+      allow write: if isStaff();
     }
   }
 }

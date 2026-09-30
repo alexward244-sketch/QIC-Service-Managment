@@ -32,6 +32,19 @@ delete the key).
 After that, every further role change — including granting more Admins —
 goes through the normal "Manage Access" screen in the app.
 
+## Adding a new staff member
+
+Only accounts with a role can see or change anything (firestore.rules,
+storage.rules and the Claude functions all check the `role` claim), so an
+account that merely exists gets nothing.
+
+1. Create their account: Firebase Console → Authentication → Users → Add
+   user (keep "Enable create (sign-up)" turned off under Authentication →
+   Settings → User actions, so nobody can create their own).
+2. They sign in once. The app shows "Waiting for access".
+3. An Admin gives them a role under Manage Access.
+4. They tap "Check again" and the app loads.
+
 ## Migrating existing roles
 
 Whoever's currently assigned a role in `userRoles` today only has that as a
