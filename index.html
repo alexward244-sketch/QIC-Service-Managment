@@ -1746,7 +1746,12 @@ function useDb() {
       setSaveError(`Couldn't remove that winterizing sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
     }
   }, []);
-  const saveWorkOrder = useCallback(async (wo) => {
+  const saveWorkOrder = useCallback(async (woIn) => {
+    // Firestore refuses a whole save if any field is undefined (e.g. a work
+    // order number that wasn't worked out), so drop those fields rather than
+    // lose the work order. A missing number is filled in by the backfill in
+    // the work orders listener the next time the app loads.
+    const wo = JSON.parse(JSON.stringify(woIn));
     const attempt = () => WORK_ORDERS_REF.doc(wo.id).set(wo);
     lastAttempt.current = attempt;
     try {
@@ -10668,6 +10673,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       taxRate: (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13,
       workOrders: db.workOrders,
       rateOptions: getLaborRateOptions(db),
+      workOrderNumber: nextWorkOrderNumber(db),
       onSave: save,
       onCancel: requestCloseModal,
       onDirtyChange: (d) => {
