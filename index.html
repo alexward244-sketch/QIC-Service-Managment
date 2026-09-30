@@ -14006,6 +14006,14 @@ function seasonalMonthlyTotalForDate(db, dateStr) {
 function getSiteOwner(db, siteId) {
   return (db.customers || []).find((c) => customerSiteIds(c).includes(siteId)) || null;
 }
+// Who a hydro reading is billed to: the owner when it was read (saved on the
+// reading), so a closing reading taken before a sale still bills the seller
+// even if the transfer is recorded before accounting confirms it. Older
+// readings without that fall back to the site's current owner.
+function hydroBillTo(db, reading) {
+  const atReading = reading && reading.ownerAtReading ? (db.customers || []).find((c) => c.id === reading.ownerAtReading) : null;
+  return atReading || getSiteOwner(db, reading && reading.siteId);
+}
 function computeHydroUsage(previousReading, currentReading, meterDigits) {
   if (previousReading == null) return { usage: null, rolledOver: false };
   if (currentReading >= previousReading) return { usage: currentReading - previousReading, rolledOver: false };
@@ -14134,29 +14142,176 @@ function HydroReadingForm({ db, siteId, onSave, onCancel }) {
   const last = getLastHydroReading(db, siteId);
   const [reading, setReading] = useState("");
   const [date, setDate] = useState(todayISO());
+  const [closing, setClosing] = useState(false);
   const readingNum = Number(reading);
   const valid = reading !== "" && Number.isFinite(readingNum) && readingNum >= 0;
   const preview = valid ? computeHydroUsage(last ? last.reading : null, readingNum, site == null ? void 0 : site.meterDigits) : null;
   const willFlag = last && valid && readingNum < last.reading;
   const submit = () => {
     if (!valid) return;
-    onSave(siteId, readingNum, date);
+    onSave(siteId, readingNum, date, { closing });
   };
-  return /* @__PURE__ */ React.createElement("div", null, last ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Last reading: ", /* @__PURE__ */ React.createElement("strong", null, last.reading), " on ", last.date) : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "No previous reading on file for this site \u2014 this will be saved as the baseline reading."), /* @__PURE__ */ React.createElement(Field, { label: "Reading Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Current Meter Reading" }, /* @__PURE__ */ React.createElement("input", { type: "text", inputMode: "numeric", pattern: "[0-9]*", className: inputCls + " text-2xl py-3 tracking-wide", value: reading, onChange: (e) => setReading(e.target.value.replace(/[^0-9]/g, "")), placeholder: "e.g. 4213", autoFocus: true })), willFlag && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, (site == null ? void 0 : site.meterDigits) ? `This is lower than the last reading \u2014 looks like the meter rolled over. Estimated usage: ${preview.usage} kWh. This will be flagged for accounting to double check.` : "This is lower than the last reading and this site has no meter digit count set, so usage can't be calculated automatically. This will be flagged for accounting to review manually."), !willFlag && preview && preview.usage != null && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Usage since last reading: ", preview.usage, " kWh"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Save Reading")));
+  return /* @__PURE__ */ React.createElement("div", null, last ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Last reading: ", /* @__PURE__ */ React.createElement("strong", null, last.reading), " on ", last.date) : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "No previous reading on file for this site \u2014 this will be saved as the baseline reading."), /* @__PURE__ */ React.createElement(Field, { label: "Reading Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Current Meter Reading" }, /* @__PURE__ */ React.createElement("input", { type: "text", inputMode: "numeric", pattern: "[0-9]*", className: inputCls + " text-2xl py-3 tracking-wide", value: reading, onChange: (e) => setReading(e.target.value.replace(/[^0-9]/g, "")), placeholder: "e.g. 4213", autoFocus: true })), React.createElement("label", { className: "flex items-start gap-2 text-sm text-[#4B4740] mb-3" }, React.createElement("input", { type: "checkbox", className: "mt-1", checked: closing, onChange: (e) => setClosing(e.target.checked) }), React.createElement("span", null, React.createElement("b", null, "Closing reading"), " \u2014 the cottage is being sold. This bill goes to the current owner", (() => {
+    const o = site ? getSiteOwner(db, site.id) : null;
+    return o ? ` (${o.name})` : "";
+  })(), ", even if the sale is recorded before it's reviewed.")), willFlag && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, (site == null ? void 0 : site.meterDigits) ? `This is lower than the last reading \u2014 looks like the meter rolled over. Estimated usage: ${preview.usage} kWh. This will be flagged for accounting to double check.` : "This is lower than the last reading and this site has no meter digit count set, so usage can't be calculated automatically. This will be flagged for accounting to review manually."), !willFlag && preview && preview.usage != null && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Usage since last reading: ", preview.usage, " kWh"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Save Reading")));
 }
-function HydroHistoryRow({ r }) {
+// One activity-log line per person per day for hydro readings (e.g.
+// "Logged 57 hydro readings today (40 baseline, 2 flagged)"), updated as
+// they go, instead of one line per reading pushing everything else out of
+// the 200-entry log on a big reading day.
+function addHydroDailyLog(db, actor, kind) {
+  const day = todayISO();
+  const log = db.activityLog || [];
+  const idx = log.findIndex((e) => e.hydroDay === day && e.actor === actor);
+  const prev = idx >= 0 && log[idx].hydroCounts || { total: 0, baseline: 0, flagged: 0 };
+  const counts = { total: prev.total + 1, baseline: prev.baseline + (kind === "baseline" ? 1 : 0), flagged: prev.flagged + (kind === "flagged" ? 1 : 0) };
+  const extras = [counts.baseline ? `${counts.baseline} baseline` : "", counts.flagged ? `${counts.flagged} flagged for review` : ""].filter(Boolean);
+  const entry = {
+    id: idx >= 0 ? log[idx].id : uid(),
+    ts: (/* @__PURE__ */ new Date()).toISOString(),
+    actor,
+    summary: `Logged ${counts.total} hydro reading${counts.total === 1 ? "" : "s"} today${extras.length ? ` (${extras.join(", ")})` : ""}`,
+    hydroDay: day,
+    hydroCounts: counts
+  };
+  return [entry, ...log.filter((_, i) => i !== idx)].slice(0, 200);
+}
+// After a reading is corrected or removed, works out again - oldest first -
+// each not-yet-invoiced reading's previous reading, usage, baseline and
+// flag. Invoiced readings are never changed. Returns only what changed.
+function recomputeHydroChain(siteReadings, meterDigits) {
+  const asc = siteReadings.slice().sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1);
+  let prev = null;
+  const changed = [];
+  asc.forEach((r) => {
+    if (r.status === "invoiced") {
+      prev = r.reading;
+      return;
+    }
+    const { usage, rolledOver } = computeHydroUsage(prev, r.reading, meterDigits);
+    const isBaseline = prev == null;
+    const next = { ...r, previousReading: prev, usage, rolledOver, isBaseline, flagged: !isBaseline && r.reading < prev, status: isBaseline ? "confirmed" : "pending" };
+    if (["previousReading", "usage", "rolledOver", "isBaseline", "flagged", "status"].some((k) => next[k] !== r[k])) changed.push(next);
+    prev = r.reading;
+  });
+  return changed;
+}
+// A reading can be corrected or removed until it's invoiced - and not once a
+// later reading has been invoiced, since that bill was worked out from it.
+function hydroReadingLock(history, r) {
+  if (r.status === "invoiced") return "Invoiced";
+  const newerInvoiced = history.some((o) => o.id !== r.id && o.status === "invoiced" && (o.date > r.date || o.date === r.date && o.id > r.id));
+  return newerInvoiced ? "Locked \u2014 a later reading was invoiced" : null;
+}
+function HydroReadingEditModal({ db, persist, reading, site, history, onClose }) {
+  const actor = useCurrentActor();
+  const [value, setValue] = useState(String(reading.reading));
+  const [date, setDate] = useState(reading.date);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState(null);
+  const num = Number(value);
+  const valid = value !== "" && Number.isFinite(num) && num >= 0 && /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const saveAll = async (records, removeId) => {
+    try {
+      if (removeId) await HYDRO_READINGS_REF.doc(removeId).delete();
+      await Promise.all(records.map(saveHydroReading));
+      return true;
+    } catch (e) {
+      setError("Couldn't save \u2014 check your connection and try again.");
+      return false;
+    }
+  };
+  const save = async () => {
+    if (!valid) return;
+    const edited = { ...reading, reading: num, date, editedBy: actor, editedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    const others = history.filter((r) => r.id !== reading.id);
+    const changed = recomputeHydroChain([...others, edited], site && site.meterDigits);
+    const toSave = [edited, ...changed.filter((c) => c.id !== edited.id)].map((r) => r.id === edited.id ? { ...edited, ...(changed.find((c) => c.id === edited.id) || {}) } : r);
+    if (!await saveAll(toSave)) return;
+    const what = [num !== reading.reading ? `${reading.reading} \u2192 ${num}` : "", date !== reading.date ? `date ${reading.date} \u2192 ${date}` : ""].filter(Boolean).join(", ");
+    if (what) persist({ ...db, activityLog: addLog(db, actor, `Corrected hydro reading for site ${site ? site.number : "?"}: ${what}`) });
+    onClose();
+  };
+  const remove = async () => {
+    const others = history.filter((r) => r.id !== reading.id);
+    if (!await saveAll(recomputeHydroChain(others, site && site.meterDigits), reading.id)) return;
+    persist({ ...db, activityLog: addLog(db, actor, `Removed hydro reading for site ${site ? site.number : "?"} (${reading.reading} on ${reading.date})`) });
+    onClose();
+  };
+  return React.createElement(
+    Modal,
+    { title: `Edit reading \u2014 Site ${site ? site.number : ""}`, onClose },
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Corrections don't send or create a bill. Usage for this reading and the ones after it is worked out again; anything pending still goes through Hydro Review as usual."),
+    React.createElement(
+      "div",
+      { className: "grid grid-cols-2 gap-3" },
+      React.createElement(Field, { label: "Reading" }, React.createElement("input", { type: "number", min: "0", inputMode: "decimal", className: inputCls, value, onChange: (e) => setValue(e.target.value) })),
+      React.createElement(Field, { label: "Date" }, React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) }))
+    ),
+    error && React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, error),
+    confirmDelete ? React.createElement(
+      "div",
+      { className: "rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 mt-2 text-xs text-[#4B4740] flex items-center justify-between gap-2 flex-wrap" },
+      React.createElement("span", null, "Remove this reading? The next reading will be compared to the one before it instead."),
+      React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: remove, className: "px-2.5 py-1 rounded-md bg-[#a8532a] text-white font-medium" }, "Yes, remove"), React.createElement("button", { type: "button", onClick: () => setConfirmDelete(false), className: "px-2.5 py-1 rounded-md text-[#75716A]" }, "Cancel"))
+    ) : null,
+    React.createElement(
+      "div",
+      { className: "flex justify-between gap-2 mt-4" },
+      React.createElement("button", { type: "button", onClick: () => setConfirmDelete(true), className: "px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Remove reading"),
+      React.createElement(
+        "span",
+        { className: "flex gap-2" },
+        React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+        React.createElement("button", { type: "button", onClick: save, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, "Save correction")
+      )
+    )
+  );
+}
+function HydroHistoryRow({ r, action }) {
   const usageDisplay = r.isBaseline ? "\u2014 (baseline)" : r.usage == null && r.confirmedUsage == null ? "Unknown" : r.confirmedUsage != null ? r.confirmedUsage : r.usage;
   const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? "Invoiced" : "Confirmed";
-  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.reading), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"));
+  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.reading), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
 }
-function HydroHistoryTable({ db, siteId }) {
+function HydroHistoryTable({ db, siteId, persist }) {
   const history = getSiteHydroHistory(db, siteId);
+  // Matches firestore.rules: only Admin and Accounting can change a reading.
+  const role = useUserRole(db);
+  const canEdit = Boolean(persist) && (role === "admin" || role === "accounting");
+  const [editing, setEditing] = useState(null);
   if (history.length === 0) {
     return /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "No hydro readings recorded yet for this site.");
   }
-  const headerRow = /* @__PURE__ */ React.createElement("tr", { className: "text-left text-xs text-[#75716A] border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Reading"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Usage (kWh)"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Amount"));
-  const rows = history.map((r) => /* @__PURE__ */ React.createElement(HydroHistoryRow, { key: r.id, r }));
-  return /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, headerRow), /* @__PURE__ */ React.createElement("tbody", null, rows)));
+  const headerRow = /* @__PURE__ */ React.createElement("tr", { className: "text-left text-xs text-[#75716A] border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Reading"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Usage (kWh)"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Amount"), canEdit && React.createElement("th", { className: "py-2" }));
+  const rows = history.map((r) => {
+    let action = void 0;
+    if (canEdit) {
+      const lock = hydroReadingLock(history, r);
+      action = lock ? React.createElement("span", { className: "text-[11px] text-[#9A968D]", title: "Can't be changed once billed" }, lock === "Invoiced" ? "" : "Locked") : React.createElement("button", { type: "button", onClick: () => setEditing(r), className: "text-xs text-[#377249] hover:underline font-medium" }, "Edit");
+    }
+    return /* @__PURE__ */ React.createElement(HydroHistoryRow, { key: r.id, r, action });
+  });
+  const site = db.sites.find((s) => s.id === siteId);
+  // Cottage sales and moves (from Transfer Ownership) shown between the
+  // readings, newest first - a reading on the transfer day sits under it,
+  // with the seller, since that's usually the closing reading.
+  const colCount = canEdit ? 6 : 5;
+  const transferRows = (site && site.transferHistory || []).map((t) => ({ t, date: t.date || "" }));
+  const merged = [];
+  let ti = 0;
+  const sortedTransfers = transferRows.slice().sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+  history.forEach((r, i) => {
+    while (ti < sortedTransfers.length && sortedTransfers[ti].date >= r.date) merged.push(sortedTransfers[ti++]);
+    merged.push(rows[i]);
+  });
+  while (ti < sortedTransfers.length) merged.push(sortedTransfers[ti++]);
+  const body = merged.map((item) => item && item.t ? React.createElement(
+    "tr",
+    { key: "t-" + (item.t.id || item.date + item.t.toCustomerName) },
+    React.createElement("td", { colSpan: colCount, className: "py-1.5 px-2 text-xs bg-[#FBF3E6] text-[#9A6B1F] border-b border-[#F1EEE9]" }, "\uD83D\uDD11 ", React.createElement("b", null, item.date || "Date unknown"), " \u2014 ", item.t.cottageName ? `${item.t.cottageName}: ` : "", item.t.toCustomerName === "Taken off-site" ? `sold by ${item.t.fromCustomerName || "previous owner"} and taken off-site` : `transferred from ${item.t.fromCustomerName || "previous owner"} to ${item.t.toCustomerName || "new owner"}`)
+  ) : item);
+  return /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, headerRow), /* @__PURE__ */ React.createElement("tbody", null, body)), editing && React.createElement(HydroReadingEditModal, { db, persist, reading: editing, site, history, onClose: () => setEditing(null) }));
 }
 function HydroSiteCard({ site, owner, last, onEnterReading, onViewHistory }) {
   return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, "Site ", site.number), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#75716A]" }, (owner == null ? void 0 : owner.name) || "\u2014")), /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] uppercase tracking-wide" }, "Last Reading"), /* @__PURE__ */ React.createElement("div", { className: "text-base font-semibold text-[#1E1A13]" }, last ? last.reading : "\u2014"), last && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D]" }, last.date))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-3" }, /* @__PURE__ */ React.createElement(
@@ -14212,7 +14367,7 @@ function HydroMeterView({ db, persist }) {
     const last = getLastHydroReading(db, s.id);
     return /* @__PURE__ */ React.createElement("tr", { key: s.id, className: "border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 font-semibold text-[#1E1A13]" }, s.number), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, (owner == null ? void 0 : owner.name) || "—"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-[#4B4740]" }, last ? last.reading : "—"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-xs text-[#75716A]" }, last ? last.date : "—"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2 text-right whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setEntrySiteId(s.id), className: "text-xs font-semibold text-[#377249] hover:underline mr-3" }, "Enter Reading"), last && /* @__PURE__ */ React.createElement("button", { onClick: () => setHistorySiteId(s.id), className: "text-xs font-medium text-[#75716A] hover:underline" }, "History")));
   })))));
-  const submitReading = (siteId, readingValue, dateValue) => {
+  const submitReading = (siteId, readingValue, dateValue, opts) => {
     const site = db.sites.find((s) => s.id === siteId);
     if (!site) return;
     const last = getLastHydroReading(db, siteId);
@@ -14238,10 +14393,12 @@ function HydroMeterView({ db, persist }) {
       enteredBy: actor,
       confirmedBy: null,
       confirmedAt: null,
-      invoicedAt: null
+      invoicedAt: null,
+      ownerAtReading: (getSiteOwner(db, siteId) || {}).id || null,
+      closingReading: Boolean(opts && opts.closing)
     };
     saveHydroReading(record).catch(() => setToast(`Couldn't save the reading for site ${site.number}. Check your connection and enter it again.`));
-    const activityLog = addLog(db, actor, `Logged hydro reading for site ${site.number}: ${readingValue}${flagged ? " (flagged for review)" : isBaseline ? " (baseline)" : ""}`);
+    const activityLog = addHydroDailyLog(db, actor, flagged ? "flagged" : isBaseline ? "baseline" : "reading");
     persist({ ...db, activityLog });
     setEntrySiteId(null);
     setFilter("");
@@ -14268,7 +14425,7 @@ function HydroMeterView({ db, persist }) {
       /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, group.label, " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#9A968D]" }, "(", group.sites.length, ")")),
       /* @__PURE__ */ React.createElement("span", { className: `text-[#75716A] transition-transform ${isOpen ? "rotate-180" : ""}` }, "\u25BC")
     ), isOpen && /* @__PURE__ */ React.createElement("div", { className: "px-4 pb-4 border-t border-[#E2DED5] pt-3" }, renderSitesBlock(group.sites)));
-  })), entrySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Enter Hydro Reading \u2014 Site ${(db.sites.find((s) => s.id === entrySiteId) || {}).number || ""}`, onClose: () => setEntrySiteId(null) }, /* @__PURE__ */ React.createElement(HydroReadingForm, { db, siteId: entrySiteId, onSave: submitReading, onCancel: () => setEntrySiteId(null) })), historySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Hydro History \u2014 Site ${(db.sites.find((s) => s.id === historySiteId) || {}).number || ""}`, onClose: () => setHistorySiteId(null), wide: true }, /* @__PURE__ */ React.createElement(HydroHistoryTable, { db, siteId: historySiteId })));
+  })), entrySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Enter Hydro Reading \u2014 Site ${(db.sites.find((s) => s.id === entrySiteId) || {}).number || ""}`, onClose: () => setEntrySiteId(null) }, /* @__PURE__ */ React.createElement(HydroReadingForm, { db, siteId: entrySiteId, onSave: submitReading, onCancel: () => setEntrySiteId(null) })), historySiteId && /* @__PURE__ */ React.createElement(Modal, { title: `Hydro History \u2014 Site ${(db.sites.find((s) => s.id === historySiteId) || {}).number || ""}`, onClose: () => setHistorySiteId(null), wide: true }, /* @__PURE__ */ React.createElement(HydroHistoryTable, { db, siteId: historySiteId, persist })));
 }
 function getAccountingCopyEmail(db) {
   var _a;
@@ -14300,7 +14457,7 @@ function AccountingCopyEmailControl({ db, persist }) {
     }
   ));
 }
-function HydroReviewRow({ r, site, owner, rate, taxRate, edits, setEditField, onConfirm }) {
+function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm }) {
   const e = edits[r.id] || {};
   const readingStr = e.reading !== void 0 ? e.reading : String(r.reading);
   const dateStr = e.date !== void 0 ? e.date : r.date;
@@ -14318,7 +14475,7 @@ function HydroReviewRow({ r, site, owner, rate, taxRate, edits, setEditField, on
     if (!readingValid || !usageValid) return;
     onConfirm(r, { reading: readingNum, date: dateStr, usage: usageNum, rolledOver: computed.rolledOver });
   };
-  return /* @__PURE__ */ React.createElement("div", { className: `rounded-xl border p-4 bg-[#FFFDFA] ${r.flagged ? "border-[#e0bfa6]" : "border-[#E2DED5]"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, "Site ", site ? site.number : "?"), " \u2014 ", (owner == null ? void 0 : owner.name) || "No customer on file", r.flagged && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-xs font-semibold text-[#a8532a]" }, "\u26A0 Flagged for review")), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Read ", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateStr, onChange: (ev) => setEditField(r.id, "date", ev.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" }))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-xs text-[#75716A] mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Previous: ", r.previousReading != null ? r.previousReading : "\u2014"), /* @__PURE__ */ React.createElement("span", null, "\u2192"), /* @__PURE__ */ React.createElement("label", null, "Reading: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: readingStr, onChange: (ev) => setEditField(r.id, "reading", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" })), readingWasEdited && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "(corrected from ", r.reading, ")"), computed.rolledOver && /* @__PURE__ */ React.createElement("span", null, "(meter appears to have rolled over)")), !usageValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, "Usage couldn't be calculated automatically \u2014 enter the correct usage manually below."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Usage (kWh): ", /* @__PURE__ */ React.createElement("input", { type: "number", value: usageStr, onChange: (ev) => setEditField(r.id, "usage", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), previewTotal != null && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\u2192 ", React.createElement(Money, { value: previewSubtotal }), " + tax = ", React.createElement(Money, { value: previewTotal }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
+  return /* @__PURE__ */ React.createElement("div", { className: `rounded-xl border p-4 bg-[#FFFDFA] ${r.flagged ? "border-[#e0bfa6]" : "border-[#E2DED5]"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, "Site ", site ? site.number : "?"), " \u2014 ", (owner == null ? void 0 : owner.name) || "No customer on file", r.flagged && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-xs font-semibold text-[#a8532a]" }, "\u26A0 Flagged for review"), r.closingReading && React.createElement("span", { className: "ml-2 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-[#FBEEDA] text-[#9A6B1F]" }, "Closing reading"), owner && currentOwner && owner.id !== currentOwner.id && React.createElement("div", { className: "text-xs text-[#9A6B1F] mt-0.5" }, `Billed to ${owner.name}, the owner when this was read \u2014 the site is now ${currentOwner.name}'s.`)), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Read ", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateStr, onChange: (ev) => setEditField(r.id, "date", ev.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" }))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-xs text-[#75716A] mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Previous: ", r.previousReading != null ? r.previousReading : "\u2014"), /* @__PURE__ */ React.createElement("span", null, "\u2192"), /* @__PURE__ */ React.createElement("label", null, "Reading: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: readingStr, onChange: (ev) => setEditField(r.id, "reading", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" })), readingWasEdited && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "(corrected from ", r.reading, ")"), computed.rolledOver && /* @__PURE__ */ React.createElement("span", null, "(meter appears to have rolled over)")), !usageValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, "Usage couldn't be calculated automatically \u2014 enter the correct usage manually below."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Usage (kWh): ", /* @__PURE__ */ React.createElement("input", { type: "number", value: usageStr, onChange: (ev) => setEditField(r.id, "usage", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), previewTotal != null && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\u2192 ", React.createElement(Money, { value: previewSubtotal }), " + tax = ", React.createElement(Money, { value: previewTotal }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
 }
 function HydroReviewView({ db, persist }) {
   const actor = useCurrentActor();
@@ -14345,7 +14502,7 @@ function HydroReviewView({ db, persist }) {
     saveHydroReading(hydroReadings.find((r) => r.id === reading.id)).catch(() => setToast(`Couldn't save the confirmed reading for site ${site.number}. Try again.`));
     let activityLog = addLog(db, actor, `Confirmed hydro reading and sent invoice for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`);
     persist({ ...db, activityLog });
-    const owner = getSiteOwner(db, site.id);
+    const owner = hydroBillTo(db, reading);
     const recipientEmail = toEmail || (owner == null ? void 0 : owner.email);
     const copyEmail = getAccountingCopyEmail(db);
     if (EMAIL_ENABLED && owner && recipientEmail) {
@@ -14382,9 +14539,10 @@ function HydroReviewView({ db, persist }) {
   };
   return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#B5432E] font-semibold" }, "Hydro Meter Review")), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
     const site = db.sites.find((s) => s.id === r.siteId);
-    const owner = getSiteOwner(db, r.siteId);
-    return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm });
-  })), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro \u2014 Site ${pendingConfirm.site.number}` }, customer: getSiteOwner(db, pendingConfirm.site.id) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
+    const owner = hydroBillTo(db, r);
+    const currentOwner = getSiteOwner(db, r.siteId);
+    return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm });
+  })), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
 }
 function getConsignmentTransferInfo(db, cottage, site) {
   if (!cottage || !site) return { buyer: null, seller: null };
@@ -16727,7 +16885,7 @@ function FieldHydroListScreen({ db, onEnterReading, onBack, onGoToDesktopTab }) 
 function FieldHydroPadScreen({ db, persist, actor, siteId, setToast, onSaved, onBack }) {
   const site = db.sites.find((s) => s.id === siteId);
   if (!site) return React.createElement(EmptyState, { text: "That site is no longer available." });
-  const save = (id, readingValue, dateValue) => {
+  const save = (id, readingValue, dateValue, opts) => {
     const last = getLastHydroReading(db, id);
     const previousReading = last ? last.reading : null;
     const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits);
@@ -16751,10 +16909,12 @@ function FieldHydroPadScreen({ db, persist, actor, siteId, setToast, onSaved, on
       enteredBy: actor,
       confirmedBy: null,
       confirmedAt: null,
-      invoicedAt: null
+      invoicedAt: null,
+      ownerAtReading: (getSiteOwner(db, id) || {}).id || null,
+      closingReading: Boolean(opts && opts.closing)
     };
     saveHydroReading(record).catch(() => setToast(`Couldn't save the reading for site ${site.number}. Check your connection and enter it again.`));
-    const activityLog = addLog(db, actor, `Logged hydro reading for site ${site.number}: ${readingValue}${flagged ? " (flagged for review)" : isBaseline ? " (baseline)" : ""}`);
+    const activityLog = addHydroDailyLog(db, actor, flagged ? "flagged" : isBaseline ? "baseline" : "reading");
     persist({ ...db, activityLog });
     setToast(isBaseline ? `Baseline reading saved for site ${site.number}` : `Reading saved for site ${site.number} — sent for review`);
     onSaved();
