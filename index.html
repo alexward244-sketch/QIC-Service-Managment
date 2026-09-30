@@ -10465,10 +10465,17 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     saveCottage({ ...cottage, appliances: nextAppliances });
     setApplianceLogPrompt(null);
   };
+  // Completing one job opens the wrap-up window first (hours, parts,
+  // summary); the bulk editor completes without it.
+  const [wrapUpWO, setWrapUpWO] = useState(null);
+  const completeOrWrapUp = (wo, nextStatus) => {
+    if (nextStatus === "Completed" && wo.status !== "Completed") setWrapUpWO(wo);
+    else changeStatus(wo, nextStatus);
+  };
   const advance = (wo) => {
     const idx = STATUS.indexOf(wo.status);
     const nextStatus = STATUS[Math.min(idx + 1, STATUS.length - 1)];
-    changeStatus(wo, nextStatus);
+    completeOrWrapUp(wo, nextStatus);
   };
   const [archiveSelectMode, setArchiveSelectMode] = useState(false);
   const [archiveSelected, setArchiveSelected] = useState(() => /* @__PURE__ */ new Set());
@@ -10518,7 +10525,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     setDragOverStatus(null);
     const id = e.dataTransfer.getData("text/plain");
     const wo = db.workOrders.find((w) => w.id === id);
-    if (wo) changeStatus(wo, status);
+    if (wo) completeOrWrapUp(wo, status);
   };
   const bulkUpdate = (field, value, ids) => {
     const idSet = new Set(ids);
@@ -10667,7 +10674,17 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
         formDirtyRef.current = d;
       }
     }
-  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this work order that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), applianceLogPrompt && /* @__PURE__ */ React.createElement(Modal, { title: "Log to an Appliance?", onClose: () => setApplianceLogPrompt(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, applianceLogPrompt.cottage.name, " has appliances on file \u2014 would you like to add this completed work order to one of their service logs?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-4" }, (applianceLogPrompt.cottage.appliances || []).map((a) => /* @__PURE__ */ React.createElement(
+  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this work order that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), wrapUpWO && React.createElement(WorkOrderWrapUpModal, {
+    wo: wrapUpWO,
+    db,
+    actor,
+    onComplete: (w) => {
+      setWrapUpWO(null);
+      changeStatus(w, "Completed");
+    },
+    onCreateInvoice: onCreateInvoice && !wrapUpWO.salesSourced && !(db.invoices || []).some((inv) => inv.sourceType === "workOrder" && inv.sourceId === wrapUpWO.id) ? onCreateInvoice : null,
+    onCancel: () => setWrapUpWO(null)
+  }), applianceLogPrompt && /* @__PURE__ */ React.createElement(Modal, { title: "Log to an Appliance?", onClose: () => setApplianceLogPrompt(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, applianceLogPrompt.cottage.name, " has appliances on file \u2014 would you like to add this completed work order to one of their service logs?"), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-4" }, (applianceLogPrompt.cottage.appliances || []).map((a) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: a.id,
@@ -11043,6 +11060,228 @@ function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, on
     placeholder: "Add from parts\u2026"
   })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Template")));
 }
+// Shown when a single work order is marked complete (the Complete button,
+// dragging to Completed, or Mark Complete in the field app), so the details
+// the invoice is built from get filled in while the job is fresh. Each
+// section says whether the customer sees it: hours and parts become invoice
+// charges and the customer summary is printed as the invoice notes, while
+// "what was done" and the payment status stay internal.
+// Hours on a work order can be split between workers (e.g. two guys on one
+// job). The per-worker breakdown is kept on the work order as laborEntries
+// for your own records; laborHours is always the combined total, which is
+// all the invoice uses - customers only ever see the total labour price.
+function laborEntriesFrom(wo) {
+  if (wo && Array.isArray(wo.laborEntries) && wo.laborEntries.length) {
+    return wo.laborEntries.map((e) => ({ id: e.id || uid(), name: e.name || "", hours: Number(e.hours) > 0 ? String(e.hours) : "" }));
+  }
+  return [{ id: uid(), name: wo && wo.assignedTo || "", hours: wo && Number(wo.laborHours) > 0 ? String(wo.laborHours) : "" }];
+}
+function laborTotal(entries) {
+  return Math.round(entries.reduce((sum, e) => sum + (Number(e.hours) || 0), 0) * 100) / 100;
+}
+// null for a single worker, so ordinary jobs are stored exactly as before.
+function laborEntriesForSave(entries) {
+  if (entries.length < 2) return null;
+  return entries.map((e) => ({ id: e.id, name: (e.name || "").trim(), hours: Number(e.hours) || 0 }));
+}
+function LaborHoursInput({ entries, onChange, staff, listId }) {
+  const update = (id, patch) => onChange(entries.map((e) => e.id === id ? { ...e, ...patch } : e));
+  const addWorker = () => onChange([...entries, { id: uid(), name: "", hours: "" }]);
+  const remove = (id) => onChange(entries.filter((e) => e.id !== id));
+  const hoursInput = (e, extra) => React.createElement("input", { type: "number", min: "0", step: "0.25", inputMode: "decimal", className: inputCls + (extra || ""), value: e.hours, placeholder: "0", "aria-label": "Hours", onChange: (ev) => update(e.id, { hours: ev.target.value }) });
+  const addLink = React.createElement("button", { type: "button", onClick: addWorker, className: "text-xs text-[#377249] hover:underline font-medium mt-1" }, "+ Add another worker");
+  if (entries.length < 2) {
+    return React.createElement("div", null, hoursInput(entries[0] || { id: "x", hours: "" }), addLink);
+  }
+  return React.createElement(
+    "div",
+    null,
+    React.createElement("datalist", { id: listId }, (staff || []).map((s) => React.createElement("option", { key: s.id || s.name, value: s.name }))),
+    React.createElement(
+      "div",
+      { className: "space-y-1.5" },
+      entries.map((e) => React.createElement(
+        "div",
+        { key: e.id, className: "flex items-center gap-2" },
+        React.createElement("input", { className: inputCls + " flex-1 min-w-0", value: e.name, placeholder: "Worker", list: listId, "aria-label": "Worker", onChange: (ev) => update(e.id, { name: ev.target.value }) }),
+        hoursInput(e, " w-20 text-center flex-shrink-0"),
+        React.createElement("button", { type: "button", onClick: () => remove(e.id), className: "text-[#a8532a] w-9 h-9 rounded-full hover:bg-[#F5E3D9] flex-shrink-0", "aria-label": "Remove worker" }, "✕")
+      ))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between mt-1" },
+      addLink,
+      React.createElement("span", { className: "text-xs font-semibold text-[#1E1A13]" }, "Total: ", laborTotal(entries), " hrs")
+    )
+  );
+}
+function WrapUpAudience({ customer }) {
+  return React.createElement(
+    "span",
+    { className: `ml-2 text-[9px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 align-middle ${customer ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}` },
+    customer ? "On the invoice" : "Internal only"
+  );
+}
+function WorkOrderWrapUpModal({ wo, db, actor, onComplete, onCreateInvoice, onCancel }) {
+  const rateOptions = getLaborRateOptions(db);
+  const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const parts = db.parts || [];
+  const [laborEntries, setLaborEntries] = useState(() => laborEntriesFrom(wo));
+  const laborHours = laborTotal(laborEntries);
+  const [laborRateType, setLaborRateType] = useState(wo.laborRateType || "N/A");
+  const [partsUsed, setPartsUsed] = useState((wo.partsUsed || []).map((pu) => ({ ...pu })));
+  const [workDone, setWorkDone] = useState("");
+  const [customerSummary, setCustomerSummary] = useState(wo.customerSummary || "");
+  const [paymentStatus, setPaymentStatus] = useState(wo.paymentStatus || "");
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
+  const addPart = (partId) => {
+    if (!partId) return;
+    setPartsUsed((items) => items.some((pu) => pu.partId === partId) ? items.map((pu) => pu.partId === partId ? { ...pu, quantity: (Number(pu.quantity) || 0) + 1 } : pu) : [...items, { partId, quantity: 1 }]);
+  };
+  const setQty = (partId, quantity) => setPartsUsed((items) => items.map((pu) => pu.partId === partId ? { ...pu, quantity } : pu));
+  const removePart = (partId) => setPartsUsed((items) => items.filter((pu) => pu.partId !== partId));
+  const cleanParts = () => partsUsed.filter((pu) => (Number(pu.quantity) || 0) > 0).map((pu) => ({ partId: pu.partId, quantity: Number(pu.quantity) || 0 }));
+  const generate = async () => {
+    setSummaryError("");
+    const partLines = cleanParts().map((pu) => {
+      const part = parts.find((p) => p.id === pu.partId);
+      return part ? `${pu.quantity}x ${part.name}` : null;
+    }).filter(Boolean);
+    const notesLog = [...(wo.notes || [])].reverse().map((n) => n.text).filter(Boolean);
+    const rawNotes = [
+      wo.title ? `Job: ${wo.title}` : "",
+      wo.description ? `Description: ${wo.description}` : "",
+      notesLog.length ? `Notes log:\n${notesLog.map((t) => `- ${t}`).join("\n")}` : "",
+      workDone.trim() ? `Work done: ${workDone.trim()}` : "",
+      partLines.length ? `Parts used: ${partLines.join(", ")}` : "",
+      Number(laborHours) > 0 ? `Labor hours: ${laborHours}` : ""
+    ].filter(Boolean).join("\n");
+    if (!rawNotes.trim()) {
+      setSummaryError("Add what was done, parts or hours first.");
+      return;
+    }
+    setSummaryLoading(true);
+    try {
+      const { resp, data } = await requestWorkOrderSummary(rawNotes);
+      if (!resp.ok || !data.ok) setSummaryError(data && data.error || "Couldn't generate a summary. Try again.");
+      else setCustomerSummary(data.summary);
+    } catch (e) {
+      setSummaryError("Couldn't reach the summary service. Check your connection and try again.");
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+  // The work order with everything entered here applied (not yet saved).
+  const withDetails = () => {
+    const rate = (rateOptions.find((r) => r.label === laborRateType) || rateOptions[1] || { rate: 0 }).rate;
+    const note = workDone.trim() ? [{ id: uid(), text: `Work done: ${workDone.trim()}`, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() }] : [];
+    return {
+      ...wo,
+      laborHours,
+      laborEntries: laborEntriesForSave(laborEntries),
+      laborRateType,
+      laborRate: rate,
+      partsUsed: cleanParts(),
+      paymentStatus,
+      customerSummary: customerSummary.trim() || null,
+      notes: [...note, ...(wo.notes || [])]
+    };
+  };
+  const partsTotal = partsUsed.reduce((sum, pu) => {
+    const part = parts.find((p) => p.id === pu.partId);
+    return sum + (Number(part && part.price) || 0) * (1 + (Number(taxRate) || 0) / 100) * (Number(pu.quantity) || 0);
+  }, 0);
+  const sectionCls = "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3 mb-3";
+  const headCls = "text-[11px] font-semibold uppercase tracking-wider text-[#4B4740] mb-2";
+  return React.createElement(
+    Modal,
+    { title: `Wrap up: ${wo.title || "work order"}`, onClose: onCancel, wide: true },
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Add the details while the job is fresh. The invoice is built from these — anything marked ", React.createElement("b", null, "On the invoice"), " is what the customer will see."),
+    React.createElement(
+      "div",
+      { className: sectionCls },
+      React.createElement("div", { className: headCls }, "Labour", React.createElement(WrapUpAudience, { customer: true })),
+      laborEntries.length > 1 && React.createElement("p", { className: "text-[11px] text-[#75716A] -mt-1 mb-2" }, "The invoice shows one labour price for the total hours \u2014 not who worked or how long each."),
+      React.createElement(
+        "div",
+        { className: laborEntries.length > 1 ? "grid gap-1" : "grid grid-cols-2 gap-3" },
+        React.createElement(Field, { label: "Hours worked" }, React.createElement(LaborHoursInput, { entries: laborEntries, onChange: setLaborEntries, staff: db.staff, listId: "wrapup-staff-list" })),
+        React.createElement(Field, { label: "Rate type" }, React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)"))))
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: sectionCls },
+      React.createElement("div", { className: headCls }, "Parts used", React.createElement(WrapUpAudience, { customer: true })),
+      partsUsed.length > 0 && React.createElement(
+        "div",
+        { className: "space-y-1.5 mb-2" },
+        partsUsed.map((pu) => {
+          const part = parts.find((p) => p.id === pu.partId);
+          return React.createElement(
+            "div",
+            { key: pu.partId, className: "flex items-center gap-2 text-sm" },
+            React.createElement("span", { className: "flex-1 text-[#1E1A13] min-w-0 truncate" }, part ? part.name : "Unknown part"),
+            React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls + " w-20 text-center", value: pu.quantity, onChange: (e) => setQty(pu.partId, e.target.value) }),
+            React.createElement("button", { type: "button", onClick: () => removePart(pu.partId), className: "text-[#a8532a] w-9 h-9 rounded-full hover:bg-[#F5E3D9] flex-shrink-0", "aria-label": "Remove part" }, "✕")
+          );
+        }),
+        React.createElement("div", { className: "text-right text-xs text-[#4B4740]" }, "Parts total (incl. tax): ", formatPrice(partsTotal))
+      ),
+      React.createElement(SearchableSelect, {
+        options: parts.map((p) => ({ value: p.id, label: `${p.name} — ${formatPrice(Number(p.price) * (1 + (Number(taxRate) || 0) / 100))} incl. tax`, searchText: `${p.name} ${p.sku || ""}` })),
+        value: "",
+        onChange: addPart,
+        placeholder: "Add a part used…"
+      }),
+      React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, "Stock is deducted when the job is completed.")
+    ),
+    React.createElement(
+      "div",
+      { className: sectionCls },
+      React.createElement("div", { className: headCls }, "What was done", React.createElement(WrapUpAudience, { customer: false })),
+      React.createElement("textarea", { className: inputCls, rows: 3, value: workDone, placeholder: "e.g. Replaced kitchen faucet, found a second small leak under the sink — tightened fitting.", onChange: (e) => setWorkDone(e.target.value) }),
+      React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, "Added to the job's notes for your team. Not shown to the customer.")
+    ),
+    React.createElement(
+      "div",
+      { className: "rounded-lg border-2 border-[#E8C98F] bg-[#FFFBF3] p-3 mb-3" },
+      React.createElement("div", { className: headCls }, "Customer summary", React.createElement(WrapUpAudience, { customer: true })),
+      React.createElement("textarea", { className: inputCls, rows: 3, value: customerSummary, placeholder: "A short, friendly explanation of the work for the customer — or tap Generate.", onChange: (e) => setCustomerSummary(e.target.value) }),
+      React.createElement(
+        "div",
+        { className: "flex items-center justify-between gap-2 mt-1.5 flex-wrap" },
+        React.createElement("p", { className: "text-[11px] text-[#9A6B1F]" }, "Printed on the invoice exactly as written."),
+        React.createElement("button", { type: "button", onClick: generate, disabled: summaryLoading, className: "px-3 py-1.5 text-xs text-[#377249] hover:bg-[#EAF3EC] rounded-md font-medium disabled:opacity-50" }, summaryLoading ? "Generating…" : "Generate with Claude")
+      ),
+      summaryError && React.createElement("p", { className: "text-xs text-[#a8532a] mt-1" }, summaryError)
+    ),
+    React.createElement(
+      "div",
+      { className: sectionCls },
+      React.createElement("div", { className: headCls }, "Payment", React.createElement(WrapUpAudience, { customer: false })),
+      React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, React.createElement("option", { value: "" }, "— Not set —"), PAYMENT_STATUS.map((p) => React.createElement("option", { key: p.value, value: p.value }, p.label)))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap justify-between gap-2 mt-4" },
+      React.createElement("button", { type: "button", onClick: onCancel, className: "px-3 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      React.createElement(
+        "div",
+        { className: "flex flex-wrap justify-end gap-2" },
+        React.createElement("button", { type: "button", onClick: () => onComplete(wo), className: "px-3 py-2 text-sm text-[#4B4740] border border-[#E2DED5] hover:bg-[#F1EEE9] rounded-md" }, "Complete without details"),
+        React.createElement("button", { type: "button", onClick: () => onComplete(withDetails()), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save & Complete"),
+        onCreateInvoice && React.createElement("button", { type: "button", onClick: () => {
+          const done = withDetails();
+          onComplete(done);
+          onCreateInvoice({ ...done, status: "Completed" });
+        }, className: "px-4 py-2 text-sm bg-[#C1652F] text-white rounded-md hover:bg-[#A8541F] font-medium" }, "Save, Complete & Invoice")
+      )
+    )
+  );
+}
 function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, workGroups, templates, taxRate, workOrders, rateOptions, workOrderNumber, onSave, onCancel, onDirtyChange }) {
   var _a, _b, _c;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
@@ -11056,7 +11295,8 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [workGroup, setWorkGroup] = useState((initial == null ? void 0 : initial.workGroup) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
   const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
-  const [laborHours, setLaborHours] = useState((_a = initial == null ? void 0 : initial.laborHours) != null ? _a : "");
+  const [laborEntries, setLaborEntries] = useState(() => laborEntriesFrom(initial));
+  const laborHours = laborTotal(laborEntries);
   const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || "N/A");
   const [paymentStatus, setPaymentStatus] = useState((initial == null ? void 0 : initial.paymentStatus) || "");
   const [relatedWorkOrderId, setRelatedWorkOrderId] = useState((initial == null ? void 0 : initial.relatedWorkOrderId) || "");
@@ -11069,6 +11309,16 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [summaryError, setSummaryError] = useState("");
   const [summaryCopied, setSummaryCopied] = useState(false);
   const [showCompletedNudge, setShowCompletedNudge] = useState(false);
+  // A new work order starts short: the wrap-up fields (hours, rate, payment,
+  // parts, customer summary) appear once it's saved and reopened, and the
+  // occasional ones sit behind "More details". Anything that already has a
+  // value - from a template, a prefill or the user - always shows.
+  const isNew = !(initial && initial.id);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const showMore = !isNew || moreOpen;
+  const showLabor = !isNew || Number(laborHours) > 0 || Boolean(paymentStatus);
+  const showParts = !isNew || partsUsed.length > 0;
+  const showSummary = !isNew || Boolean(customerSummary);
   const prevStatusRef = useRef(status);
   useEffect(() => {
     if (prevStatusRef.current !== "Completed" && status === "Completed") {
@@ -11125,7 +11375,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [title, description, siteId, cottageId, customerId, assignedTo, status, priority, workGroup, date, partsUsed, laborHours, laborRateType, paymentStatus]);
+  }, [title, description, siteId, cottageId, customerId, assignedTo, status, priority, workGroup, date, partsUsed, laborEntries, laborRateType, paymentStatus]);
   const laborRate = (_c = (_b = rateOptions.find((r) => r.label === laborRateType)) == null ? void 0 : _b.rate) != null ? _c : rateOptions[1].rate;
   const laborCost = (Number(laborHours) || 0) * laborRate;
   const relatedCandidates = (workOrders || []).filter((w) => {
@@ -11210,7 +11460,8 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       workGroup: workGroup.trim(),
       date,
       completedDate: (initial == null ? void 0 : initial.completedDate) || (status === "Completed" ? (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) : null),
-      laborHours: Number(laborHours) || 0,
+      laborHours,
+      laborEntries: laborEntriesForSave(laborEntries),
       laborRate,
       laborRateType,
       paymentStatus,
@@ -11245,7 +11496,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: handleCottageChange,
       placeholder: "Search cottages\u2026"
     }
-  )), relatedCandidates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Related to a Previous Job (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: relatedWorkOrderId, onChange: (e) => setRelatedWorkOrderId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not related to a previous job"), relatedCandidates.map((w) => /* @__PURE__ */ React.createElement("option", { key: w.id, value: w.id }, w.title, " \u2014 completed ", w.completedDate)))), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
+  )), relatedCandidates.length > 0 && (showMore || relatedWorkOrderId) && /* @__PURE__ */ React.createElement(Field, { label: "Related to a Previous Job (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: relatedWorkOrderId, onChange: (e) => setRelatedWorkOrderId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not related to a previous job"), relatedCandidates.map((w) => /* @__PURE__ */ React.createElement("option", { key: w.id, value: w.id }, w.title, " \u2014 completed ", w.completedDate)))), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -11254,7 +11505,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       placeholder: "e.g. Dave",
       list: "wo-staff-list"
     }
-  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-staff-list" }, (staff || []).map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.name })))), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-staff-list" }, (staff || []).map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.name })))), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), (showMore || status !== "Open") && /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), (showMore || workGroup) && /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -11263,18 +11514,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       placeholder: "e.g. Tree Work Orders",
       list: "wo-group-list"
     }
-  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-group-list" }, (workGroups || []).map((g) => /* @__PURE__ */ React.createElement("option", { key: g, value: g })))), /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.25",
-      className: inputCls,
-      value: laborHours,
-      onChange: (e) => setLaborHours(e.target.value),
-      placeholder: "0"
-    }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labour cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
+  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-group-list" }, (workGroups || []).map((g) => /* @__PURE__ */ React.createElement("option", { key: g, value: g })))), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, React.createElement(LaborHoursInput, { entries: laborEntries, onChange: setLaborEntries, staff, listId: "wo-labor-staff-list" })), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), showLabor && /* @__PURE__ */ React.createElement(Field, { label: "Payment Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 Not set \u2014"), PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))))), Number(laborHours) > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Labour cost: ", formatPrice(laborCost)), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What needs doing, parts needed, etc." })), isNew && !moreOpen && React.createElement("button", { type: "button", onClick: () => setMoreOpen(true), className: "text-xs text-[#377249] hover:underline font-medium -mt-1 mb-2" }, "+ More details (status, work group, related job)"), isNew && !showLabor && !showParts && React.createElement("p", { className: "text-[11px] text-[#75716A] mb-1" }, "Hours, parts, payment and the customer summary are added when the job is done \u2014 edit the work order then to fill them in."), showParts && parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-3" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Parts Used"), partsUsed.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, partsUsed.map((pu) => {
     const part = parts.find((p) => p.id === pu.partId);
     const partPrice = (Number(part == null ? void 0 : part.price) || 0) * (1 + (Number(taxRate) || 0) / 100);
     const lineTotal = partPrice * (Number(pu.quantity) || 0);
@@ -11311,7 +11551,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       if (val) addPartUsed(val);
     },
     placeholder: "Add a part used\u2026"
-  })), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, "Stock is deducted automatically when this work order is marked Complete.")), showCompletedNudge && /* @__PURE__ */ React.createElement("div", { className: "mt-3 px-3 py-2.5 rounded-md bg-[#EAF3EC] border border-[#c9e0cf] flex items-center justify-between gap-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#1E1A13]" }, "Marked Completed — want a customer-facing summary of the work?"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => { setShowCompletedNudge(false); generateSummary(); }, className: "px-3 py-1.5 text-xs bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Generate"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShowCompletedNudge(false), className: "px-3 py-1.5 text-xs text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Dismiss"))), /* @__PURE__ */ React.createElement(Field, { label: "Customer Summary (added to the invoice notes)" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: customerSummary, onChange: (e) => setCustomerSummary(e.target.value), placeholder: "Optional \u2014 write one, or use Generate Customer Summary below" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: generateSummary, className: "px-3 py-2 text-xs text-[#377249] hover:bg-[#EAF3EC] rounded-md font-medium" }, "Generate Customer Summary"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Work Order"))), summaryOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Customer Summary", onClose: () => setSummaryOpen(false) }, summaryLoading ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Generating…") : summaryError ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a]" }, summaryError) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: summaryText, onChange: (e) => setSummaryText(e.target.value) }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSummaryOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: copySummary, className: "px-4 py-2 text-sm text-[#377249] hover:bg-[#EAF3EC] rounded-md font-medium" }, summaryCopied ? "Copied!" : "Copy"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
+  })), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1.5" }, "Stock is deducted automatically when this work order is marked Complete.")), showCompletedNudge && /* @__PURE__ */ React.createElement("div", { className: "mt-3 px-3 py-2.5 rounded-md bg-[#EAF3EC] border border-[#c9e0cf] flex items-center justify-between gap-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#1E1A13]" }, "Marked Completed — want a customer-facing summary of the work?"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => { setShowCompletedNudge(false); generateSummary(); }, className: "px-3 py-1.5 text-xs bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Generate"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShowCompletedNudge(false), className: "px-3 py-1.5 text-xs text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Dismiss"))), showSummary && /* @__PURE__ */ React.createElement(Field, { label: "Customer Summary (added to the invoice notes)" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: customerSummary, onChange: (e) => setCustomerSummary(e.target.value), placeholder: "Optional \u2014 write one, or use Generate Customer Summary below" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 mt-4" }, isNew ? React.createElement("span", null) : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: generateSummary, className: "px-3 py-2 text-xs text-[#377249] hover:bg-[#EAF3EC] rounded-md font-medium" }, "Generate Customer Summary"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Work Order"))), summaryOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Customer Summary", onClose: () => setSummaryOpen(false) }, summaryLoading ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Generating…") : summaryError ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a]" }, summaryError) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: summaryText, onChange: (e) => setSummaryText(e.target.value) }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setSummaryOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: copySummary, className: "px-4 py-2 text-sm text-[#377249] hover:bg-[#EAF3EC] rounded-md font-medium" }, summaryCopied ? "Copied!" : "Copy"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => {
     setCustomerSummary(summaryText.trim());
     setSummaryOpen(false);
   }, disabled: !summaryText.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, "Use This Summary")))));
@@ -12900,6 +13140,7 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
   // finished here. Completing works like the Work Orders tab: dated today,
   // parts used deducted from stock. saveWorkOrder then completes the entry.
   const [editingWO, setEditingWO] = useState(null);
+  const [treeWrapUp, setTreeWrapUp] = useState(null);
   const setWorkOrderStatus = (tree, wo, status) => {
     if (!saveWorkOrder || wo.status === status) return;
     const updated = { ...wo, status };
@@ -12942,7 +13183,7 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
     onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null,
     onSetStage: setStage,
     onViewWorkOrder: (t) => setViewingWO((db.workOrders || []).find((w) => w.id === t.workOrderId)),
-    onWorkOrderStatus: saveWorkOrder ? setWorkOrderStatus : null,
+    onWorkOrderStatus: saveWorkOrder ? (tree, wo, status) => status === "Completed" && wo.status !== "Completed" ? setTreeWrapUp({ tree, wo }) : setWorkOrderStatus(tree, wo, status) : null,
     onEditWorkOrder: saveWorkOrder ? setEditingWO : null
   }))));
   const completedSection = completedList.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h3", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Recently Completed"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, completedList.map((tree) => /* @__PURE__ */ React.createElement("div", { key: tree.id, className: "flex items-center justify-between gap-3 rounded-lg border border-[#E2DED5] bg-white px-4 py-2.5 text-sm" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 truncate" }, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, siteLabel(tree)), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " — ", tree.description), tree.workOrderId && /* @__PURE__ */ React.createElement("button", { onClick: () => setViewingWO((db.workOrders || []).find((w) => w.id === tree.workOrderId)), className: "ml-2 text-xs font-semibold text-[#B8752F] hover:underline whitespace-nowrap" }, "View Work Order")), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap flex-shrink-0" }, tree.completedDate)))));
@@ -12986,7 +13227,18 @@ function TreesView({ db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOr
     onDirtyChange: () => {
     }
   }));
-  return /* @__PURE__ */ React.createElement("div", null, header, pendingSection, completedSection, modalEl, creatingModal, viewModal, editWOModal, confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
+  const treeWrapUpEl = treeWrapUp && React.createElement(WorkOrderWrapUpModal, {
+    wo: treeWrapUp.wo,
+    db,
+    actor,
+    onComplete: (w) => {
+      const { tree } = treeWrapUp;
+      setTreeWrapUp(null);
+      setWorkOrderStatus(tree, w, "Completed");
+    },
+    onCancel: () => setTreeWrapUp(null)
+  });
+  return /* @__PURE__ */ React.createElement("div", null, header, pendingSection, completedSection, modalEl, creatingModal, viewModal, editWOModal, treeWrapUpEl, confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
     label: "this tree entry",
     onConfirm: () => remove(confirm.target),
     onCancel: confirm.clear
@@ -15730,19 +15982,32 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : null;
-  const changeJobStatus = (newStatus) => {
-    if (newStatus === wo.status) return;
-    const updated = { ...wo, status: newStatus };
+  const [wrapUpOpen, setWrapUpOpen] = useState(false);
+  // Hours typed here are kept as text locally (so "1." isn't cut short) and
+  // saved as numbers; picked up again if they change elsewhere (e.g. wrap-up).
+  const [fieldLabor, setFieldLabor] = useState(() => laborEntriesFrom(wo));
+  const savedLaborKey = JSON.stringify([Number(wo.laborHours) || 0, wo.laborEntries || null]);
+  useEffect(() => {
+    if (JSON.stringify([laborTotal(fieldLabor), laborEntriesForSave(fieldLabor)]) !== savedLaborKey) setFieldLabor(laborEntriesFrom(wo));
+  }, [savedLaborKey]);
+  const changeFieldLabor = (next) => {
+    setFieldLabor(next);
+    updateBilling({ laborHours: laborTotal(next), laborEntries: laborEntriesForSave(next) });
+  };
+  const changeJobStatus = (newStatus, base) => {
+    const src = base || wo;
+    if (newStatus === src.status) return;
+    const updated = { ...src, status: newStatus };
     let parts = db.parts;
-    if (newStatus === "Completed" && wo.status !== "Completed") {
+    if (newStatus === "Completed" && src.status !== "Completed") {
       updated.completedDate = todayISO();
       updated.archived = false;
-      parts = deductPartsUsed(db.parts, wo.partsUsed);
-    } else if (wo.status === "Completed" && newStatus !== "Completed") {
+      parts = deductPartsUsed(db.parts, src.partsUsed);
+    } else if (src.status === "Completed" && newStatus !== "Completed") {
       updated.completedDate = null;
-      parts = restorePartsUsed(db.parts, wo.partsUsed);
+      parts = restorePartsUsed(db.parts, src.partsUsed);
     }
-    const activityLog = addLog(db, actor, `Work order "${wo.title}" moved to ${newStatus}`);
+    const activityLog = addLog(db, actor, `Work order "${src.title}" moved to ${newStatus}`);
     persist({ ...db, parts, activityLog });
     saveWorkOrder(updated);
     setToast(newStatus === "Completed" ? "Marked complete" : newStatus === "In Progress" ? "Job started" : "Job reopened");
@@ -15822,8 +16087,9 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         "div",
         { className: "grid grid-cols-2 gap-3 mb-3" },
         React.createElement(Field, { label: "Payment Status" }, React.createElement("select", { className: inputCls, value: wo.paymentStatus || "", onChange: (e) => setPayment(e.target.value) }, React.createElement("option", { value: "" }, "—"), PAYMENT_STATUS.map((p) => React.createElement("option", { key: p.value, value: p.value }, p.label)))),
-        React.createElement(Field, { label: "Labor Hours" }, React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: wo.laborHours != null ? wo.laborHours : "", onChange: (e) => updateBilling({ laborHours: Number(e.target.value) || 0 }) }))
+        fieldLabor.length < 2 && React.createElement(Field, { label: "Labor Hours" }, React.createElement(LaborHoursInput, { entries: fieldLabor, onChange: changeFieldLabor, staff: db.staff, listId: "field-labor-staff-list" }))
       ),
+      fieldLabor.length > 1 && React.createElement(Field, { label: "Labor Hours" }, React.createElement(LaborHoursInput, { entries: fieldLabor, onChange: changeFieldLabor, staff: db.staff, listId: "field-labor-staff-list" })),
       React.createElement(Field, { label: "Labor Rate" }, React.createElement("select", { className: inputCls, value: wo.laborRateType || "N/A", onChange: (e) => updateBilling({ laborRateType: e.target.value }) }, getLaborRateOptions(db).map((r) => React.createElement("option", { key: r.label, value: r.label }, r.label))))
     ),
     React.createElement(
@@ -15860,7 +16126,18 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         React.createElement("button", { type: "button", onClick: addNote, className: "min-h-[44px] px-4 rounded-lg bg-[#377249] text-white text-sm font-semibold flex-shrink-0" }, "Add")
       )
     ),
-    React.createElement("button", { type: "button", onClick: () => changeJobStatus(primaryNext), className: "w-full min-h-[54px] rounded-xl bg-[#377249] active:bg-[#28633C] text-white text-base font-bold mb-2" }, primaryLabel),
+    React.createElement("button", { type: "button", onClick: () => primaryNext === "Completed" ? setWrapUpOpen(true) : changeJobStatus(primaryNext), className: "w-full min-h-[54px] rounded-xl bg-[#377249] active:bg-[#28633C] text-white text-base font-bold mb-2" }, primaryLabel),
+    wrapUpOpen && React.createElement(WorkOrderWrapUpModal, {
+      wo,
+      db,
+      actor,
+      onComplete: (w) => {
+        setWrapUpOpen(false);
+        changeJobStatus("Completed", w);
+      },
+      onCreateInvoice: onCreateInvoice && !(db.invoices || []).some((inv) => inv.sourceType === "workOrder" && inv.sourceId === wo.id) ? onCreateInvoice : null,
+      onCancel: () => setWrapUpOpen(false)
+    }),
     onCreateInvoice && React.createElement("button", { type: "button", onClick: () => onCreateInvoice(wo), className: "w-full min-h-[44px] rounded-xl text-sm font-semibold" + " bg-[rgba(193,101,47,.1)] border border-[rgba(193,101,47,.35)] text-[#C1652F]" }, "Create Invoice")
   );
 }
