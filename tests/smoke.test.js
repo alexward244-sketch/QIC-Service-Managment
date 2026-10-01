@@ -95,3 +95,33 @@ test("work order lists show what each job is about, without the web form's conta
   assert.equal(gists[3], "");
   await page.close();
 });
+
+test("field job screen: details first, billing folded away, next step pinned to the bottom", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 700 } });
+  await page.evaluate(() => {
+    const wo = { id: "w1", workOrderNumber: "WO-0088", title: "Loose front step", status: "Open", priority: "Low", siteId: "s1", customerId: "c1", description: "Front step is rocking.", partsUsed: [], notes: [], assignedTo: "Dave", date: "2026-10-01" };
+    const db = { settings: {}, sites: [{ id: "s1", number: "1015" }], cottages: [], customers: [{ id: "c1", name: "Kevin Morris", phone: "613-555-0142" }], parts: [], staff: [], invoices: [], workOrders: [wo], activityLog: [] };
+    window.__opened = null;
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement("div", { style: { height: "700px", overflowY: "auto", padding: "0 16px 20px" } }, React.createElement(FieldJobDetailScreen, { db, persist() {}, actor: "Dave", wo, saveWorkOrder() {}, onBack() {}, onCreateInvoice: (w) => { window.__opened = w.id; }, onGoToSiteMap() {}, setToast() {} })));
+  });
+  await page.getByText("WO-0088").waitFor();
+  assert.ok(await page.getByRole("link", { name: "Call customer" }).isVisible());
+  assert.equal(await page.getByText("Labor Hours").count(), 0, "billing starts folded");
+  const start = page.getByRole("button", { name: "Start Job" });
+  assert.ok(await start.isVisible(), "the next step is on screen without scrolling");
+  const box = await start.boundingBox();
+  assert.ok(box.y + box.height <= 700, "pinned within the screen");
+  await page.getByRole("button", { name: /^Billing/ }).click();
+  assert.ok(await page.getByText("Labor Hours").isVisible());
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("field app tabs have icons and mark the current tab", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 700 } });
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(FieldTabBar, { screen: "job", onSelect() {} })));
+  await page.getByRole("button", { name: "Jobs" }).waitFor();
+  assert.equal(await page.locator("button svg").count(), 5);
+  assert.equal(await page.getByRole("button", { name: "Jobs" }).getAttribute("aria-current"), "page", "a job's screen counts as the Jobs tab");
+  await page.close();
+});
