@@ -16416,10 +16416,62 @@ function FieldSignupsReviewModal({ entries, db, confirmPendingSignup, removePend
     )
   );
 }
+// Field job list helpers. "Assigned to" is free text (usually a first name),
+// or occasionally a staff id, so both are checked.
+function fieldIsMine(wo, actor, staff) {
+  const me = (actor || "").trim().toLowerCase();
+  if (!me) return false;
+  const a = (wo.assignedTo || "").trim();
+  if (a.toLowerCase() === me) return true;
+  const st = (staff || []).find((x) => x.id === a);
+  return !!st && (st.name || "").trim().toLowerCase() === me;
+}
+function fieldJobBucket(wo) {
+  if (wo.status === "Completed") return "done";
+  if (!wo.date) return "nodate";
+  const today = todayISO();
+  return wo.date < today ? "overdue" : wo.date === today ? "today" : "upcoming";
+}
+const FIELD_JOB_BUCKETS = [
+  { key: "overdue", label: "Overdue", color: "#a8532a" },
+  { key: "today", label: "Today", color: "#1E1A13" },
+  { key: "upcoming", label: "Coming up", color: "#1E1A13" },
+  { key: "nodate", label: "No date", color: "#75716A" }
+];
+function fieldJobMatches(wo, db, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const site = db.sites.find((x) => x.id === wo.siteId);
+  const cottage = db.cottages.find((x) => x.id === wo.cottageId);
+  const customer = wo.customerId ? db.customers.find((x) => x.id === wo.customerId) : null;
+  const hay = [wo.title, wo.description, wo.workOrderNumber, wo.assignedTo, site && site.number, site && `site ${site.number}`, cottage && cottage.name, customer && customer.name].filter(Boolean).join(" ").toLowerCase();
+  return q.split(/\s+/).every((word) => hay.includes(word));
+}
+function fieldJobSort(a, b) {
+  const aFlag = a.priority === "Urgent" ? 0 : 1;
+  const bFlag = b.priority === "Urgent" ? 0 : 1;
+  if (aFlag !== bFlag) return aFlag - bFlag;
+  return (a.date || "").localeCompare(b.date || "");
+}
+function FieldJobGroups({ jobs, db, onOpenJob, Row, limitUpcoming }) {
+  return FIELD_JOB_BUCKETS.map((b) => {
+    let list = jobs.filter((w) => fieldJobBucket(w) === b.key).sort(fieldJobSort);
+    if (!list.length) return null;
+    const more = b.key === "upcoming" && limitUpcoming && list.length > limitUpcoming ? list.length - limitUpcoming : 0;
+    if (more) list = list.slice(0, limitUpcoming);
+    return React.createElement(
+      "div",
+      { key: b.key, className: "mb-3" },
+      React.createElement("h3", { className: "text-[11px] font-bold uppercase tracking-[0.07em] mb-1.5", style: { color: b.color } }, `${b.label} (${list.length + more})`),
+      list.map((w) => React.createElement(Row, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) })),
+      more > 0 && React.createElement("p", { className: "text-xs text-[#75716A] -mt-1 mb-2" }, `+ ${more} more coming up`)
+    );
+  });
+}
 function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const signupsNeedingReview = (pendingSignups || []).length;
-  const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && (w.assignedTo || "").trim().toLowerCase() === (actor || "").trim().toLowerCase());
+  const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff));
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const overdueCount = db.workOrders.filter(isOverdue).length;
@@ -16435,12 +16487,9 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
     fourPmPropane.length > 0 && `${fourPmPropane.length} on 4pm run`
   ].filter(Boolean);
   const pendingPropaneSubtitle = pendingPropaneParts.length > 0 ? pendingPropaneParts.join(" \xB7 ") : "All caught up";
-  const todaysJobs = openWorkOrders.slice().sort((a, b) => {
-    const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
-    const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
-    if (aFlag !== bFlag) return aFlag - bFlag;
-    return (a.date || "").localeCompare(b.date || "");
-  }).slice(0, 5);
+  // Your own jobs when you have any, otherwise everyone's.
+  const listMine = myOpenJobs.length > 0;
+  const todaysJobs = listMine ? myOpenJobs : openWorkOrders;
   const recentActivity = (db.activityLog || []).slice(0, 6);
   return React.createElement(
     React.Fragment,
@@ -16495,10 +16544,10 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
     React.createElement(
       "div",
       { className: "flex items-center justify-between mb-2" },
-      React.createElement("h2", { className: "text-[15px] font-bold text-[#1E1A13]" }, "Today's Jobs"),
-      React.createElement("button", { type: "button", onClick: () => onSeeAllJobs(), className: "text-xs font-semibold text-[#377249]" }, "See all")
+      React.createElement("h2", { className: "text-[15px] font-bold text-[#1E1A13]" }, listMine ? "My Jobs" : "Open Jobs"),
+      React.createElement("button", { type: "button", onClick: () => onSeeAllJobs(), className: "min-h-[32px] text-xs font-semibold text-[#377249]" }, "See all")
     ),
-    todaysJobs.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Nothing open right now.") : React.createElement("div", { className: "mb-5" }, todaysJobs.map((w) => React.createElement(FieldJobRow, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) }))),
+    todaysJobs.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Nothing open right now.") : React.createElement("div", { className: "mb-5" }, React.createElement(FieldJobGroups, { jobs: todaysJobs, db, onOpenJob, Row: FieldJobRow, limitUpcoming: 3 })),
     React.createElement(
       "div",
       { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" },
@@ -16512,15 +16561,14 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
     )
   );
 }
-function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, onOpenJob, setToast }) {
+function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, whose, onWhose, query, onQuery, onOpenJob, setToast }) {
   const [newOpen, setNewOpen] = useState(false);
-  const filtered = db.workOrders.filter((w) => w.status === filter).sort((a, b) => {
-    if (filter === "Completed") return (b.completedDate || "").localeCompare(a.completedDate || "");
-    const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
-    const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
-    if (aFlag !== bFlag) return aFlag - bFlag;
-    return (a.date || "").localeCompare(b.date || "");
-  });
+  const searching = query.trim() !== "";
+  const scoped = db.workOrders.filter((w) => whose !== "mine" || fieldIsMine(w, actor, db.staff));
+  // A search looks through every status, so finished jobs turn up too.
+  const filtered = scoped.filter((w) => (searching || w.status === filter) && fieldJobMatches(w, db, query));
+  const byNewest = (a, b) => (b.completedDate || b.date || "").localeCompare(a.completedDate || a.date || "");
+  const mineCount = db.workOrders.filter((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff)).length;
   const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
   const saveNew = (wo) => {
     const activityLog = addLog(db, actor, `Created work order "${wo.title}"`);
@@ -16554,8 +16602,23 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
         }
       })
     ),
-    React.createElement("button", { type: "button", onClick: () => setNewOpen(true), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Work Order"),
+    React.createElement("button", { type: "button", onClick: () => setNewOpen(true), className: "w-full min-h-[44px] mb-3 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Work Order"),
     React.createElement(
+      "div",
+      { className: "relative mb-2.5" },
+      React.createElement("input", { type: "text", inputMode: "search", enterKeyHint: "search", value: query, onChange: (e) => onQuery(e.target.value), placeholder: "Search site #, name, job\u2026", "aria-label": "Search jobs", className: inputCls + " min-h-[44px] pr-10 text-[15px]" }),
+      searching && React.createElement("button", { type: "button", onClick: () => onQuery(""), "aria-label": "Clear search", className: "absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full text-[#75716A] text-lg" }, "\xD7")
+    ),
+    React.createElement(
+      "div",
+      { className: "flex rounded-full border border-[#E2DED5] bg-[#FFFDFA] p-1 mb-2.5" },
+      [["mine", `My jobs${mineCount ? ` (${mineCount})` : ""}`], ["all", "Everyone"]].map(([key, label]) => React.createElement(
+        "button",
+        { key, type: "button", onClick: () => onWhose(key), "aria-pressed": whose === key, className: `flex-1 min-h-[36px] rounded-full text-[13px] font-semibold ${whose === key ? "bg-[#1E1A13] text-[#F9F5EC]" : "text-[#4B4740]"}` },
+        label
+      ))
+    ),
+    !searching && React.createElement(
       "div",
       { className: "flex gap-2 mb-4" },
       STATUS.map((s) => React.createElement(
@@ -16564,12 +16627,14 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
           key: s,
           type: "button",
           onClick: () => onFilter(s),
+          "aria-pressed": filter === s,
           className: `flex-1 min-h-[40px] rounded-full text-[12.5px] font-semibold border ${filter === s ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "bg-[#FFFDFA] text-[#4B4740] border-[#E2DED5]"}`
         },
         s
       ))
     ),
-    filtered.length === 0 ? React.createElement(EmptyState, { text: `No ${filter.toLowerCase()} jobs.` }) : filtered.map((w) => React.createElement(FieldJobCard, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) }))
+    searching && React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, `${filtered.length} match${filtered.length === 1 ? "" : "es"} across all statuses${whose === "mine" ? " (your jobs)" : ""}`),
+    filtered.length === 0 ? React.createElement(EmptyState, { text: searching ? "No jobs match that search." : whose === "mine" ? `No ${filter.toLowerCase()} jobs assigned to you.` : `No ${filter.toLowerCase()} jobs.` }) : searching || filter === "Completed" ? filtered.slice().sort(byNewest).map((w) => React.createElement(FieldJobCard, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) })) : React.createElement(FieldJobGroups, { jobs: filtered, db, onOpenJob, Row: FieldJobCard })
   );
 }
 function FieldAddPartModal({ db, onAdd, onClose }) {
@@ -17745,6 +17810,24 @@ function FieldSaveErrorBar({ error, onRetry }) {
 function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, saveCorrespondence, deleteCorrespondence, saveCustomer, saveTreeRequest, pendingSignups, confirmPendingSignup, removePendingSignup, isAdminOrManager, onCreateInvoice, onGoToDesktopTab, onSignOut }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
+  const [jobQuery, setJobQuery] = useState("");
+  // "My jobs" or "Everyone", remembered on this device. Starts on My jobs
+  // when you have any assigned.
+  const [jobWhose, setJobWhoseState] = useState(() => {
+    try {
+      const saved = localStorage.getItem("qic-field-job-whose");
+      if (saved === "mine" || saved === "all") return saved;
+    } catch (e) {
+    }
+    return db.workOrders.some((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff)) ? "mine" : "all";
+  });
+  const setJobWhose = (v) => {
+    setJobWhoseState(v);
+    try {
+      localStorage.setItem("qic-field-job-whose", v);
+    } catch (e) {
+    }
+  };
   const [jobId, setJobId] = useState(null);
   const [hydroSiteId, setHydroSiteId] = useState(null);
   const [toast, setToast] = useState(null);
@@ -17807,7 +17890,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onSeeAllJobs: goToJobs,
         onGoToRuns: () => selectTab("runs")
       }),
-      screen === "jobs" && React.createElement(FieldJobsScreen, { db, persist, actor, saveWorkOrder, filter: jobFilter, onFilter: setJobFilter, onOpenJob: openJob, setToast }),
+      screen === "jobs" && React.createElement(FieldJobsScreen, { db, persist, actor, saveWorkOrder, filter: jobFilter, onFilter: setJobFilter, whose: jobWhose, onWhose: setJobWhose, query: jobQuery, onQuery: setJobQuery, onOpenJob: openJob, setToast }),
       screen === "job" && React.createElement(FieldJobDetailScreen, {
         db,
         persist,

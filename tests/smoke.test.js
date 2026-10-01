@@ -125,3 +125,31 @@ test("field app tabs have icons and mark the current tab", async () => {
   assert.equal(await page.getByRole("button", { name: "Jobs" }).getAttribute("aria-current"), "page", "a job's screen counts as the Jobs tab");
   await page.close();
 });
+
+test("field jobs list: my jobs / everyone, grouped by when they're due, and search across statuses", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => {
+    const t = todayISO();
+    const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const W = (id, title, status, date, assignedTo, siteId) => ({ id, title, status, date, assignedTo, siteId, priority: "Medium", partsUsed: [], notes: [] });
+    const db = { settings: {}, sites: [{ id: "s1", number: "1065" }, { id: "s2", number: "530" }], cottages: [], customers: [], staff: [{ id: "st1", name: "Dave" }], parts: [], workOrderTemplates: [], invoices: [], activityLog: [],
+      workOrders: [W("a", "Leaky tap", "Open", day(-3), "Dave", "s1"), W("b", "Step", "Open", t, "st1", "s2"), W("c", "Gas test", "Open", day(4), "Mike", "s2"), W("d", "Old deck job", "Completed", day(-30), "Mike", "s1")] };
+    function Host() {
+      const [filter, setFilter] = React.useState("Open");
+      const [whose, setWhose] = React.useState("mine");
+      const [query, setQuery] = React.useState("");
+      return React.createElement(FieldJobsScreen, { db, persist() {}, actor: "Dave", saveWorkOrder() {}, filter, onFilter: setFilter, whose, onWhose: setWhose, query, onQuery: setQuery, onOpenJob() {}, setToast() {} });
+    }
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(Host));
+  });
+  await page.getByText("Overdue (1)").waitFor();
+  assert.ok(await page.getByText("Today (1)").isVisible(), "a job assigned by staff id counts as mine");
+  assert.equal(await page.getByText("Gas test").count(), 0, "someone else's job is hidden on My jobs");
+  await page.getByRole("button", { name: "Everyone" }).click();
+  await page.getByText("Coming up (1)").waitFor();
+  await page.getByLabel("Search jobs").fill("1065");
+  await page.getByText("2 matches across all statuses").waitFor();
+  assert.ok(await page.getByText("Old deck job").isVisible(), "search finds completed jobs too");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
