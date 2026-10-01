@@ -10,3 +10,9 @@ firebase-debug.*.log
 # functions/scripts/bootstrap-first-admin.js. See functions/README.md.
 serviceAccountKey.json
 functions/scripts/serviceAccountKey.json
+
+# Test tools (tests/package.json) — installed with npm install inside tests/
+tests/node_modules/
+
+# Firebase emulator logs (from running the tests)
+*-debug.log

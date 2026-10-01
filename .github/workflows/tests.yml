@@ -1,0 +1,45 @@
+name: Tests
+
+# Runs the checks in tests/ on every pull request (and on main), so a PR
+# shows a green check or a red X before it's merged.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      # The Firebase emulators run on Java.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache the Firebase emulators
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('tests/package-lock.json') }}
+
+      - name: Install test tools
+        working-directory: tests
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the tests
+        working-directory: tests
+        run: npm test
