@@ -36,6 +36,11 @@ jobs:
         working-directory: tests
         run: npm ci
 
+      # The Cloud Functions tests load functions/index.js with its own packages.
+      - name: Install Cloud Functions packages
+        working-directory: functions
+        run: npm install --no-audit --no-fund
+
       - name: Install Chromium
         working-directory: tests
         run: npx playwright install --with-deps chromium

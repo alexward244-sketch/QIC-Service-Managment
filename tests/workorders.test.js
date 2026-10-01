@@ -6,6 +6,7 @@ const { test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { launch, openApp } = require("./helpers/app");
 const { resetData, readCollection, readDoc, cleanup } = require("./helpers/emulator");
+const { mountWithDb } = require("./helpers/screens");
 
 let browser;
 before(async () => { browser = await launch(); });
@@ -23,17 +24,7 @@ beforeEach(async () => {
 // Renders the Work Orders tab with the app's own data layer (useDb).
 async function openWorkOrdersTab(role) {
   const page = await openApp(browser, "emulator", { role });
-  await page.evaluate(() => {
-    function Tab() {
-      const r = useDb();
-      window.__api = r;
-      if (!r.db) return null;
-      return React.createElement(React.Fragment, null,
-        r.error ? React.createElement("div", { id: "save-error" }, r.error) : null,
-        React.createElement(WorkOrdersView, { db: r.db, persist: r.persist, saveWorkOrder: r.saveWorkOrder, deleteWorkOrder: r.deleteWorkOrder, saveCottage: () => {}, saveCorrespondence: () => {}, onCreateInvoice: () => {}, workOrderPrefill: null, onConsumeWorkOrderPrefill: () => {} }));
-    }
-    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Tab));
-  });
+  await mountWithDb(page, `(r) => React.createElement(WorkOrdersView, { db: r.db, persist: r.persist, saveWorkOrder: r.saveWorkOrder, deleteWorkOrder: r.deleteWorkOrder, saveCottage: () => {}, saveCorrespondence: () => {}, onCreateInvoice: () => {}, workOrderPrefill: null, onConsumeWorkOrderPrefill: () => {} })`, "(r) => r.db.workOrders.length >= 1");
   await page.getByRole("button", { name: "New Work Order" }).first().waitFor({ timeout: 20000 });
   return page;
 }
@@ -117,14 +108,7 @@ test("Completing through the wrap-up window saves hours and parts and deducts st
 
 test("The dashboard's New Work Order window saves, with the next number", async () => {
   const page = await openApp(browser, "emulator", { role: "admin" });
-  await page.evaluate(() => {
-    function Quick() {
-      const r = useDb();
-      if (!r.db) return null;
-      return React.createElement(QuickWorkOrderModal, { db: r.db, initial: null, saveWorkOrder: r.saveWorkOrder, onClose: () => {} });
-    }
-    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Quick));
-  });
+  await mountWithDb(page, `(r) => React.createElement(QuickWorkOrderModal, { db: r.db, initial: null, saveWorkOrder: r.saveWorkOrder, onClose: () => {} })`, "(r) => r.db.workOrders.length >= 1");
   await page.getByPlaceholder("e.g. Fix leaking faucet").fill("From the dashboard", { timeout: 20000 });
   await page.getByRole("button", { name: "Save Work Order" }).click();
   const wo = await waitFor(() => findWorkOrder("From the dashboard"), "the dashboard work order");

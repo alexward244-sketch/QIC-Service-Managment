@@ -41,8 +41,13 @@ async function readDoc(p) {
   return out;
 }
 
+async function writeDoc(p, data) {
+  const env = await testEnv();
+  await env.withSecurityRulesDisabled(async (ctx) => { await ctx.firestore().doc(p).set(data); });
+}
+
 async function cleanup() {
   if (envPromise) await (await envPromise).cleanup();
 }
 
-module.exports = { resetData, readCollection, readDoc, cleanup };
+module.exports = { resetData, readCollection, readDoc, writeDoc, cleanup };
