@@ -126,6 +126,22 @@ service cloud.firestore {
     // Problems the server-side jobs ran into (web forms, email intake,
     // morning summary), written only by Cloud Functions. Shown in Admin >
     // System Health; an Admin can clear them once dealt with.
+    // Errors from staff devices (uncaught errors, crashed screens, failed
+    // saves), written by the app itself and shown in Admin > System Health.
+    // Anyone with a role can add one - only in this exact shape, signed
+    // with their own email - but can't read or change others'.
+    match /clientErrors/{id} {
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly(['kind', 'message', 'stack', 'email', 'device', 'screen', 'userAgent', 'ts', 'day'])
+        && request.resource.data.kind in ['error', 'crash', 'save']
+        && request.resource.data.message is string && request.resource.data.message.size() <= 500
+        && request.resource.data.stack is string && request.resource.data.stack.size() <= 2000
+        && request.resource.data.email == request.auth.token.get('email', '')
+        && request.resource.data.ts is string && request.resource.data.ts.size() <= 40;
+      allow read: if role() in ['admin', 'manager'];
+      allow delete: if isAdmin();
+      allow update: if false;
+    }
     match /serverAlerts/{id} {
       allow read: if role() in ['admin', 'manager'];
       allow delete: if isAdmin();

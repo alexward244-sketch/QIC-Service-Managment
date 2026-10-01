@@ -77,6 +77,21 @@ test("money, sales, hydro and alerts are limited to the right roles", async () =
   await expect("read AI usage counters", (db) => db.doc("aiUsage/u1").get(), []);
 });
 
+test("device error reports: staff can add their own, only Admins and Service Managers read them", async () => {
+  await seed();
+  const report = (email, extra = {}) => ({ kind: "error", message: "Boom", stack: "at x", email, device: "phone", screen: "workorders", userAgent: "UA", ts: "2026-10-01T12:00:00Z", day: "2026-10-01", ...extra });
+  const withEmail = (role, email) => env.authenticatedContext("e-" + role, role ? { role, email } : { email }).firestore();
+  await assertSucceeds(withEmail("office", "dave@qicampark.com").doc("clientErrors/a").set(report("dave@qicampark.com")));
+  await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/b").set(report("boss@qicampark.com")));
+  await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/c").set(report("dave@qicampark.com", { extra: 1 })));
+  await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/d").set(report("dave@qicampark.com", { message: "x".repeat(501) })));
+  await assertFails(withEmail("", "x@y.com").doc("clientErrors/e").set(report("x@y.com")));
+  await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/a").get());
+  await assertSucceeds(withEmail("manager", "m@qicampark.com").doc("clientErrors/a").get());
+  await assertFails(withEmail("manager", "m@qicampark.com").doc("clientErrors/a").delete());
+  await assertSucceeds(withEmail("admin", "boss@qicampark.com").doc("clientErrors/a").delete());
+});
+
 test("file storage needs a staff role", async () => {
   const st = (role) => env.authenticatedContext("s-" + role, role === "noRole" ? {} : { role }).storage();
   await assertSucceeds(st("office").ref("correspondence-attachments/a.txt").putString("hi"));
