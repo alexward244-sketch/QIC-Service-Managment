@@ -1217,6 +1217,44 @@ function logSystemError(db, persist, source, message) {
   const systemErrorLog = [entry, ...db.systemErrorLog || []].slice(0, 100);
   persist({ ...db, systemErrorLog });
 }
+// Errors on staff phones and computers, recorded in the clientErrors
+// collection and shown in Admin > System Health: uncaught errors, a screen
+// crashing, and failed saves. At most 10 different errors per page load,
+// each sent once; noise with nothing to act on (browser extensions,
+// cross-origin "Script error.", ResizeObserver) is skipped. Never throws.
+const CLIENT_ERRORS_REF = db_.collection("clientErrors");
+const clientErrorsSent = new Set();
+function reportClientError(kind, message, stack) {
+  try {
+    const msg = String(message || "").trim().slice(0, 500);
+    const trace = String(stack || "").slice(0, 2000);
+    if (!msg || /^Script error\.?$/i.test(msg) || /ResizeObserver loop/i.test(msg) || /(chrome|moz|safari)-extension:/i.test(trace)) return;
+    const key = kind + "|" + msg;
+    if (clientErrorsSent.has(key) || clientErrorsSent.size >= 10) return;
+    const user = firebase.auth().currentUser;
+    if (!user) return;
+    clientErrorsSent.add(key);
+    const phone = typeof window.matchMedia === "function" && window.matchMedia("(max-width: 767px)").matches;
+    CLIENT_ERRORS_REF.doc(uid() + uid()).set({
+      kind,
+      message: msg,
+      stack: trace,
+      email: String(user.email || ""),
+      device: phone ? "phone" : "computer",
+      screen: String(window.__qicScreen || "").slice(0, 40),
+      userAgent: String(navigator.userAgent || "").slice(0, 200),
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      day: todayISO()
+    }).catch(() => {
+    });
+  } catch (e) {
+  }
+}
+window.addEventListener("error", (e) => reportClientError("error", e && e.message, e && e.error && e.error.stack));
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e && e.reason;
+  reportClientError("error", r && r.message || String(r), r && r.stack);
+});
 function addLog(db, actor, summary) {
   const entry = { id: uid(), ts: (/* @__PURE__ */ new Date()).toISOString(), actor, summary };
   return [entry, ...db.activityLog || []].slice(0, 200);
@@ -1249,14 +1287,6 @@ function timeAgo(iso) {
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    __publicField(this, "handleReset", async () => {
-      this.setState({ resetting: true });
-      try {
-        await DOC_REF.set(emptyDb());
-      } catch (e) {
-      }
-      this.setState({ error: null, resetting: false });
-    });
     this.state = { error: null, resetting: false };
   }
   static getDerivedStateFromError(error) {
@@ -1264,6 +1294,7 @@ class ErrorBoundary extends React.Component {
   }
   componentDidCatch(error, errorInfo) {
     console.error("App crashed:", error, errorInfo);
+    reportClientError("crash", error && error.message || String(error), [error && error.stack, errorInfo && errorInfo.componentStack].filter(Boolean).join("\n"));
   }
   render() {
     if (this.state.error) {
@@ -1274,15 +1305,7 @@ class ErrorBoundary extends React.Component {
           className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] mb-4"
         },
         "Reload Page"
-      ), /* @__PURE__ */ React.createElement("details", { className: "text-left" }, /* @__PURE__ */ React.createElement("summary", { className: "text-xs text-[#75716A] cursor-pointer hover:underline" }, "Reloading didn't help \u2014 more options"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-2 mb-2" }, "Resetting will clear all saved sites, cottages, customers, and work orders and start fresh. Only do this if the shared data itself is corrupted \u2014 not for a screen that just needs a code fix."), /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          onClick: this.handleReset,
-          disabled: this.state.resetting,
-          className: "px-3 py-1.5 rounded-md border border-[#a8532a] text-[#a8532a] text-xs font-medium hover:bg-[#F5E3D9] disabled:opacity-60"
-        },
-        this.state.resetting ? "Resetting\u2026" : "Reset all data"
-      ))));
+      ), React.createElement("p", { className: "text-xs text-[#75716A]" }, "If reloading doesn't help, let an Admin know \u2014 this error has been recorded in System Health so it can be fixed.")));
     }
     return this.props.children;
   }
@@ -2013,6 +2036,9 @@ function useDb() {
     }
   }, []);
   const error = saveError || connectionError;
+  useEffect(() => {
+    if (saveError) reportClientError("save", saveError);
+  }, [saveError]);
   const retry = useCallback(() => {
     if (!lastAttempt.current) return;
     const attempt = lastAttempt.current;
@@ -15388,6 +15414,86 @@ function LostWorkOrdersCheck({ db }) {
     )
   );
 }
+// Errors recorded from staff devices (see reportClientError), grouped by
+// message so a repeating problem shows once with a count. Admins can clear
+// a group once it's dealt with; records over 30 days old are cleared
+// automatically when an Admin opens this.
+const CLIENT_ERROR_KIND_LABEL = { error: "Error", crash: "Screen crashed", save: "Save failed" };
+function ClientErrorsPanel({ db }) {
+  const role = useUserRole(db);
+  const [rows, setRows] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [openKey, setOpenKey] = useState(null);
+  useEffect(() => {
+    const unsub = CLIENT_ERRORS_REF.orderBy("ts", "desc").limit(300).onSnapshot(
+      (snap) => setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      () => setLoadError("Couldn't load device errors.")
+    );
+    return () => unsub();
+  }, []);
+  useEffect(() => {
+    if (role !== "admin") return;
+    const cutoff = new Date(Date.now() - 30 * 864e5).toISOString();
+    CLIENT_ERRORS_REF.where("ts", "<", cutoff).limit(200).get().then((snap) => {
+      if (!snap.empty) commitInChunks(snap.docs.map((d) => ({ type: "delete", ref: d.ref }))).catch(() => {
+      });
+    }).catch(() => {
+    });
+  }, [role]);
+  const groups = [];
+  const byKey = {};
+  (rows || []).forEach((r) => {
+    const key = r.kind + "|" + r.message;
+    if (!byKey[key]) groups.push(byKey[key] = { key, kind: r.kind, message: r.message, items: [] });
+    byKey[key].items.push(r);
+  });
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  };
+  const clearGroup = (g) => {
+    commitInChunks(g.items.map((r) => ({ type: "delete", ref: CLIENT_ERRORS_REF.doc(r.id) }))).catch(() => setLoadError("Couldn't clear those. Try again."));
+  };
+  return React.createElement(
+    "div",
+    { className: "rounded-[14px] border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-5" },
+    React.createElement("div", { className: "font-semibold text-sm text-[#1E1A13] mb-1" }, "Errors on staff devices"),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Things that went wrong in the app on someone's phone or computer \u2014 errors, screens that crashed, and saves that failed \u2014 so they don't go unnoticed. Kept for 30 days."),
+    loadError && React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, loadError),
+    rows === null && !loadError ? React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "Loading\u2026") : groups.length === 0 ? React.createElement("p", { className: "text-xs text-[#28633C] font-medium" }, "\u2713 No errors recorded.") : React.createElement(
+      "div",
+      { className: "space-y-2" },
+      groups.map((g) => {
+        const people = Array.from(new Set(g.items.map((r) => r.email).filter(Boolean)));
+        const devices = Array.from(new Set(g.items.map((r) => r.device).filter(Boolean)));
+        const screens = Array.from(new Set(g.items.map((r) => r.screen).filter(Boolean)));
+        const latest = g.items[0];
+        const open = openKey === g.key;
+        return React.createElement(
+          "div",
+          { key: g.key, className: "rounded-lg border border-[#E2DED5] bg-white px-3 py-2 text-xs text-[#4B4740]" },
+          React.createElement(
+            "div",
+            { className: "flex items-start justify-between gap-3" },
+            React.createElement(
+              "div",
+              { className: "min-w-0" },
+              React.createElement("div", { className: "font-semibold text-[#1E1A13] break-words" }, React.createElement("span", { className: "mr-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-[#FBEEDA] text-[#9A6B1F]" }, CLIENT_ERROR_KIND_LABEL[g.kind] || g.kind), g.message),
+              React.createElement("div", { className: "text-[#75716A] mt-0.5" }, `${g.items.length} time${g.items.length === 1 ? "" : "s"} \xB7 last ${fmt(latest.ts)}`, people.length ? ` \xB7 ${people.join(", ")}` : "", devices.length ? ` \xB7 ${devices.join(" & ")}` : "", screens.length ? ` \xB7 screen: ${screens.join(", ")}` : "")
+            ),
+            React.createElement(
+              "span",
+              { className: "flex gap-3 flex-shrink-0" },
+              latest.stack && React.createElement("button", { type: "button", onClick: () => setOpenKey(open ? null : g.key), className: "text-[#75716A] hover:text-[#1E1A13] underline" }, open ? "Hide details" : "Details"),
+              role === "admin" && React.createElement("button", { type: "button", onClick: () => clearGroup(g), className: "text-[#75716A] hover:text-[#1E1A13] underline" }, "Clear")
+            )
+          ),
+          open && React.createElement("pre", { className: "mt-2 text-[10px] leading-snug text-[#4B4740] bg-[#F7F5F0] rounded p-2 overflow-x-auto whitespace-pre-wrap break-all" }, latest.stack, latest.userAgent ? "\n\n" + latest.userAgent : "")
+        );
+      })
+    )
+  );
+}
 function ServerAlertsPanel({ db }) {
   const role = useUserRole(db);
   const [alerts, setAlerts] = useState(null);
@@ -15490,7 +15596,7 @@ function SystemHealthView({ db, persist }) {
   const clearErrors = () => {
     persist({ ...db, systemErrorLog: [] });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "System Health & Alerts", subtitle: "Data volume, third-party usage limits, and recent errors." }), React.createElement(ServerAlertsPanel, { db }), React.createElement(LostWorkOrdersCheck, { db }), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Data Stored", value: `${estimatedMB.toFixed(1)} MB`, subtitle: "of 1 GB free tier" }), /* @__PURE__ */ React.createElement(StatCard, { label: "Email Usage", value: `${emailPct}%`, tone: toneFor(emailPct), subtitle: `${emailsUsedThisMonth} of ${emailLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Zoho Flow Usage", value: `${zohoPct}%`, tone: toneFor(zohoPct), subtitle: `${zohoUsed} of ${zohoLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Errors Logged", value: errorLog.length, tone: errorLog.length > 0 ? "text-[#a8532a]" : void 0 })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size.")), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(sharedRecordPct)}` }, Math.round(sharedRecordKB).toLocaleString(), " KB shared settings record"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1,024 KB limit")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(sharedRecordPct)}`, style: { width: `${Math.max(sharedRecordPct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Settings, deals, cottage orders, trash and the activity log share one database record with a hard 1 MB limit. If this nears the limit, saving those stops working \u2014 ask for more of it to be split out."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "System Health & Alerts", subtitle: "Data volume, third-party usage limits, and recent errors." }), React.createElement(ServerAlertsPanel, { db }), React.createElement(ClientErrorsPanel, { db }), React.createElement(LostWorkOrdersCheck, { db }), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Data Stored", value: `${estimatedMB.toFixed(1)} MB`, subtitle: "of 1 GB free tier" }), /* @__PURE__ */ React.createElement(StatCard, { label: "Email Usage", value: `${emailPct}%`, tone: toneFor(emailPct), subtitle: `${emailsUsedThisMonth} of ${emailLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Zoho Flow Usage", value: `${zohoPct}%`, tone: toneFor(zohoPct), subtitle: `${zohoUsed} of ${zohoLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Errors Logged", value: errorLog.length, tone: errorLog.length > 0 ? "text-[#a8532a]" : void 0 })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size.")), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(sharedRecordPct)}` }, Math.round(sharedRecordKB).toLocaleString(), " KB shared settings record"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1,024 KB limit")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(sharedRecordPct)}`, style: { width: `${Math.max(sharedRecordPct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Settings, deals, cottage orders, trash and the activity log share one database record with a hard 1 MB limit. If this nears the limit, saving those stops working \u2014 ask for more of it to be split out."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
 }
 const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders", "consignments", "sunspace", "admindashboard", "adminreports", "seasonalfees", "hydroreview", "salestransactions"]);
 function matchCustomerByEmail(customers, email) {
@@ -18446,6 +18552,7 @@ function AppContent() {
   const visibleGroup = isAdmin || isSalesManager || isAccounting ? mode : "service";
   const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : visibleGroup === "accounting" ? "hydroreview" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
+  window.__qicScreen = effectiveTab;
   const openCount = withoutTreeWorkOrders(db, db.workOrders).filter((w) => w.status !== "Completed").length;
   const handleImportFile = (e) => {
     const file = e.target.files && e.target.files[0];
