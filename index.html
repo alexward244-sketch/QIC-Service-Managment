@@ -10414,6 +10414,16 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   ))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Deal")));
 }
 
+// A one-line idea of what a work order is about, from its description, for
+// lists where many share a title like "Service Request". Contact lines
+// added by the web forms (Submitted by / Phone / Email) and blank lines are
+// left out; nothing is shown if it would only repeat the title.
+function workOrderGist(wo, max = 180) {
+  const lines = String(wo && wo.description || "").split("\n").map((l) => l.trim()).filter((l) => l && !/^(submitted by|phone|email|e-mail|service request from)\b/i.test(l) && !/^[-_=]{3,}$/.test(l));
+  const text = lines.join(" ").replace(/\s+/g, " ").trim();
+  if (!text || text.toLowerCase() === String(wo.title || "").trim().toLowerCase()) return "";
+  return text.length > max ? text.slice(0, max).replace(/\s+\S*$/, "") + "\u2026" : text;
+}
 function WorkOrderRow({ wo, db, onOpen, onAdvance, onText, smsStatus, onCreateInvoice, onSetPayment, selectMode, selected, onToggleSelect }) {
   const site = db.sites.find((s) => s.id === wo.siteId);
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
@@ -10438,7 +10448,7 @@ function WorkOrderRow({ wo, db, onOpen, onAdvance, onText, smsStatus, onCreateIn
     selectMode && /* @__PURE__ */ React.createElement("span", {
       className: `w-4 h-4 rounded flex-shrink-0 border-2 flex items-center justify-center ${selected ? "bg-[#377249] border-[#377249]" : "bg-[#FFFDFA] border-[#C7C2B8]"}`
     }, selected && /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-2.5 h-2.5", fill: "none", stroke: "#F9F5EC", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))),
-    /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, wo.workOrderNumber && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-mono text-[#9A968D] flex-shrink-0" }, wo.workOrderNumber), /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium truncate ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/50" : "text-[#1E1A13]"}` }, wo.title), wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), overdue && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white flex-shrink-0" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C] flex-shrink-0" }, wo.workGroup), wo.notes && wo.notes.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] flex-shrink-0" }, wo.notes.length, " note", wo.notes.length === 1 ? "" : "s")), metaParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate mt-0.5" }, metaParts.join(" \xB7 "))),
+    /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap" }, wo.workOrderNumber && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-mono text-[#9A968D] flex-shrink-0" }, wo.workOrderNumber), /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium truncate ${isDone ? "text-[#75716A] line-through decoration-[#a8532a]/50" : "text-[#1E1A13]"}` }, wo.title), wo.priority && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), overdue && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#a8532a] text-white flex-shrink-0" }, "Overdue"), wo.workGroup && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C] flex-shrink-0" }, wo.workGroup), wo.notes && wo.notes.length > 0 && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] text-[#9A968D] flex-shrink-0" }, wo.notes.length, " note", wo.notes.length === 1 ? "" : "s")), workOrderGist(wo) && React.createElement("div", { className: `text-[13px] mt-0.5 line-clamp-2 ${isDone ? "text-[#9A968D]" : "text-[#4B4740]"}` }, workOrderGist(wo)), metaParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate mt-0.5" }, metaParts.join(" \xB7 "))),
     isDone ? /* @__PURE__ */ React.createElement(
       "select",
       {
@@ -16168,6 +16178,7 @@ function FieldJobRow({ wo, db, onOpen }) {
       React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, wo.title),
       React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)
     ),
+    workOrderGist(wo) && React.createElement("div", { className: "text-[13px] text-[#4B4740] mt-1 line-clamp-2" }, workOrderGist(wo, 140)),
     React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-1 truncate" }, fieldJobLocation(wo, db) || "—")
   );
 }
@@ -16188,7 +16199,8 @@ function FieldJobCard({ wo, db, onOpen }) {
       React.createElement("span", { className: "text-base font-bold text-[#1E1A13]" }, wo.title),
       wo.priority && React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority)
     ),
-    React.createElement("div", { className: "text-[13px] text-[#4B4740] mt-1 truncate" }, fieldJobLocation(wo, db) || "—"),
+    workOrderGist(wo) && React.createElement("div", { className: "text-[13px] text-[#4B4740] mt-1 line-clamp-2" }, workOrderGist(wo, 140)),
+    React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-1 truncate" }, fieldJobLocation(wo, db) || "—"),
     React.createElement(
       "div",
       { className: "flex items-center justify-between gap-2 mt-2.5" },
