@@ -63,3 +63,20 @@ test("the wrap-up window marks what's on the invoice", async () => {
   assert.deepEqual(badges.sort(), ["Internal only", "Internal only", "On the invoice", "On the invoice", "On the invoice"]);
   await page.close();
 });
+
+test("replying from a work order shows what the customer wrote above the reply box", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(QuickEmailReplyModal, {
+    toOptions: ["brenda@x.com"], toName: "Brenda", defaultSubject: "Re: Service Request", draftKey: null, draftContext: {},
+    references: [{ label: "Their last email", text: "The wall panel is bulging." }, { label: "Work order", text: "" }, null],
+    onClose() {}, onSend: async () => {}
+  })));
+  await page.getByText("What you're replying to").waitFor();
+  assert.ok(await page.getByText("The wall panel is bulging.").isVisible());
+  assert.equal(await page.getByText("Work order", { exact: true }).count(), 0, "empty sections are left out");
+  await page.getByRole("button", { name: /Hide/ }).click();
+  assert.equal(await page.getByText("The wall panel is bulging.").count(), 0);
+  assert.ok(await page.locator("textarea").isVisible(), "the reply box is still there");
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390, "fits a phone screen");
+  await page.close();
+});
