@@ -82,7 +82,7 @@ test("A failed save keeps the form open and shows the error instead of 'created'
   await page.close();
 });
 
-test("Completing through the wrap-up window saves hours and parts and deducts stock", async () => {
+test("Completing through the wrap-up window saves hours, service call and parts and deducts stock", async () => {
   await resetData({
     "campground/data": SETTINGS,
     "workOrders/w1": { id: "w1", title: "Leaky tap", status: "In Progress", priority: "Medium", date: "2026-09-30", workOrderNumber: "WO-0050", assignedTo: "Dave", partsUsed: [{ partId: "p1", quantity: 1 }], notes: [] }
@@ -94,11 +94,14 @@ test("Completing through the wrap-up window saves hours and parts and deducts st
   await page.getByRole("button", { name: "+ Add another worker" }).click();
   await page.getByLabel("Worker", { exact: true }).nth(1).fill("Mike");
   await page.getByLabel("Hours", { exact: true }).nth(1).fill("1.5");
+  await page.getByLabel(/^Service call/).selectOption("Tech");
   await page.getByPlaceholder(/Replaced kitchen faucet/).fill("Swapped the washer");
   await page.getByRole("button", { name: "Save & Complete" }).click();
   const wo = await waitFor(async () => { const w = await findWorkOrder("Leaky tap"); return w && w.status === "Completed" ? w : null; }, "the work order to be completed");
   assert.equal(wo.laborHours, 3.5);
   assert.deepEqual(wo.laborEntries.map((e) => [e.name, e.hours]), [["Dave", 2], ["Mike", 1.5]]);
+  assert.equal(wo.serviceCallType, "Tech");
+  assert.equal(wo.serviceCall, 70);
   assert.ok(wo.completedDate);
   assert.equal(wo.notes[0].text, "Work done: Swapped the washer");
   const stock = await waitFor(async () => { const d = await readDoc("campground/data"); const p = d.parts.find((x) => x.id === "p1"); return p.quantity === 9 ? p : null; }, "stock to be deducted");
