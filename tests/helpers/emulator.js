@@ -12,9 +12,23 @@ function testEnv() {
   return envPromise;
 }
 
+// A page closed by the previous test can leave a transaction (e.g. the
+// invoice-number counter) holding a lock for a moment, which makes the
+// emulator refuse the clear with "Transaction lock timeout". Wait and retry.
+async function clearWithRetry(env, tries = 5) {
+  for (let i = 1; ; i++) {
+    try {
+      return await env.clearFirestore();
+    } catch (e) {
+      if (i >= tries || !/lock timeout|ABORTED/i.test(String(e && e.message))) throw e;
+      await new Promise((r) => setTimeout(r, 500 * i));
+    }
+  }
+}
+
 async function resetData(docs = {}) {
   const env = await testEnv();
-  await env.clearFirestore();
+  await clearWithRetry(env);
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     for (const [p, data] of Object.entries(docs)) await db.doc(p).set(data);
