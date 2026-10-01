@@ -103,3 +103,44 @@ test("A closing reading bills the seller even after the sale is recorded", async
   assert.ok(await review.getByText("Closing reading").first().isVisible());
   await review.close();
 });
+
+test("Hydro Review can carry a small reading over to the next bill, or remove one", async () => {
+  await resetData({
+    ...base("accounting"),
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-09-01", reading: 1000, status: "confirmed", isBaseline: true },
+    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-09-20", reading: 1012, previousReading: 1000, usage: 12, status: "pending", closingReading: true, ownerAtReading: "c1" }
+  });
+  const review = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await mountWithDb(review, asUser("HydroReviewView"), READY(2));
+  await review.getByRole("button", { name: "Carry over to next bill" }).click();
+  await review.getByRole("button", { name: "Yes, carry over" }).click();
+  const carried = await waitFor(async () => { const b = (await readings()).find((x) => x.id === "b"); return b.status === "carried" ? b : null; }, "the reading to be carried");
+  assert.equal(carried.usage, 12);
+  assert.equal(carried.amount, undefined, "nothing is billed");
+  await review.getByText("All caught up").waitFor();
+  const log = await waitFor(async () => ((await readDoc("campground/data")).activityLog || []).find((e) => /Carried hydro reading for site 42/.test(e.summary)), "the activity line");
+  assert.ok(log);
+  await review.close();
+
+  // The next reading is measured from the last billed one, so it includes
+  // the carried 12 kWh.
+  const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
+  await mountWithDb(page, asUser("HydroMeterView"), READY(2));
+  await openSection(page);
+  await page.getByRole("button", { name: "Enter Reading" }).first().click();
+  await page.getByPlaceholder("e.g. 4213").fill("1100");
+  await page.getByRole("button", { name: "Save Reading" }).click();
+  const next = await waitFor(async () => (await readings()).find((x) => x.reading === 1100), "the next reading");
+  assert.equal(next.previousReading, 1000);
+  assert.equal(next.usage, 100);
+  await page.close();
+
+  const review2 = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await mountWithDb(review2, asUser("HydroReviewView"), READY(3));
+  await review2.getByText(/Includes usage carried over from 2026-09-20 \(12 kWh\)/).waitFor();
+  await review2.getByRole("button", { name: "Remove", exact: true }).click();
+  await review2.getByRole("button", { name: "Yes, remove" }).click();
+  await waitFor(async () => !(await readings()).some((x) => x.reading === 1100), "the reading to be removed");
+  assert.deepEqual(review2.pageErrors, []);
+  await review2.close();
+});

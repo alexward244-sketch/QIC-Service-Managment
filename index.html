@@ -14259,6 +14259,12 @@ function getLastHydroReading(db, siteId) {
   const history = getSiteHydroHistory(db, siteId);
   return history.length > 0 ? history[0] : null;
 }
+// The reading a new one's usage is measured from. A reading Hydro Review
+// "carried over" wasn't billed, so it's skipped and its usage lands on the
+// next bill.
+function getHydroBillingBase(db, siteId) {
+  return getSiteHydroHistory(db, siteId).find((r) => r.status !== "carried") || null;
+}
 function isHydroTrackedSite(site) {
   return (site.tags || []).some((t) => /^(seasonal|4 season)$/i.test(t.trim()));
 }
@@ -14369,13 +14375,14 @@ function HydroRateControl({ db, persist }) {
 function HydroReadingForm({ db, siteId, onSave, onCancel }) {
   const site = db.sites.find((s) => s.id === siteId);
   const last = getLastHydroReading(db, siteId);
+  const base = getHydroBillingBase(db, siteId);
   const [reading, setReading] = useState("");
   const [date, setDate] = useState(todayISO());
   const [closing, setClosing] = useState(false);
   const readingNum = Number(reading);
   const valid = reading !== "" && Number.isFinite(readingNum) && readingNum >= 0;
-  const preview = valid ? computeHydroUsage(last ? last.reading : null, readingNum, site == null ? void 0 : site.meterDigits) : null;
-  const willFlag = last && valid && readingNum < last.reading;
+  const preview = valid ? computeHydroUsage(base ? base.reading : null, readingNum, site == null ? void 0 : site.meterDigits) : null;
+  const willFlag = base && valid && readingNum < base.reading;
   const submit = () => {
     if (!valid) return;
     onSave(siteId, readingNum, date, { closing });
@@ -14419,6 +14426,12 @@ function recomputeHydroChain(siteReadings, meterDigits) {
       return;
     }
     const { usage, rolledOver } = computeHydroUsage(prev, r.reading, meterDigits);
+    if (r.status === "carried" && prev != null) {
+      // Not billed: the next reading is still measured from prev.
+      const next = { ...r, previousReading: prev, usage, rolledOver };
+      if (["previousReading", "usage", "rolledOver"].some((k) => next[k] !== r[k])) changed.push(next);
+      return;
+    }
     const isBaseline = prev == null;
     const next = { ...r, previousReading: prev, usage, rolledOver, isBaseline, flagged: !isBaseline && r.reading < prev, status: isBaseline ? "confirmed" : "pending" };
     if (["previousReading", "usage", "rolledOver", "isBaseline", "flagged", "status"].some((k) => next[k] !== r[k])) changed.push(next);
@@ -14500,7 +14513,7 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
 }
 function HydroHistoryRow({ r, action }) {
   const usageDisplay = r.isBaseline ? "\u2014 (baseline)" : r.usage == null && r.confirmedUsage == null ? "Unknown" : r.confirmedUsage != null ? r.confirmedUsage : r.usage;
-  const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? "Invoiced" : "Confirmed";
+  const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? "Invoiced" : r.status === "carried" ? "Carried to next bill" : "Confirmed";
   return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.reading), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
 }
 function HydroHistoryTable({ db, siteId, persist }) {
@@ -14599,7 +14612,7 @@ function HydroMeterView({ db, persist }) {
   const submitReading = (siteId, readingValue, dateValue, opts) => {
     const site = db.sites.find((s) => s.id === siteId);
     if (!site) return;
-    const last = getLastHydroReading(db, siteId);
+    const last = getHydroBillingBase(db, siteId);
     const previousReading = last ? last.reading : null;
     const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits);
     const isBaseline = previousReading == null;
@@ -14686,8 +14699,9 @@ function AccountingCopyEmailControl({ db, persist }) {
     }
   ));
 }
-function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm }) {
+function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm, onCarry, onRemove, carriedIn }) {
   const e = edits[r.id] || {};
+  const [asking, setAsking] = useState(null);
   const readingStr = e.reading !== void 0 ? e.reading : String(r.reading);
   const dateStr = e.date !== void 0 ? e.date : r.date;
   const readingNum = Number(readingStr);
@@ -14704,7 +14718,17 @@ function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, se
     if (!readingValid || !usageValid) return;
     onConfirm(r, { reading: readingNum, date: dateStr, usage: usageNum, rolledOver: computed.rolledOver });
   };
-  return /* @__PURE__ */ React.createElement("div", { className: `rounded-xl border p-4 bg-[#FFFDFA] ${r.flagged ? "border-[#e0bfa6]" : "border-[#E2DED5]"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, "Site ", site ? site.number : "?"), " \u2014 ", (owner == null ? void 0 : owner.name) || "No customer on file", r.flagged && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-xs font-semibold text-[#a8532a]" }, "\u26A0 Flagged for review"), r.closingReading && React.createElement("span", { className: "ml-2 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-[#FBEEDA] text-[#9A6B1F]" }, "Closing reading"), owner && currentOwner && owner.id !== currentOwner.id && React.createElement("div", { className: "text-xs text-[#9A6B1F] mt-0.5" }, `Billed to ${owner.name}, the owner when this was read \u2014 the site is now ${currentOwner.name}'s.`)), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Read ", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateStr, onChange: (ev) => setEditField(r.id, "date", ev.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" }))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-xs text-[#75716A] mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Previous: ", r.previousReading != null ? r.previousReading : "\u2014"), /* @__PURE__ */ React.createElement("span", null, "\u2192"), /* @__PURE__ */ React.createElement("label", null, "Reading: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: readingStr, onChange: (ev) => setEditField(r.id, "reading", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" })), readingWasEdited && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "(corrected from ", r.reading, ")"), computed.rolledOver && /* @__PURE__ */ React.createElement("span", null, "(meter appears to have rolled over)")), !usageValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, "Usage couldn't be calculated automatically \u2014 enter the correct usage manually below."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Usage (kWh): ", /* @__PURE__ */ React.createElement("input", { type: "number", value: usageStr, onChange: (ev) => setEditField(r.id, "usage", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), previewTotal != null && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\u2192 ", React.createElement(Money, { value: previewSubtotal }), " + tax = ", React.createElement(Money, { value: previewTotal }))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
+  return /* @__PURE__ */ React.createElement("div", { className: `rounded-xl border p-4 bg-[#FFFDFA] ${r.flagged ? "border-[#e0bfa6]" : "border-[#E2DED5]"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, "Site ", site ? site.number : "?"), " \u2014 ", (owner == null ? void 0 : owner.name) || "No customer on file", r.flagged && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-xs font-semibold text-[#a8532a]" }, "\u26A0 Flagged for review"), r.closingReading && React.createElement("span", { className: "ml-2 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-[#FBEEDA] text-[#9A6B1F]" }, "Closing reading"), owner && currentOwner && owner.id !== currentOwner.id && React.createElement("div", { className: "text-xs text-[#9A6B1F] mt-0.5" }, `Billed to ${owner.name}, the owner when this was read \u2014 the site is now ${currentOwner.name}'s.`)), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Read ", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateStr, onChange: (ev) => setEditField(r.id, "date", ev.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" }))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-xs text-[#75716A] mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Previous: ", r.previousReading != null ? r.previousReading : "\u2014"), /* @__PURE__ */ React.createElement("span", null, "\u2192"), /* @__PURE__ */ React.createElement("label", null, "Reading: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: readingStr, onChange: (ev) => setEditField(r.id, "reading", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" })), readingWasEdited && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "(corrected from ", r.reading, ")"), computed.rolledOver && /* @__PURE__ */ React.createElement("span", null, "(meter appears to have rolled over)")), !usageValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, "Usage couldn't be calculated automatically \u2014 enter the correct usage manually below."), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A] font-medium" }, "Usage (kWh): ", /* @__PURE__ */ React.createElement("input", { type: "number", value: usageStr, onChange: (ev) => setEditField(r.id, "usage", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-sm" })), previewTotal != null && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\u2192 ", React.createElement(Money, { value: previewSubtotal }), " + tax = ", React.createElement(Money, { value: previewTotal }))), carriedIn && carriedIn.length > 0 && React.createElement("p", { className: "text-xs text-[#9A6B1F] mb-2" }, `Includes usage carried over from ${carriedIn.map((c) => `${c.date} (${c.usage != null ? c.usage : "?"} kWh)`).join(", ")} — measured from the last billed reading.`), asking === "carry" ? React.createElement(
+    "div",
+    { className: "rounded-lg border border-[#E8C98F] bg-[#FFFBF3] px-3 py-2 text-xs text-[#4B4740] flex items-center justify-between gap-2 flex-wrap" },
+    React.createElement("span", null, "Don't bill this one? Its usage is added to the next reading's bill", owner ? ` (whoever owns site ${site ? site.number : ""} then)` : "", ". No email is sent."),
+    React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => onCarry(r, { reading: readingNum, date: dateStr, usage: usageValid ? usageNum : null, rolledOver: computed.rolledOver }), disabled: !readingValid, className: "px-2.5 py-1 rounded-md bg-[#9A6B1F] text-white font-medium disabled:opacity-40" }, "Yes, carry over"), React.createElement("button", { type: "button", onClick: () => setAsking(null), className: "px-2.5 py-1 rounded-md text-[#75716A]" }, "Cancel"))
+  ) : asking === "remove" ? React.createElement(
+    "div",
+    { className: "rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 text-xs text-[#4B4740] flex items-center justify-between gap-2 flex-wrap" },
+    React.createElement("span", null, "Remove this reading? Use this for a mistake or duplicate — it's deleted and not billed."),
+    React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => onRemove(r), className: "px-2.5 py-1 rounded-md bg-[#a8532a] text-white font-medium" }, "Yes, remove"), React.createElement("button", { type: "button", onClick: () => setAsking(null), className: "px-2.5 py-1 rounded-md text-[#75716A]" }, "Cancel"))
+  ) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 flex-wrap" }, React.createElement("span", { className: "flex gap-1" }, React.createElement("button", { type: "button", onClick: () => setAsking("remove"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#a8532a] hover:bg-[#F5E3D9]" }, "Remove"), React.createElement("button", { type: "button", onClick: () => setAsking("carry"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#9A6B1F] hover:bg-[#FBEEDA]" }, "Carry over to next bill")), /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
 }
 function HydroReviewView({ db, persist }) {
   const actor = useCurrentActor();
@@ -14719,6 +14743,56 @@ function HydroReviewView({ db, persist }) {
     const site = db.sites.find((s) => s.id === reading.siteId);
     if (!site) return;
     setPendingConfirm({ reading, final, site });
+  };
+  const siteReadings = (siteId) => (db.hydroReadings || []).filter((x) => x.siteId === siteId);
+  const clearEdits = (id) => setEdits((prev) => {
+    const next = { ...prev };
+    delete next[id];
+    return next;
+  });
+  // Not billed now: kept in the history as "Carried to next bill", and the
+  // next reading is measured from the last billed one so it includes this
+  // usage.
+  const carryOver = async (reading, final) => {
+    const site = db.sites.find((s) => s.id === reading.siteId);
+    const carried = { ...reading, reading: final.reading, date: final.date, usage: final.usage, rolledOver: final.rolledOver, status: "carried", flagged: false, confirmedBy: actor, confirmedAt: (/* @__PURE__ */ new Date()).toISOString() };
+    const all = [...siteReadings(reading.siteId).filter((x) => x.id !== reading.id), carried];
+    const changed = recomputeHydroChain(all, site && site.meterDigits);
+    const toSave = [carried, ...changed.filter((c) => c.id !== carried.id)].map((x) => x.id === carried.id ? { ...carried, ...(changed.find((c) => c.id === carried.id) || {}) } : x);
+    try {
+      await Promise.all(toSave.map(saveHydroReading));
+    } catch (e) {
+      setToast(`Couldn't carry over the reading for site ${site ? site.number : "?"}. Try again.`);
+      return;
+    }
+    persist({ ...db, activityLog: addLog(db, actor, `Carried hydro reading for site ${site ? site.number : "?"} over to the next bill (${final.usage != null ? final.usage : "?"} kWh, not billed)`) });
+    clearEdits(reading.id);
+    setToast(`Site ${site ? site.number : ""} carried over to the next bill`);
+  };
+  const removeReading = async (reading) => {
+    const site = db.sites.find((s) => s.id === reading.siteId);
+    const others = siteReadings(reading.siteId).filter((x) => x.id !== reading.id);
+    try {
+      await HYDRO_READINGS_REF.doc(reading.id).delete();
+      await Promise.all(recomputeHydroChain(others, site && site.meterDigits).map(saveHydroReading));
+    } catch (e) {
+      setToast(`Couldn't remove the reading for site ${site ? site.number : "?"}. Try again.`);
+      return;
+    }
+    persist({ ...db, activityLog: addLog(db, actor, `Removed hydro reading for site ${site ? site.number : "?"} from review (${reading.reading} on ${reading.date})`) });
+    clearEdits(reading.id);
+    setToast(`Reading for site ${site ? site.number : ""} removed`);
+  };
+  // Carried readings since the last billed one, so the bill that picks
+  // them up says so.
+  const carriedInto = (r) => {
+    const asc = siteReadings(r.siteId).filter((x) => x.date < r.date || x.date === r.date && x.id < r.id).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1);
+    const out = [];
+    asc.forEach((x) => {
+      if (x.status === "carried") out.push(x);
+      else out.length = 0;
+    });
+    return out;
   };
   const confirmAndInvoice = (toEmail) => {
     if (!pendingConfirm) return;
@@ -14771,7 +14845,7 @@ function HydroReviewView({ db, persist }) {
     const site = db.sites.find((s) => s.id === r.siteId);
     const owner = hydroBillTo(db, r);
     const currentOwner = getSiteOwner(db, r.siteId);
-    return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm });
+    return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r) });
   })), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
 }
 function getConsignmentTransferInfo(db, cottage, site) {
@@ -17261,7 +17335,7 @@ function FieldHydroPadScreen({ db, persist, actor, siteId, setToast, onSaved, on
   const site = db.sites.find((s) => s.id === siteId);
   if (!site) return React.createElement(EmptyState, { text: "That site is no longer available." });
   const save = (id, readingValue, dateValue, opts) => {
-    const last = getLastHydroReading(db, id);
+    const last = getHydroBillingBase(db, id);
     const previousReading = last ? last.reading : null;
     const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits);
     const isBaseline = previousReading == null;
