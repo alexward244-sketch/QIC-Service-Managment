@@ -9,6 +9,10 @@ project: everything runs against the local Firebase emulator (project
 |---|---|
 | `smoke.test.js` | The app's code loads; the login screen, new work order form and wrap-up window render; a new work order has no blank fields (the Sep 26–30 bug). |
 | `rules.test.js` | `firestore.rules` and `storage.rules`, role by role: staff can use everyday data; accounts without a role and signed-out visitors get nothing; nobody can change roles from the app; money, sales, hydro, alerts and AI counters are limited to the right roles. |
+| `signups.test.js` | Reviewing winterizing, propane and general service sign-ups through the real review screens: matched by phone/email + site, confirmed into a request or a numbered work order, pending entry removed, new email remembered for the customer. |
+| `invoices.test.js` | An invoice created from a completed work order (as Admin and as Accounting) carries its parts as line items, the total hours (not the per-worker breakdown), the customer summary as notes, and gets a number. |
+| `hydro.test.js` | First reading saved as the baseline with one activity line for the day; Office gets no Edit button; Accounting corrects a baseline without billing and the next reading's usage is recalculated; a closing reading bills the seller even after the sale is recorded. |
+| `functions.test.js` | Cloud Functions with Claude, EmailJS, Zoho and Firebase Auth faked: web forms need the secret key; sign-ups saved; a sign-up with no site number emails Admins once; email intake keeps forwards, trims replies, brings in staff mail and skips our own replies and the ignore list; sign-up matching is staff-only, checked against real records and cached; Claude features have hourly limits and need a real role; only Admins change roles, and Remove / Sign out everywhere end sessions; the work order summary needs a role. |
 | `workorders.test.js` | Work order flows through the real screens and the real rules: New Work Order on the Work Orders tab and the dashboard both save with the next number; Office can create; a failed save keeps the form open with the error; completing through the wrap-up window saves hours (two workers), parts and the note, and deducts stock; an account without a role can't read or save. |
 
 ## Running them yourself
@@ -16,12 +20,13 @@ project: everything runs against the local Firebase emulator (project
 Needs Node 22 and Java 21.
 
 ```
+(cd functions && npm install)
 cd tests
 npm install
 npx playwright install chromium
 npm test
 ```
 
-Takes about 15 seconds once the emulator is downloaded. `helpers/app.js`
+Takes about 30 seconds once the emulator is downloaded. The test files share one emulator, so they must run one at a time (`--test-concurrency=1` in `npm test`) - running several with plain `node --test` makes them trip over each other's data. `helpers/app.js`
 builds a test copy of `index.html`; `helpers/emulator.js` sets up and reads
 test data directly.

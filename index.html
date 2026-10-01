@@ -1293,6 +1293,25 @@ function useDb() {
   const [treeList, setTreeList] = useState(null);
   const [winterizingList, setWinterizingList] = useState(null);
   const [workOrdersList, setWorkOrdersList] = useState(null);
+  // Latest work orders, for numbering new ones at save time (below).
+  const workOrdersListRef = useRef([]);
+  workOrdersListRef.current = workOrdersList || [];
+  // Every way of creating a work order goes through saveWorkOrder or a
+  // sign-up confirm, so a new one without a number gets the next free one
+  // here - not just the screens that remember to pass it in.
+  // The number a form worked out can also be stale (e.g. the form opened
+  // before the work order list finished loading), so a new work order's
+  // number must be above every number already in use.
+  const withWorkOrderNumber = (wo) => {
+    const list = workOrdersListRef.current;
+    if (list.some((w) => w.id === wo.id)) return wo;
+    const next = nextWorkOrderNumber({ workOrders: list });
+    const n = (s) => {
+      const m = /WO-(\d+)/.exec(s || "");
+      return m ? parseInt(m[1], 10) : 0;
+    };
+    return n(wo.workOrderNumber) >= n(next) ? wo : { ...wo, workOrderNumber: next };
+  };
   const [customersList, setCustomersList] = useState(null);
   const [quotesList, setQuotesList] = useState(null);
   const [invoicesList, setInvoicesList] = useState(null);
@@ -1698,7 +1717,7 @@ function useDb() {
   const confirmPendingSignup = useCallback(async (ref, doc, pendingId) => {
     const attempt = () => {
       const batch = db_.batch();
-      batch.set(ref.doc(doc.id), firestoreSafe(doc));
+      batch.set(ref.doc(doc.id), firestoreSafe(ref === WORK_ORDERS_REF ? withWorkOrderNumber(doc) : doc));
       batch.delete(PENDING_SIGNUPS_REF.doc(pendingId));
       return batch.commit();
     };
@@ -1792,9 +1811,9 @@ function useDb() {
     }
   }, []);
   const saveWorkOrder = useCallback(async (woIn) => {
-    // firestoreSafe drops undefined fields; a missing work order number is
-    // filled in by the backfill in the work orders listener on next load.
-    const wo = firestoreSafe(woIn);
+    // firestoreSafe drops undefined fields; a new work order with no number
+    // gets the next one.
+    const wo = withWorkOrderNumber(firestoreSafe(woIn));
     const attempt = () => WORK_ORDERS_REF.doc(wo.id).set(wo);
     lastAttempt.current = attempt;
     try {
