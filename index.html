@@ -14728,7 +14728,7 @@ function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, se
     { className: "rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 text-xs text-[#4B4740] flex items-center justify-between gap-2 flex-wrap" },
     React.createElement("span", null, "Remove this reading? Use this for a mistake or duplicate — it's deleted and not billed."),
     React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => onRemove(r), className: "px-2.5 py-1 rounded-md bg-[#a8532a] text-white font-medium" }, "Yes, remove"), React.createElement("button", { type: "button", onClick: () => setAsking(null), className: "px-2.5 py-1 rounded-md text-[#75716A]" }, "Cancel"))
-  ) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 flex-wrap" }, React.createElement("span", { className: "flex gap-1" }, React.createElement("button", { type: "button", onClick: () => setAsking("remove"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#a8532a] hover:bg-[#F5E3D9]" }, "Remove"), React.createElement("button", { type: "button", onClick: () => setAsking("carry"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#9A6B1F] hover:bg-[#FBEEDA]" }, "Carry over to next bill")), /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
+  ) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 flex-wrap" }, React.createElement("span", { className: "flex gap-1" }, React.createElement("button", { type: "button", onClick: () => setAsking("remove"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#a8532a] hover:bg-[#F5E3D9]" }, "Remove"), !r.closingReading && React.createElement("button", { type: "button", onClick: () => setAsking("carry"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#9A6B1F] hover:bg-[#FBEEDA]" }, "Carry over to next bill")), /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
 }
 function HydroReviewView({ db, persist }) {
   const actor = useCurrentActor();
@@ -14754,6 +14754,8 @@ function HydroReviewView({ db, persist }) {
   // next reading is measured from the last billed one so it includes this
   // usage.
   const carryOver = async (reading, final) => {
+    // Closing readings bill the seller right away; never carry them.
+    if (reading.closingReading) return;
     const site = db.sites.find((s) => s.id === reading.siteId);
     const carried = { ...reading, reading: final.reading, date: final.date, usage: final.usage, rolledOver: final.rolledOver, status: "carried", flagged: false, confirmedBy: actor, confirmedAt: (/* @__PURE__ */ new Date()).toISOString() };
     const all = [...siteReadings(reading.siteId).filter((x) => x.id !== reading.id), carried];

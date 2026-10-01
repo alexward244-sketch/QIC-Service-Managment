@@ -104,11 +104,11 @@ test("A closing reading bills the seller even after the sale is recorded", async
   await review.close();
 });
 
-test("Hydro Review can carry a small reading over to the next bill, or remove one", async () => {
+test("Hydro Review can carry a small reading over to the next bill, or remove one (closing readings can't be carried)", async () => {
   await resetData({
     ...base("accounting"),
     "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-09-01", reading: 1000, status: "confirmed", isBaseline: true },
-    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-09-20", reading: 1012, previousReading: 1000, usage: 12, status: "pending", closingReading: true, ownerAtReading: "c1" }
+    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-09-20", reading: 1012, previousReading: 1000, usage: 12, status: "pending", ownerAtReading: "c1" }
   });
   const review = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review, asUser("HydroReviewView"), READY(2));
@@ -138,9 +138,19 @@ test("Hydro Review can carry a small reading over to the next bill, or remove on
   const review2 = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review2, asUser("HydroReviewView"), READY(3));
   await review2.getByText(/Includes usage carried over from 2026-09-20 \(12 kWh\)/).waitFor();
+  assert.equal(await review2.getByRole("button", { name: "Carry over to next bill" }).count(), 1);
   await review2.getByRole("button", { name: "Remove", exact: true }).click();
   await review2.getByRole("button", { name: "Yes, remove" }).click();
   await waitFor(async () => !(await readings()).some((x) => x.reading === 1100), "the reading to be removed");
   assert.deepEqual(review2.pageErrors, []);
   await review2.close();
+
+  // A closing reading is billed to the seller right away: no Carry over.
+  await writeDoc("hydroReadings/z", { id: "z", siteId: "s42", date: "2026-10-01", reading: 1200, previousReading: 1000, usage: 200, status: "pending", closingReading: true, ownerAtReading: "c1" });
+  const review3 = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await mountWithDb(review3, asUser("HydroReviewView"), READY(3));
+  await review3.getByText("Closing reading").first().waitFor();
+  assert.equal(await review3.getByRole("button", { name: "Carry over to next bill" }).count(), 0);
+  assert.ok(await review3.getByRole("button", { name: "Remove", exact: true }).isVisible());
+  await review3.close();
 });
