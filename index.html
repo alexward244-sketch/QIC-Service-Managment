@@ -122,7 +122,7 @@ function syncTreeEntriesForWorkOrder(wo, deleted) {
   })));
 }
 function saveHydroReading(reading) {
-  return HYDRO_READINGS_REF.doc(reading.id).set(reading);
+  return HYDRO_READINGS_REF.doc(reading.id).set(firestoreSafe(reading));
 }
 // Sales records (deals, cottage orders, consignment listings, sales
 // appointments) used to live in campground/data, which every signed-in user
@@ -356,14 +356,31 @@ function purgeExpiredTrash(db) {
   const trash = (db.trash || []).filter((t) => new Date(t.deletedAt).getTime() > cutoff);
   return trash.length === (db.trash || []).length ? db : { ...db, trash };
 }
+// Firestore rejects a whole save if any field is undefined (it happened
+// with a work order number that wasn't worked out), so every save goes
+// through this: undefined fields are dropped (undefined in a list becomes
+// null). Only plain objects and lists are walked - Firestore values like
+// FieldValue.delete() or Timestamps pass through untouched.
+function firestoreSafe(value) {
+  if (value === void 0) return null;
+  if (Array.isArray(value)) return value.map((v) => v === void 0 ? null : firestoreSafe(v));
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const out = {};
+    Object.keys(value).forEach((k) => {
+      if (value[k] !== void 0) out[k] = firestoreSafe(value[k]);
+    });
+    return out;
+  }
+  return value;
+}
 async function commitInChunks(operations) {
   const CHUNK = 450;
   for (let i = 0; i < operations.length; i += CHUNK) {
     const batch = db_.batch();
     operations.slice(i, i + CHUNK).forEach((op) => {
       if (op.type === "delete") batch.delete(op.ref);
-      else if (op.type === "update") batch.update(op.ref, op.data);
-      else batch.set(op.ref, op.data);
+      else if (op.type === "update") batch.update(op.ref, firestoreSafe(op.data));
+      else batch.set(op.ref, firestoreSafe(op.data));
     });
     await batch.commit();
   }
@@ -1648,17 +1665,21 @@ function useDb() {
       try {
         await commitInChunks(salesOps);
       } catch (e) {
+        noteSaveFailure();
         setSaveError(`Couldn't save that sales change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
-        return;
+        return false;
       }
     }
-    const attempt = () => DOC_REF.set(rest);
+    const attempt = () => DOC_REF.set(firestoreSafe(rest));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const removePendingSignup = useCallback(async (id) => {
@@ -1667,14 +1688,17 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that sign-up submission${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const confirmPendingSignup = useCallback(async (ref, doc, pendingId) => {
     const attempt = () => {
       const batch = db_.batch();
-      batch.set(ref.doc(doc.id), doc);
+      batch.set(ref.doc(doc.id), firestoreSafe(doc));
       batch.delete(PENDING_SIGNUPS_REF.doc(pendingId));
       return batch.commit();
     };
@@ -1682,18 +1706,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't confirm that sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const savePropaneRequest = useCallback(async (request) => {
-    const attempt = () => PROPANE_REQUESTS_REF.doc(request.id).set(request);
+    const attempt = () => PROPANE_REQUESTS_REF.doc(request.id).set(firestoreSafe(request));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that propane request${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deletePropaneRequest = useCallback(async (id) => {
@@ -1702,18 +1732,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that propane request${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveTreeRequest = useCallback(async (request) => {
-    const attempt = () => TREE_REQUESTS_REF.doc(request.id).set(request);
+    const attempt = () => TREE_REQUESTS_REF.doc(request.id).set(firestoreSafe(request));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that tree entry${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteTreeRequest = useCallback(async (id) => {
@@ -1722,18 +1758,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that tree entry${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveWinterizingRequest = useCallback(async (request) => {
-    const attempt = () => WINTERIZING_REQUESTS_REF.doc(request.id).set(request);
+    const attempt = () => WINTERIZING_REQUESTS_REF.doc(request.id).set(firestoreSafe(request));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that winterizing sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteWinterizingRequest = useCallback(async (id) => {
@@ -1742,16 +1784,17 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that winterizing sign-up${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveWorkOrder = useCallback(async (woIn) => {
-    // Firestore refuses a whole save if any field is undefined (e.g. a work
-    // order number that wasn't worked out), so drop those fields rather than
-    // lose the work order. A missing number is filled in by the backfill in
-    // the work orders listener the next time the app loads.
-    const wo = JSON.parse(JSON.stringify(woIn));
+    // firestoreSafe drops undefined fields; a missing work order number is
+    // filled in by the backfill in the work orders listener on next load.
+    const wo = firestoreSafe(woIn);
     const attempt = () => WORK_ORDERS_REF.doc(wo.id).set(wo);
     lastAttempt.current = attempt;
     try {
@@ -1759,8 +1802,11 @@ function useDb() {
       setSaveError(null);
       syncTreeEntriesForWorkOrder(wo, false).catch(() => {
       });
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteWorkOrder = useCallback(async (id) => {
@@ -1771,18 +1817,24 @@ function useDb() {
       setSaveError(null);
       syncTreeEntriesForWorkOrder({ id }, true).catch(() => {
       });
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that work order${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveCustomer = useCallback(async (customer) => {
-    const attempt = () => CUSTOMERS_REF.doc(customer.id).set(customer);
+    const attempt = () => CUSTOMERS_REF.doc(customer.id).set(firestoreSafe(customer));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that customer${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteCustomer = useCallback(async (id) => {
@@ -1791,18 +1843,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that customer${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveQuote = useCallback(async (quote) => {
-    const attempt = () => QUOTES_REF.doc(quote.id).set(quote);
+    const attempt = () => QUOTES_REF.doc(quote.id).set(firestoreSafe(quote));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that quote${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteQuote = useCallback(async (id) => {
@@ -1811,18 +1869,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that quote${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveInvoice = useCallback(async (invoice) => {
-    const attempt = () => INVOICES_REF.doc(invoice.id).set(invoice);
+    const attempt = () => INVOICES_REF.doc(invoice.id).set(firestoreSafe(invoice));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that invoice${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteInvoice = useCallback(async (id) => {
@@ -1831,18 +1895,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that invoice${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveCorrespondence = useCallback(async (item) => {
-    const attempt = () => CORRESPONDENCE_REF.doc(item.id).set(item);
+    const attempt = () => CORRESPONDENCE_REF.doc(item.id).set(firestoreSafe(item));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that correspondence${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteCorrespondence = useCallback(async (id) => {
@@ -1851,18 +1921,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that correspondence${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveSite = useCallback(async (site) => {
-    const attempt = () => SITES_REF.doc(site.id).set(site);
+    const attempt = () => SITES_REF.doc(site.id).set(firestoreSafe(site));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that site${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteSite = useCallback(async (id) => {
@@ -1871,18 +1947,24 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that site${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const saveCottage = useCallback(async (cottage) => {
-    const attempt = () => COTTAGES_REF.doc(cottage.id).set(cottage);
+    const attempt = () => COTTAGES_REF.doc(cottage.id).set(firestoreSafe(cottage));
     lastAttempt.current = attempt;
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save that cottage${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const deleteCottage = useCallback(async (id) => {
@@ -1891,8 +1973,11 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't remove that cottage${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const bulkWriteSites = useCallback(async (sites) => {
@@ -1901,15 +1986,18 @@ function useDb() {
     try {
       await attempt();
       setSaveError(null);
+      return true;
     } catch (e) {
+      noteSaveFailure();
       setSaveError(`Couldn't save those site changes${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+      return false;
     }
   }, []);
   const error = saveError || connectionError;
   const retry = useCallback(() => {
     if (!lastAttempt.current) return;
     const attempt = lastAttempt.current;
-    attempt().then(() => setSaveError(null)).catch((e) => setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
+    attempt().then(() => setSaveError(null)).catch((e) => noteSaveFailure() || setSaveError(`Couldn't save that change${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`));
   }, []);
   return { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveTreeRequest, deleteTreeRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry };
 }
@@ -2084,11 +2172,38 @@ function SearchableSelect({ options, value, onChange, placeholder, noneLabel }) 
   ));
 }
 
+// Lets the shared Toast know a save just failed, so a "Work order created"
+// style message shown right after a failed save turns into a warning
+// instead of claiming success (the error bar says what went wrong).
+let lastSaveFailureAt = 0;
+function noteSaveFailure() {
+  lastSaveFailureAt = Date.now();
+  try {
+    window.dispatchEvent(new Event("qic-save-failed"));
+  } catch (e) {
+  }
+}
+// Waits briefly for a save to report back. Firestore only confirms a write
+// once the server has it, so offline the promise stays pending (the change
+// is kept on the device and synced later) - that counts as saved. Only a
+// save that actually failed returns false.
+function saveSucceeded(savePromise, waitMs = 1500) {
+  return Promise.race([Promise.resolve(savePromise).then((ok) => ok !== false, () => false), new Promise((r) => setTimeout(() => r(true), waitMs))]);
+}
 function Toast({ message, onDismiss }) {
+  const [failed, setFailed] = useState(() => Date.now() - lastSaveFailureAt < 2500);
   useEffect(() => {
-    const t = setTimeout(onDismiss, 2200);
+    const onFail = () => setFailed(true);
+    window.addEventListener("qic-save-failed", onFail);
+    return () => window.removeEventListener("qic-save-failed", onFail);
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(onDismiss, failed ? 6e3 : 2200);
     return () => clearTimeout(t);
-  }, [onDismiss]);
+  }, [onDismiss, failed]);
+  if (failed) {
+    return React.createElement("div", { role: "alert", className: "fixed bottom-5 right-5 left-5 sm:left-auto z-[100] bg-[#a8532a] text-white text-sm px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2" }, React.createElement("span", null, "\u26A0"), " That didn't save \u2014 see the message at the top of the screen and try again.");
+  }
   return /* @__PURE__ */ React.createElement("div", { className: "fixed bottom-5 right-5 z-[100] bg-[#1E1A13] text-white text-sm px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#7ED9A0]" }, "\u2713"), " ", message);
 }
 function Modal({ title, onClose, children, wide, xl }) {
@@ -5766,11 +5881,12 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     const c = id ? db.customers.find((x) => x.id === id) : null;
     return c ? c.name : "";
   };
-  const save = (invoice) => {
+  const save = async (invoice) => {
     const exists = invoices.some((i) => i.id === invoice.id);
+    // Save first so a failed save keeps the invoice form open.
+    if (!await saveSucceeded(saveInvoice(invoice))) return;
     const activityLog = addLog(db, actor, exists ? `Updated invoice ${invoice.invoiceNumber}` : `Created invoice ${invoice.invoiceNumber} for ${customerName(invoice.customerId) || "unassigned"}`);
     persist({ ...db, activityLog });
-    saveInvoice(invoice);
     setModal(null);
   };
   const remove = (id) => {
@@ -10338,8 +10454,11 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     setDiscardConfirmOpen(false);
     setModal(null);
   };
-  const save = (wo) => {
+  const save = async (wo) => {
     const existing = db.workOrders.find((x) => x.id === wo.id);
+    // Save first: if it fails, the form stays open with everything typed
+    // and the error bar says why - nothing is logged or emailed.
+    if (!await saveSucceeded(saveWorkOrder(wo))) return;
     let activityLog = addLog(db, actor, existing ? `Updated work order "${wo.title}"` : `Created work order "${wo.title}"`);
     const assignmentChanged = wo.assignedTo && wo.assignedTo !== (existing == null ? void 0 : existing.assignedTo);
     let nextPendingText = null;
@@ -10362,7 +10481,6 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
       }
     }
     persist({ ...db, activityLog });
-    saveWorkOrder(wo);
     formDirtyRef.current = false;
     setModal(null);
     setToast(existing ? "Work order updated" : "Work order created");
@@ -17231,6 +17349,24 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     }))
   );
 }
+// The phone layouts have no room for the desktop's error bar, so a failed
+// save used to be silent there. This pins the same message (with Retry) to
+// the top of the screen until it's resolved or dismissed.
+function FieldSaveErrorBar({ error, onRetry }) {
+  const [dismissed, setDismissed] = useState(null);
+  if (!error || dismissed === error) return null;
+  return React.createElement(
+    "div",
+    { role: "alert", className: "fixed top-0 inset-x-0 z-[60] px-3 pt-[max(env(safe-area-inset-top),8px)] pb-2 bg-[#F5E3D9] border-b border-[#e0bfa6] shadow-sm" },
+    React.createElement("div", { className: "text-[13px] text-[#a8532a] font-medium mb-1.5" }, "\u26A0 ", error),
+    React.createElement(
+      "div",
+      { className: "flex gap-2" },
+      React.createElement("button", { type: "button", onClick: onRetry, className: "min-h-[36px] px-3 rounded-lg bg-[#a8532a] text-white text-sm font-semibold" }, "Retry"),
+      React.createElement("button", { type: "button", onClick: () => setDismissed(error), className: "min-h-[36px] px-3 rounded-lg text-sm text-[#75716A]" }, "Dismiss")
+    )
+  );
+}
 function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, saveCorrespondence, deleteCorrespondence, saveCustomer, saveTreeRequest, pendingSignups, confirmPendingSignup, removePendingSignup, isAdminOrManager, onCreateInvoice, onGoToDesktopTab, onSignOut }) {
   const [screen, setScreen] = useState("today");
   const [jobFilter, setJobFilter] = useState("Open");
@@ -18372,7 +18508,7 @@ function AppContent() {
   };
   if (fieldMode) {
     if (isSalesManager) {
-      return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(SalesApp, {
+      return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, React.createElement(FieldSaveErrorBar, { error, onRetry: retry }), /* @__PURE__ */ React.createElement(SalesApp, {
         db,
         persist,
         actor,
@@ -18385,7 +18521,7 @@ function AppContent() {
         onSignOut: signOut
       }));
     }
-    return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, /* @__PURE__ */ React.createElement(FieldApp, {
+    return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, React.createElement(FieldSaveErrorBar, { error, onRetry: retry }), /* @__PURE__ */ React.createElement(FieldApp, {
       db,
       persist,
       actor,
