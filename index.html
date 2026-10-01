@@ -13066,7 +13066,9 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
           toName: "Accounting",
           subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid)`,
           message: buildInvoiceEmailText(invoice, db, taxRateVal),
-          department: "accounting",
+          // Sent from the service inbox: Zoho shows mail an inbox sends to
+          // itself as already read, so accounting would miss it.
+          department: "service",
           source: "Propane fill accounting notification"
         }).catch(() => {
         });
@@ -14731,7 +14733,8 @@ function HydroReviewView({ db, persist }) {
         toName: "Accounting",
         subject: `Copy: Hydro Bill \u2014 Site ${site.number}${(owner == null ? void 0 : owner.name) ? ` (${owner.name})` : ""}`,
         message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
-        department: "accounting",
+        // From the service inbox so it lands unread in accounting's Zoho.
+        department: "service",
         source: "Hydro invoice copy email"
       }).catch(() => {
       });
@@ -16767,7 +16770,9 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
           toName: "Accounting",
           subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid)`,
           message: buildInvoiceEmailText(invoice, db, taxRateVal),
-          department: "accounting",
+          // Sent from the service inbox: Zoho shows mail an inbox sends to
+          // itself as already read, so accounting would miss it.
+          department: "service",
           source: "Propane fill accounting notification"
         }).catch(() => {
         });
