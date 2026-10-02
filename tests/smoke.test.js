@@ -262,3 +262,31 @@ test("hydro readings include every seasonal and 4 season site, whatever the tag'
   assert.deepEqual(result, [true, true, true, true, true, true, true, true, false, false]);
   await page.close();
 });
+
+test("side panels (work order / invoice from a customer card) fit on a phone screen", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(DrawerShell, { title: "Sunroom caulking", eyebrow: "Work order", width: "480px", onClose() {} }, React.createElement("p", null, "Customer's info: With heavy rain, we are having water seep in."))));
+  await page.getByText("Sunroom caulking").waitFor();
+  const width = await page.evaluate(() => [...document.querySelectorAll("div")].find((d) => d.style.width === "480px").getBoundingClientRect().width);
+  assert.ok(width <= 390, `the 480px panel shrinks to the screen (got ${width}px)`);
+  await page.close();
+});
+
+test("field app: reopening a completed, invoiced job asks first", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
+  await page.evaluate(() => {
+    window.__saved = [];
+    const wo = { id: "w1", workOrderNumber: "WO-0009", title: "Sunroom caulking", status: "Completed", completedDate: "2026-09-10", priority: "Medium", partsUsed: [], notes: [] };
+    const db = { settings: {}, sites: [], cottages: [], customers: [], parts: [], staff: [], invoices: [{ id: "i1", sourceType: "workOrder", sourceId: "w1" }], workOrders: [wo], activityLog: [] };
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(FieldJobDetailScreen, { db, persist() {}, actor: "Dave", wo, saveWorkOrder: (w) => window.__saved.push(w), onBack() {}, onCreateInvoice() {}, onGoToSiteMap() {}, setToast() {} }));
+  });
+  await page.getByRole("button", { name: "Reopen Job" }).click();
+  await page.getByText("Reopen this job?").waitFor();
+  assert.ok(await page.getByText(/already has an invoice/).isVisible());
+  await page.getByRole("button", { name: "Keep completed" }).click();
+  assert.deepEqual(await page.evaluate(() => window.__saved.length), 0, "nothing changes when you keep it completed");
+  await page.getByRole("button", { name: "Reopen Job" }).click();
+  await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.__saved.map((w) => [w.status, w.completedDate])), [["Open", null]]);
+  await page.close();
+});
