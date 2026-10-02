@@ -88,6 +88,7 @@ test("Completing through the wrap-up window saves hours, service call and parts 
     "workOrders/w1": { id: "w1", title: "Leaky tap", status: "In Progress", priority: "Medium", date: "2026-09-30", workOrderNumber: "WO-0050", assignedTo: "Dave", partsUsed: [{ partId: "p1", quantity: 1 }], notes: [] }
   });
   const page = await openWorkOrdersTab("admin");
+  await page.getByRole("button", { name: /^In Progress/ }).click();
   await page.getByRole("button", { name: "Complete →" }).click();
   await page.getByText("Wrap up: Leaky tap").waitFor();
   await page.getByLabel("Hours", { exact: true }).first().fill("2");
@@ -181,5 +182,42 @@ test("Work orders and invoices keep the time they were created (for the correspo
   assert.equal(inv.notes, "Customer called");
   assert.equal(inv.createdAt, undefined);
   assert.equal(inv.sentAt, undefined);
+  await page.close();
+});
+
+test("The board shows one status at a time with Open / In Progress / Completed pills", async () => {
+  await resetData({
+    "campground/data": SETTINGS,
+    "workOrders/o1": { id: "o1", title: "Open job A", status: "Open", priority: "Medium", date: "2026-09-30", workOrderNumber: "WO-0001", partsUsed: [], notes: [] },
+    "workOrders/o2": { id: "o2", title: "Open job B", status: "Open", priority: "Medium", date: "2026-09-29", workOrderNumber: "WO-0002", partsUsed: [], notes: [] },
+    "workOrders/p1": { id: "p1", title: "Started job", status: "In Progress", priority: "Medium", date: "2026-09-28", workOrderNumber: "WO-0003", partsUsed: [], notes: [] },
+    "workOrders/c1": { id: "c1", title: "Finished job", status: "Completed", completedDate: "2026-09-27", priority: "Medium", date: "2026-09-27", workOrderNumber: "WO-0004", partsUsed: [], notes: [] },
+    "workOrders/c2": { id: "c2", title: "Archived job", status: "Completed", archived: true, completedDate: "2026-09-01", priority: "Medium", date: "2026-09-01", workOrderNumber: "WO-0005", partsUsed: [], notes: [] }
+  });
+  const page = await openWorkOrdersTab("admin");
+  const pill = (name) => page.getByRole("button", { name: new RegExp(`^${name}\\s*\\d+$`) });
+  // Counts on the pills; archived jobs aren't counted.
+  assert.equal((await pill("Open").textContent()).replace(/\s+/g, " "), "Open2");
+  assert.equal(await pill("In Progress").textContent(), "In Progress1");
+  assert.equal(await pill("Completed").textContent(), "Completed1");
+  // Open by default: only open jobs show.
+  await page.getByText("Open job A").waitFor();
+  assert.equal(await page.getByText("Started job").count(), 0);
+  await pill("Completed").click();
+  await page.getByText("Finished job").waitFor();
+  assert.equal(await page.getByText("Open job A").count(), 0);
+  // A search looks through every status.
+  await page.getByPlaceholder("Search work orders\u2026").fill("job");
+  await page.getByText("4 matches across all statuses").waitFor();
+  await page.getByText("Started job").waitFor();
+  await page.getByPlaceholder("Search work orders\u2026").fill("");
+  // Dropping a job on a pill moves it there.
+  await pill("Open").click();
+  await page.getByText("Open job B").dragTo(pill("In Progress"));
+  await waitFor(async () => { const w = await findWorkOrder("Open job B"); return w && w.status === "In Progress"; }, "the dropped job to move");
+  // The chosen pill is remembered.
+  await pill("Completed").click();
+  assert.equal(await page.evaluate(() => localStorage.getItem("qic-wo-status-tab")), "Completed");
+  assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
