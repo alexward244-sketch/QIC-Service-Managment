@@ -236,3 +236,14 @@ test("field header shows Saving / Not sent yet when changes haven't reached the 
   assert.match(await label({ online: false, pending: false }), /Offline/);
   await page.close();
 });
+
+test("hydro readings include every seasonal and 4 season site, whatever the tag's wording", async () => {
+  const page = await openApp(browser, "stub");
+  const result = await page.evaluate(() => [
+    { tags: ["Seasonal"] }, { tags: ["4 Season"] }, { tags: ["Pebble Beach Seasonal"] }, { tags: ["Seasonal - Limestone South"] },
+    { tags: ["Original Park 4-Season"] }, { tags: [], section: "Original Park Seasonal" }, { tags: ["Limestone South"] }, { tags: [], section: "limestone south" },
+    { tags: ["Transient"] }, { tags: [] }
+  ].map((s) => isHydroTrackedSite(s)));
+  assert.deepEqual(result, [true, true, true, true, true, true, true, true, false, false]);
+  await page.close();
+});

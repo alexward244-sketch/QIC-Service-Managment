@@ -14270,8 +14270,17 @@ function getLastHydroReading(db, siteId) {
 function getHydroBillingBase(db, siteId) {
   return getSiteHydroHistory(db, siteId).find((r) => r.status !== "carried") || null;
 }
+// Sites that get hydro readings: anything tagged seasonal or 4 season, in
+// whatever wording the tag uses ("Seasonal", "Pebble Beach Seasonal",
+// "4-Season", "Four Seasons"...), or in a section named that way. Only an
+// exact "Seasonal"/"4 Season" tag used to count, which left out sites tagged
+// e.g. "Pebble Beach Seasonal".
+const HYDRO_TRACKED_RE = /\b(seasonal|(4|four)[\s-]*seasons?)\b/i;
+// The park's seasonal and 4 season sections (SECTION_ORDER) count too, by
+// name, since "Limestone South" doesn't say "seasonal".
 function isHydroTrackedSite(site) {
-  return (site.tags || []).some((t) => /^(seasonal|4 season)$/i.test(t.trim()));
+  const labels = [...(site.tags || []), site.section || ""].map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+  return labels.some((t) => HYDRO_TRACKED_RE.test(t) || SECTION_ORDER.some((name) => name.toLowerCase() === t));
 }
 function isFacilitySite(site) {
   return (site.tags || []).some((t) => t.trim().toLowerCase() === "qic facility");
