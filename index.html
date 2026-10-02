@@ -16056,7 +16056,7 @@ function groupCorrespondenceByCustomer(items) {
 function CorrespondenceRow({ item, customer, active, onClick, count, hasWorkOrder }) {
   const isNew = CorrespondenceIsNew(item);
   const isSnoozed = CorrespondenceIsSnoozed(item);
-  const name = customer ? customer.name : item.direction === "out" ? item.toEmail || item.fromEmail : item.fromEmail;
+  const name = customer ? customer.name : item.direction === "out" ? item.toEmail || item.fromEmail : item.webForm && item.webForm.name ? `${item.webForm.name} (website form)` : item.fromEmail;
   return /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -16199,7 +16199,20 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     const peer = !selectedItem.customerId ? correspondencePeer(selectedItem) : "";
     const others = peer ? all.filter((c) => c.id !== selectedItem.id && correspondencePeer(c) === peer).sort((x, y) => (x.receivedAt || "").localeCompare(y.receivedAt || "")) : [];
     const knownFromOthers = others.map((c) => c.customerId).filter(Boolean)[0];
-    const knownCustomer = knownFromOthers ? (db.customers || []).find((c) => c.id === knownFromOthers) : matchCustomerByEmail(db.customers, peer);
+    let knownCustomer = knownFromOthers ? (db.customers || []).find((c) => c.id === knownFromOthers) : matchCustomerByEmail(db.customers, peer);
+    let knownReason = knownCustomer ? `Earlier emails with ${peer} belong to ` : "";
+    // A site number in the message (e.g. "LOT 573" on a website form):
+    // suggest whoever owns that site.
+    const mentionedSite = !selectedItem.customerId && ((selectedItem.webForm && selectedItem.webForm.siteNumber) || (selectedItem.triage && selectedItem.triage.siteNumber));
+    if (!knownCustomer && mentionedSite) {
+      const norm = (v) => String(v || "").trim().toLowerCase().replace(/^(site|lot)\s*#?\s*/, "");
+      const site = (db.sites || []).find((st) => norm(st.number) === norm(mentionedSite));
+      const owner = site ? getSiteOwner(db, site.id) : null;
+      if (owner) {
+        knownCustomer = owner;
+        knownReason = `The message mentions site ${site.number}, which belongs to `;
+      }
+    }
     if (others.length || knownCustomer) {
       readingPane = React.createElement(
         React.Fragment,
@@ -16207,7 +16220,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
         knownCustomer && React.createElement(
           "div",
           { className: "mx-5 mt-4 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#B9D7C1] bg-[#EEF7F0] px-3 py-2 text-sm text-[#28633C]" },
-          React.createElement("span", null, `Earlier emails with ${peer} belong to `, React.createElement("b", null, knownCustomer.name), "."),
+          React.createElement("span", null, knownReason, React.createElement("b", null, knownCustomer.name), "."),
           React.createElement("button", { type: "button", onClick: () => handleLink(knownCustomer, true), className: "px-3 py-1.5 rounded-md bg-[#377249] text-white text-xs font-semibold" }, `Link to ${knownCustomer.name}`)
         ),
         readingPane,
