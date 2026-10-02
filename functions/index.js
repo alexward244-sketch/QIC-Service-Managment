@@ -298,6 +298,52 @@ function extractForwardedSender(plainBody) {
   return null;
 }
 
+// The website's contact form ("Mike Hill has filled out a contact form" ->
+// Name / Email / Phone / Message, each as "Label : value") arrives from our
+// own address (info@quintesisle.ca), often forwarded on by a coworker. The
+// real person is in the form, so read them out: their email becomes the
+// sender, which links the message to their customer record.
+function parseWebFormSubmission(plainBody) {
+  const text = toStr(plainBody);
+  const start = text.search(/has filled out (?:a|the|our)\b[^\n]*form|^\s*submiss?ion\s*:/im);
+  if (start === -1) return null;
+  const section = text.slice(start);
+  const fields = {};
+  section.split(/\n\s*\n/).forEach((block) => {
+    const m = block.match(/^\s*([^:\n]{1,60}?)\s*\n?\s*:\s*\n?([\s\S]*)$/);
+    if (!m) return;
+    const label = m[1].trim().toLowerCase();
+    const value = m[2].trim();
+    if (!value) return;
+    if (label === "email" || label === "e-mail" || label === "email address") fields.email = value;
+    else if (label === "name" || label === "full name") fields.name = value.replace(/\s*,\s*/g, " ").replace(/\s+/g, " ");
+    else if (label === "phone" || label === "phone number") fields.phone = value;
+    else if (label === "message" || label === "comments") fields.message = value;
+    else if (/direct this message|department/.test(label)) fields.department = value;
+  });
+  const email = (toStr(fields.email).match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/) || [])[0];
+  if (!email) return null;
+  const site = toStr(fields.message).match(/\b(?:lot|site)\s*#?\s*([a-z]?\d+[a-z]?)\b/i);
+  return {
+    email: email.toLowerCase(),
+    name: fields.name || null,
+    phone: fields.phone || null,
+    department: fields.department || null,
+    siteNumber: site ? site[1] : null,
+    message: fields.message || null,
+    // What staff read in Correspondence: the form laid out plainly.
+    text: [
+      "Website contact form",
+      fields.name ? `Name: ${fields.name}` : null,
+      `Email: ${email.toLowerCase()}`,
+      fields.phone ? `Phone: ${fields.phone}` : null,
+      fields.department ? `Sent to: ${fields.department}` : null,
+      "",
+      fields.message || section.trim()
+    ].filter((l) => l !== null).join("\n")
+  };
+}
+
 // Whether a message is a forward (as opposed to a reply with a quoted
 // chain): a Fw:/Fwd: subject, or a forwarded-message marker in the body.
 // A forward's content is the forwarded part, so it must never be trimmed.
@@ -930,6 +976,15 @@ exports.serviceCorrespondence = onRequest(
         }
       }
 
+      // A website contact form (direct from the site's address, or forwarded
+      // by a coworker): the person who filled it in is the sender.
+      const webForm = isInternalSender(effectiveFrom) ? parseWebFormSubmission(plainBody) : null;
+      if (webForm && !isInternalSender(webForm.email)) {
+        if (fromEmail !== effectiveFrom || isForward) forwardedBy = forwardedBy || fromEmail;
+        effectiveFrom = webForm.email;
+        fromStaff = false;
+      }
+
       // Zoho Forms' own "someone submitted your form" notifications use this
       // boilerplate across every form on the account. They can slip through
       // the Zoho Flow sender filter, so this is a second, independent check
@@ -946,7 +1001,7 @@ exports.serviceCorrespondence = onRequest(
       // for a direct customer message.
       // A customer forwarding something to us (e.g. their contractor's
       // email) is the same: the forwarded part is the context.
-      const storedBody = forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
+      const storedBody = webForm && !fromStaff ? webForm.text : forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
 
       const customerId = (await findCustomerByEmail(effectiveFrom)) || (await customerFromEarlierEmails(effectiveFrom));
       const [{ suggestedFlag, needsReply, triage }, attachments] = await Promise.all([
@@ -962,6 +1017,7 @@ exports.serviceCorrespondence = onRequest(
         fromEmail: effectiveFrom,
         forwardedBy,
         fromStaff,
+        ...(webForm && !fromStaff ? { webForm: { name: webForm.name, phone: webForm.phone, siteNumber: webForm.siteNumber, department: webForm.department } } : {}),
         suggestedFlag,
         needsReply,
         triage,

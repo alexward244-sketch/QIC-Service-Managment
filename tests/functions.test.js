@@ -72,6 +72,26 @@ test("incoming email: a reply from an address we've written to joins that custom
   assert.equal((await all("correspondence")).find((m) => m.id === other.body.id).customerId, null);
 });
 
+test("incoming email: a website contact form, forwarded by a coworker, is filed under the person who filled it in", async () => {
+  const html = require("fs").readFileSync(require("path").join(__dirname, "fixtures", "webform-forward.html"), "utf8");
+  await db.doc("customers/c9").set({ name: "Mike Hill", email: "mike@cdl4.com", siteIds: [] });
+  const res = await callWebhook(fns.serviceCorrespondence, { fromEmail: "jayden@qicampark.com", subject: "Fwd: General Information/Contact Us Form", body: html });
+  const saved = (await all("correspondence")).find((m) => m.id === res.body.id);
+  assert.equal(saved.fromEmail, "mike@cdl4.com");
+  assert.equal(saved.forwardedBy, "jayden@qicampark.com");
+  assert.equal(saved.fromStaff, false);
+  assert.equal(saved.customerId, "c9", "matched to the customer by the form's email");
+  assert.deepEqual(saved.webForm, { name: "Mike Hill", phone: "+16134512305", siteNumber: "573", department: "Service Department" });
+  assert.match(saved.body, /^Website contact form\nName: Mike Hill\nEmail: mike@cdl4.com/);
+  assert.match(saved.body, /LOT 573 Hi its Mike Hill/);
+  assert.doesNotMatch(saved.body, /confidential/, "the coworker's signature isn't kept");
+  // Straight from the website's address, not forwarded: same result.
+  const direct = await callWebhook(fns.serviceCorrespondence, { fromEmail: "info@quintesisle.ca", subject: "General Information/Contact Us Form", body: "Sam Lee has filled out a contact form\n\nSubmisson:\n\nName\n:\nSam, Lee\n\nEmail\n:\nsam@lee.ca\n\nMessage\n:\nSite 12 deck is loose" });
+  const d = (await all("correspondence")).find((m) => m.id === direct.body.id);
+  assert.equal(d.fromEmail, "sam@lee.ca");
+  assert.equal(d.webForm.siteNumber, "12");
+});
+
 test("the Email Intake ignore list is respected", async () => {
   await db.doc("campground/data").set({ settings: { correspondenceSkipSenders: ["sales@qicampark.com"] }, userRoles: {} });
   assert.equal((await callWebhook(fns.serviceCorrespondence, { fromEmail: "sales@qicampark.com", subject: "Note", body: "hi" })).body.reason, "skipped-sender");
