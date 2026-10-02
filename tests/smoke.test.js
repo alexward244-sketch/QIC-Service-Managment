@@ -182,3 +182,57 @@ test("on a phone, opening a form doesn't jump into the first box; on a computer 
   assert.equal(await computer.evaluate(() => document.activeElement && document.activeElement.tagName), "INPUT");
   await computer.close();
 });
+
+test("field app: the phone's Back button steps back through screens instead of leaving", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 }, touch: true });
+  await page.evaluate(() => {
+    const wo = { id: "w1", workOrderNumber: "WO-0001", title: "Leaky tap", status: "Open", priority: "Medium", date: todayISO(), assignedTo: "Dave", partsUsed: [], notes: [] };
+    const db = { settings: {}, sites: [], cottages: [], customers: [], parts: [], staff: [], invoices: [], quotes: [], workOrders: [wo], workOrderTemplates: [], activityLog: [], propaneRequests: [], winterizingRequests: [], treeRequests: [], hydroReadings: [] };
+    const noop = () => {};
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(FieldApp, { db, persist: noop, actor: "Dave", saveWorkOrder: noop, savePropaneRequest: noop, saveWinterizingRequest: noop, saveInvoice: noop, deleteInvoice: noop, saveQuote: noop, saveCottage: noop, saveSite: noop, saveCorrespondence: noop, deleteCorrespondence: noop, saveCustomer: noop, saveTreeRequest: noop, pendingSignups: [], confirmPendingSignup: noop, removePendingSignup: noop, isAdminOrManager: true, onCreateInvoice: noop, onGoToDesktopTab: noop, onSignOut: noop }));
+  });
+  await page.getByRole("button", { name: "Jobs", exact: true }).click();
+  await page.getByText("Leaky tap").first().click();
+  await page.getByRole("button", { name: "Start Job" }).waitFor();
+  await page.goBack();
+  await page.getByPlaceholder(/Search site/).waitFor();
+  await page.goBack();
+  await page.getByText("My Jobs").first().waitFor();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Parts" }).click();
+  await page.getByText("←", { exact: false }).first().click();
+  await page.getByRole("button", { name: "Hydro Readings" }).waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("field Park tab: browse by section and remember recently opened sites", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => {
+    localStorage.removeItem("qic-field-park-recent");
+    const db = { settings: {}, sites: [{ id: "s1", number: "12", section: "Limestone South" }, { id: "s2", number: "9", section: "Limestone South" }, { id: "s3", number: "1065", section: "Pebble Beach Seasonal" }], cottages: [], customers: [], workOrders: [], correspondence: [], parts: [], staff: [], invoices: [], quotes: [], activityLog: [] };
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(FieldParkScreen, { db, persist() {}, saveWorkOrder() {}, saveCottage() {}, saveSite() {}, saveCorrespondence() {} }));
+  });
+  await page.getByText("Browse by section").waitFor();
+  const sections = await page.locator("button[aria-expanded] > span:first-child").allTextContents();
+  assert.deepEqual(sections, ["Pebble Beach Seasonal", "Limestone South"], "sections in the park's usual order");
+  await page.getByRole("button", { name: /Limestone South/ }).click();
+  assert.deepEqual(await page.locator("div.grid button").allTextContents(), ["9", "12"], "sites in number order");
+  await page.getByRole("button", { name: "12", exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("qic-field-park-recent"))), [{ kind: "Site", id: "s1" }]);
+  await page.close();
+});
+
+test("field header shows Saving / Not sent yet when changes haven't reached the server", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 300 } });
+  const label = (props) => page.evaluate((p) => {
+    const el = document.getElementById("test");
+    ReactDOM.flushSync(() => ReactDOM.createRoot(el).render(React.createElement(FieldHeader, { title: "Today", ...p })));
+    return el.textContent;
+  }, props);
+  assert.match(await label({ online: true, pending: false }), /Synced/);
+  assert.match(await label({ online: true, pending: true }), /Saving/);
+  assert.match(await label({ online: false, pending: true }), /Not sent yet/);
+  assert.match(await label({ online: false, pending: false }), /Offline/);
+  await page.close();
+});
