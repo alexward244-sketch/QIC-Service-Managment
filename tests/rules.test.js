@@ -99,3 +99,15 @@ test("file storage needs a staff role", async () => {
   await assertFails(st("noRole").ref("correspondence-attachments/b.txt").putString("hi"));
   await assertFails(st("noRole").ref("correspondence-attachments/a.txt").getMetadata());
 });
+
+test("work order photos: staff can add images, not other files or huge ones; no role, no access", async () => {
+  const st = (role) => env.authenticatedContext("p-" + role, role === "noRole" ? {} : { role }).storage();
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").put(jpeg, { contentType: "image/jpeg" }));
+  await assertSucceeds(st("manager").ref("work-order-photos/w1/a.jpg").getMetadata());
+  await assertFails(st("office").ref("work-order-photos/w1/b.txt").putString("hi", "raw", { contentType: "text/plain" }));
+  await assertFails(st("office").ref("work-order-photos/w1/big.jpg").put(new Uint8Array(5 * 1024 * 1024 + 1), { contentType: "image/jpeg" }));
+  await assertFails(st("noRole").ref("work-order-photos/w1/c.jpg").put(jpeg, { contentType: "image/jpeg" }));
+  await assertFails(st("noRole").ref("work-order-photos/w1/a.jpg").getMetadata());
+  await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").delete());
+});

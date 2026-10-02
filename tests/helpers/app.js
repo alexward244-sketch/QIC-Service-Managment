@@ -91,7 +91,8 @@ async function launch() {
 // Opens the app in a fresh browser context (its own offline cache).
 // opts.role: role claim for the emulator token; "" means signed in with no role.
 async function openApp(browser, mode, opts = {}) {
-  const context = await browser.newContext({ viewport: opts.viewport || { width: 1280, height: 1400 } });
+  // opts.touch: behave like a phone (touch screen, coarse pointer).
+  const context = await browser.newContext({ viewport: opts.viewport || { width: 1280, height: 1400 }, ...(opts.touch ? { hasTouch: true, isMobile: true } : {}) });
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));

@@ -165,6 +165,11 @@ function mergeHydroReadings(collectionList, legacyList) {
 }
 const storage_ = firebase.storage();
 const functions_ = firebase.functions();
+// On phones and tablets, opening a form shouldn't jump straight into the
+// first box and pop up the keyboard over what you're trying to read - tap a
+// box to start typing. Mouse/keyboard computers keep the head start.
+// (Sign-in and hydro reading entry still focus, since typing is the point.)
+const AUTO_FOCUS = !(typeof window !== "undefined" && window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
 const EMAILJS_PUBLIC_KEY = "b2kdwMAjb_CJ6A96v";
 const EMAILJS_TEMPLATE_ID = "template_y5qg4vy";
 // One EmailJS "service" per sending identity. Each must be added under
@@ -2311,7 +2316,7 @@ function SalePriceModal({ title, priceLabel, initialPrice, onConfirm, onCancel }
   };
   return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: priceLabel || "Final Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Confirm"))));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: priceLabel || "Final Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Confirm"))));
 }
 function DepositDetailsModal({ title, priceLabel, initialPrice, onConfirm, onCancel }) {
   const [price, setPrice] = useState(initialPrice != null && initialPrice !== 0 ? String(initialPrice) : "");
@@ -2328,11 +2333,11 @@ function DepositDetailsModal({ title, priceLabel, initialPrice, onConfirm, onCan
   };
   return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "A deposit locks this in as a real deal \u2014 fill in the details to move it to Deposit."), /* @__PURE__ */ React.createElement(Field, { label: priceLabel || "Total Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: depositAmount, onChange: (e) => setDepositAmount(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Confirm \u2014 Move to Deposit"))));
+  } }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "A deposit locks this in as a real deal \u2014 fill in the details to move it to Deposit."), /* @__PURE__ */ React.createElement(Field, { label: priceLabel || "Total Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: depositAmount, onChange: (e) => setDepositAmount(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Confirm \u2014 Move to Deposit"))));
 }
 function PaymentMethodModal({ title, summary, methods, initialMethod, onConfirm, onCancel }) {
   const [method, setMethod] = useState(initialMethod || methods[0]);
-  return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, summary && /* @__PURE__ */ React.createElement("p", { className: "text-[13.5px] leading-relaxed text-[#4B4740] mb-4" }, summary), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] overflow-hidden mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5 text-sm border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment date"), /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, todayISO())), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#75716A]" }, "Method"), /* @__PURE__ */ React.createElement("select", { className: "text-sm font-semibold border border-[#E2DED5] rounded-md px-2 py-1 text-[#1E1A13]", value: method, onChange: (e) => setMethod(e.target.value), autoFocus: true }, methods.map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onConfirm(method), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Confirm")));
+  return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, summary && /* @__PURE__ */ React.createElement("p", { className: "text-[13.5px] leading-relaxed text-[#4B4740] mb-4" }, summary), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] overflow-hidden mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5 text-sm border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment date"), /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, todayISO())), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#75716A]" }, "Method"), /* @__PURE__ */ React.createElement("select", { className: "text-sm font-semibold border border-[#E2DED5] rounded-md px-2 py-1 text-[#1E1A13]", value: method, onChange: (e) => setMethod(e.target.value), autoFocus: AUTO_FOCUS }, methods.map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onConfirm(method), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Confirm")));
 }
 function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compactLabel }) {
   const [open, setOpen] = useState(false);
@@ -2959,7 +2964,7 @@ function BulkAddSitesForm({ onSave, onCancel }) {
       value: text,
       onChange: (e) => setText(e.target.value),
       placeholder: "e.g.\n12\n13\n14\nor: 12, 13, 14",
-      autoFocus: true
+      autoFocus: AUTO_FOCUS
     }
   )), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, numbers.length, " site", numbers.length === 1 ? "" : "s", " ready to add", numbers.length > 0 ? ` (${numbers.slice(0, 8).join(", ")}${numbers.length > 8 ? "\u2026" : ""})` : ""), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
@@ -3013,7 +3018,7 @@ function BulkEditSitesForm({ sites, onSave, onCancel }) {
       value,
       onChange: (e) => setValue(e.target.value),
       placeholder: field === "section" ? "e.g. North Loop" : field === "hookups" ? "e.g. 30A, water, sewer" : field === "tags_add" || field === "tags_remove" ? "e.g. Pebble Beach" : "e.g. Access notes",
-      autoFocus: true
+      autoFocus: AUTO_FOCUS
     }
   ))), allTags.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold block mb-1.5" }, "Filter Sites By Tag", tagFilter.size > 0 ? ` (${tagFilter.size} selected)` : ""), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5" }, allTags.map((tag) => /* @__PURE__ */ React.createElement(
     "button",
@@ -3251,7 +3256,7 @@ function WorkOrderViewModal({ wo: woProp, db, persist, saveWorkOrder, saveCorres
   const isDrawer = variant === "drawer";
   const Wrap = isDrawer ? DrawerShell : Modal;
   const wrapProps = isDrawer ? { title: wo.title, eyebrow: `${wo.workOrderNumber ? wo.workOrderNumber + " \xB7 " : ""}Work order${site ? " \xB7 Site " + site.number : cottage ? " \xB7 " + cottage.name : ""}`, badges: [wo.priority && /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)].filter(Boolean), onClose, width: "480px" } : { title: wo.workOrderNumber ? `${wo.workOrderNumber} — ${wo.title}` : wo.title, onClose, xl: true };
-  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.serviceCallType && wo.serviceCallType !== "None" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call: "), wo.serviceCallType, " (", formatPrice(wo.serviceCall || 0), ")"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), relatedSection, wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.serviceCallType && wo.serviceCallType !== "None" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call: "), wo.serviceCallType, " (", formatPrice(wo.serviceCall || 0), ")"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), relatedSection, wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), saveWorkOrder && React.createElement(WorkOrderPhotos, { wo, saveWorkOrder, actor, compact: true }), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
     const part = db.parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "x", pu.quantity));
   })), wo.customerSummary && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold" }, "Customer Summary"), /* @__PURE__ */ React.createElement("button", { onClick: editSavedSummary, className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit")), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap bg-[#F9F5EC] border border-[#E2DED5] rounded-md px-3 py-2" }, wo.customerSummary)), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Notes"), notes.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No notes yet \u2014 handy for jobs that span more than one day.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-52 overflow-y-auto" }, notes.map((n) => /* @__PURE__ */ React.createElement("div", { key: n.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, n.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, n.author, " \xB7 ", new Date(n.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
@@ -3686,7 +3691,7 @@ function SiteForm({ initial, sites, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Tags" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: tagsInput, onChange: (e) => setTagsInput(e.target.value), placeholder: "e.g. Pebble Beach, Waterfront, Premium" }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Comma-separated. Used for filtering, e.g. in Seasonal Fees.")), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Hydro Meter Digits" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Site Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: number, onChange: (e) => setNumber(e.target.value), placeholder: "e.g. 24", autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A site numbered "', number.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Section / Loop" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: section, onChange: (e) => setSection(e.target.value), placeholder: "e.g. North Loop" })), /* @__PURE__ */ React.createElement(Field, { label: "Tags" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: tagsInput, onChange: (e) => setTagsInput(e.target.value), placeholder: "e.g. Pebble Beach, Waterfront, Premium" }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Comma-separated. Used for filtering, e.g. in Seasonal Fees.")), /* @__PURE__ */ React.createElement(Field, { label: "Hookups" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: hookups, onChange: (e) => setHookups(e.target.value), placeholder: "e.g. 30A, water, sewer" })), /* @__PURE__ */ React.createElement(Field, { label: "Hydro Meter Digits" }, /* @__PURE__ */ React.createElement(
     "select",
     { className: inputCls, value: meterDigits, onChange: (e) => setMeterDigits(e.target.value) },
     /* @__PURE__ */ React.createElement("option", { value: "" }, "No meter / not set"),
@@ -4045,7 +4050,7 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, save
     onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "\u2014 Select a customer \u2014"
-  })) : null, !takingOffSite && ownerType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Contact details below are managed on the customer's profile \u2014 edit them there if they've changed."), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: ownerType === "existing" ? "Name" : "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, disabled: ownerType === "existing", onChange: (e) => setName(e.target.value), autoFocus: ownerType === "new" })), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, disabled: ownerType === "existing", onChange: (e) => setPhone(e.target.value) })), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, disabled: ownerType === "existing", onChange: (e) => setEmail(e.target.value) })), !takingOffSite && ownerType === "new" && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  })) : null, !takingOffSite && ownerType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Contact details below are managed on the customer's profile \u2014 edit them there if they've changed."), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: ownerType === "existing" ? "Name" : "New Owner Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, disabled: ownerType === "existing", onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS && ownerType === "new" })), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, disabled: ownerType === "existing", onChange: (e) => setPhone(e.target.value) })), !takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, disabled: ownerType === "existing", onChange: (e) => setEmail(e.target.value) })), !takingOffSite && ownerType === "new" && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "You can add more details (address, a second contact) by editing the new customer afterward."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: submit,
@@ -4109,7 +4114,7 @@ function ApplianceForm({ initial, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value) }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-114829", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value) }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-114829", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save")));
 }
 function ApplianceLogForm({ cottage, db, initial, onSave, onCancel }) {
   const cottageWorkOrders = db.workOrders.filter((w) => w.cottageId === cottage.id);
@@ -4144,7 +4149,7 @@ function ApplianceLogForm({ cottage, db, initial, onSave, onCancel }) {
     onChange: pickWorkOrder,
     placeholder: "Search work orders\u2026",
     noneLabel: "No work order linked"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What was done", autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What was done", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -4388,7 +4393,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   );
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, { options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: [s.number, s.section].filter(Boolean).join(" ") })), value: siteId, onChange: setSiteId, placeholder: "Search sites\u2026", noneLabel: "Unassigned" })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" })), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Bedrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls, value: bedrooms, onChange: (e) => setBedrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Bathrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.5", className: inputCls, value: bathrooms, onChange: (e) => setBathrooms(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Deck / Porch" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: deckPorch, onChange: (e) => setDeckPorch(e.target.value), placeholder: "e.g. 10x20 covered deck" })), /* @__PURE__ */ React.createElement(Field, { label: "Sunspace Notes (legacy, optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sunroom, onChange: (e) => setSunroom(e.target.value), placeholder: "Old free-text notes, if any" }))), /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Sunspace Accessories"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroof.included, onChange: (e) => setSunroof({ ...sunroof, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroof"), sunroof.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroof.width, onChange: (e) => setSunroof({ ...sunroof, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroof.length, onChange: (e) => setSunroof({ ...sunroof, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroof.warrantyExpiration || "", onChange: (e) => setSunroof({ ...sunroof, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroomItem.included, onChange: (e) => setSunroomItem({ ...sunroomItem, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroom"), sunroomItem.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroomItem.width, onChange: (e) => setSunroomItem({ ...sunroomItem, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroomItem.length, onChange: (e) => setSunroomItem({ ...sunroomItem, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroomItem.warrantyExpiration || "", onChange: (e) => setSunroomItem({ ...sunroomItem, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: railings.included, onChange: (e) => setRailings({ ...railings, included: e.target.checked }), className: "accent-[#C1652F]" }), "Railings"), railings.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 ml-6" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: railings.length, onChange: (e) => setRailings({ ...railings, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), !siteId && /* @__PURE__ */ React.createElement(Field, { label: "Off-Site Info \u2014 where it went" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: offSiteInfo, onChange: (e) => setOffSiteInfo(e.target.value), placeholder: "e.g. Sold to a buyer in Belleville, picked up Sept 5" })), !initial && siteId && /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Owner (optional)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" }, ownerModeBtn("none", "No owner yet"), ownerModeBtn("existing", "Existing customer"), ownerModeBtn("new", "New customer")), ownerMode === "existing" && /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, { options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: [s.number, s.section].filter(Boolean).join(" ") })), value: siteId, onChange: setSiteId, placeholder: "Search sites\u2026", noneLabel: "Unassigned" })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" })), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Bedrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls, value: bedrooms, onChange: (e) => setBedrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Bathrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.5", className: inputCls, value: bathrooms, onChange: (e) => setBathrooms(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Deck / Porch" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: deckPorch, onChange: (e) => setDeckPorch(e.target.value), placeholder: "e.g. 10x20 covered deck" })), /* @__PURE__ */ React.createElement(Field, { label: "Sunspace Notes (legacy, optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sunroom, onChange: (e) => setSunroom(e.target.value), placeholder: "Old free-text notes, if any" }))), /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Sunspace Accessories"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroof.included, onChange: (e) => setSunroof({ ...sunroof, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroof"), sunroof.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroof.width, onChange: (e) => setSunroof({ ...sunroof, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroof.length, onChange: (e) => setSunroof({ ...sunroof, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroof.warrantyExpiration || "", onChange: (e) => setSunroof({ ...sunroof, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroomItem.included, onChange: (e) => setSunroomItem({ ...sunroomItem, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroom"), sunroomItem.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroomItem.width, onChange: (e) => setSunroomItem({ ...sunroomItem, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroomItem.length, onChange: (e) => setSunroomItem({ ...sunroomItem, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroomItem.warrantyExpiration || "", onChange: (e) => setSunroomItem({ ...sunroomItem, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: railings.included, onChange: (e) => setRailings({ ...railings, included: e.target.checked }), className: "accent-[#C1652F]" }), "Railings"), railings.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 ml-6" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: railings.length, onChange: (e) => setRailings({ ...railings, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), !siteId && /* @__PURE__ */ React.createElement(Field, { label: "Off-Site Info \u2014 where it went" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: offSiteInfo, onChange: (e) => setOffSiteInfo(e.target.value), placeholder: "e.g. Sold to a buyer in Belleville, picked up Sept 5" })), !initial && siteId && /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Owner (optional)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" }, ownerModeBtn("none", "No owner yet"), ownerModeBtn("existing", "Existing customer"), ownerModeBtn("new", "New customer")), ownerMode === "existing" && /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: (customers || []).map((c) => ({
@@ -4783,7 +4788,7 @@ function CannedRepliesModal({ db, persist, onClose }) {
     persist({ ...trashItem({ ...db, cannedReplies: replies }, "cannedReply", tpl, (tpl && tpl.title) || "Canned reply"), activityLog });
     confirm.clear();
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Canned Replies", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Save a common answer once, then insert it into any reply with one click."), replies.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No canned replies saved yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, replies.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, className: "flex items-start justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13]" }, r.title), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, r.body)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => openForm(r) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(r.id) }, "Delete"))))), formOpen ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", placeholder: "Title (e.g. “Winterizing timeline”)", value: title, onChange: (e) => setTitle(e.target.value), autoFocus: true }), /* @__PURE__ */ React.createElement("textarea", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-3", rows: 6, placeholder: "Reply text…", value: body, onChange: (e) => setBody(e.target.value) }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFormOpen(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: save, disabled: !title.trim() || !body.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, "Save"))) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => openForm(null), className: "text-sm text-[#377249] hover:underline font-medium" }, "+ Add canned reply"), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")), confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Canned Replies", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Save a common answer once, then insert it into any reply with one click."), replies.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No canned replies saved yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-4" }, replies.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, className: "flex items-start justify-between gap-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13]" }, r.title), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, r.body)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => openForm(r) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(r.id) }, "Delete"))))), formOpen ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", placeholder: "Title (e.g. “Winterizing timeline”)", value: title, onChange: (e) => setTitle(e.target.value), autoFocus: AUTO_FOCUS }), /* @__PURE__ */ React.createElement("textarea", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-3", rows: 6, placeholder: "Reply text…", value: body, onChange: (e) => setBody(e.target.value) }), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setFormOpen(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: save, disabled: !title.trim() || !body.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, "Save"))) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center border-t border-[#E2DED5] pt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => openForm(null), className: "text-sm text-[#377249] hover:underline font-medium" }, "+ Add canned reply"), /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")), confirm.target && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
     label: (replies.find((r) => r.id === confirm.target) || {}).title || "this canned reply",
     onConfirm: () => remove(confirm.target),
     onCancel: confirm.clear
@@ -5294,7 +5299,7 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
       className: `px-3 py-1.5 rounded-md text-sm font-medium border ${customerType === "Individual" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
     },
     "Individual"
-  ))), /* @__PURE__ */ React.createElement(Field, { label: "Salutation" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: salutation, onChange: (e) => setSalutation(e.target.value) }, SALUTATION_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "First Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: firstName, onChange: (e) => setFirstName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Last Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: lastName, onChange: (e) => setLastName(e.target.value) }))), customerType === "Business" && /* @__PURE__ */ React.createElement(Field, { label: "Company Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: companyName, onChange: (e) => setCompanyName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Display Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: phoneType, onChange: (e) => setPhoneType(e.target.value) }, PHONE_TYPE_OPTIONS.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))))), /* @__PURE__ */ React.createElement(Field, { label: "Customer Language" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: customerLanguage, onChange: (e) => setCustomerLanguage(e.target.value) }, CUSTOMER_LANGUAGE_OPTIONS.map((l) => /* @__PURE__ */ React.createElement("option", { key: l, value: l }, l)))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Billing Address"), /* @__PURE__ */ React.createElement(AddressFields, { values: billingAddress, onChange: setBillingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 flex items-center justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Shipping Address"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: shippingSameAsBilling, onChange: (e) => setShippingSameAsBilling(e.target.checked), className: "accent-[#377249]" }), "Copy billing address")), !shippingSameAsBilling && /* @__PURE__ */ React.createElement(AddressFields, { values: shippingAddress, onChange: setShippingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Sites" }, siteIds.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, siteIds.map((sId) => {
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Salutation" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: salutation, onChange: (e) => setSalutation(e.target.value) }, SALUTATION_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "First Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: firstName, onChange: (e) => setFirstName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Last Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: lastName, onChange: (e) => setLastName(e.target.value) }))), customerType === "Business" && /* @__PURE__ */ React.createElement(Field, { label: "Company Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: companyName, onChange: (e) => setCompanyName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Display Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: phoneType, onChange: (e) => setPhoneType(e.target.value) }, PHONE_TYPE_OPTIONS.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))))), /* @__PURE__ */ React.createElement(Field, { label: "Customer Language" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: customerLanguage, onChange: (e) => setCustomerLanguage(e.target.value) }, CUSTOMER_LANGUAGE_OPTIONS.map((l) => /* @__PURE__ */ React.createElement("option", { key: l, value: l }, l)))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Billing Address"), /* @__PURE__ */ React.createElement(AddressFields, { values: billingAddress, onChange: setBillingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 flex items-center justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Shipping Address"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: shippingSameAsBilling, onChange: (e) => setShippingSameAsBilling(e.target.checked), className: "accent-[#377249]" }), "Copy billing address")), !shippingSameAsBilling && /* @__PURE__ */ React.createElement(AddressFields, { values: shippingAddress, onChange: setShippingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Sites" }, siteIds.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, siteIds.map((sId) => {
     const s = sites.find((x) => x.id === sId);
     return /* @__PURE__ */ React.createElement("span", { key: sId, className: "inline-flex items-center gap-1 text-xs bg-[#DDF1E1] text-[#28633C] rounded-full pl-2.5 pr-1 py-1" }, "Site ", s ? s.number : "?", /* @__PURE__ */ React.createElement(
       "button",
@@ -5350,7 +5355,7 @@ function BulkAddCustomersForm({ sites, onSave, onCancel }) {
       value: text,
       onChange: (e) => setText(e.target.value),
       placeholder: "e.g.\nJohn Smith	555-123-4567	john@email.com	123 Main St	42",
-      autoFocus: true
+      autoFocus: AUTO_FOCUS
     }
   )), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-1" }, parsed.length, " customer", parsed.length === 1 ? "" : "s", " ready to add"), unmatchedCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, unmatchedCount, " row", unmatchedCount === 1 ? "" : "s", " had a site number that didn't match an existing site \u2014 those will still be added, just without a site assigned."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
@@ -5737,7 +5742,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     onChange: pickWorkOrder,
     placeholder: "Search work orders…",
     noneLabel: "— Not linked to a work order —"
-  })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: s.number })),
     value: siteId,
     onChange: pickSite,
@@ -6266,7 +6271,7 @@ function PartForm({ initial, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Part Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Water heater element", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "SKU" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sku, onChange: (e) => setSku(e.target.value), placeholder: "e.g. WH-1001" }))), /* @__PURE__ */ React.createElement("div", { className: "mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-[#75716A] mb-1.5" }, "Track Quantity"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Part Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Water heater element", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "SKU" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sku, onChange: (e) => setSku(e.target.value), placeholder: "e.g. WH-1001" }))), /* @__PURE__ */ React.createElement("div", { className: "mb-1" }, /* @__PURE__ */ React.createElement("span", { className: "block text-xs text-[#75716A] mb-1.5" }, "Track Quantity"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -6784,7 +6789,7 @@ function StaffForm({ initial, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { type: "email", className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STAFF_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Staff")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { type: "email", className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STAFF_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Staff")));
 }
 const QUOTE_STATUS = ["Draft", "Sent", "Accepted", "Declined"];
 const CUSTOMER_STATUS_LABEL = { Draft: "Draft", Sent: "Proposed Quote", Accepted: "Accepted", Declined: "Declined" };
@@ -7142,7 +7147,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank quote"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: true })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3 sm:col-span-2" }, 'A quote titled "', title.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank quote"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Job Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Deck repair estimate", autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3 sm:col-span-2" }, 'A quote titled "', title.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, QUOTE_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: customers.map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })),
@@ -8157,7 +8162,7 @@ function AppointmentForm({ initial, db, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Tour with the Smiths, Meeting with management", autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Time (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "time", className: inputCls, value: time, onChange: (e) => setTime(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Related To" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: linkType, onChange: (e) => changeLinkType(e.target.value) }, APPOINTMENT_LINK_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.key, value: t.key }, t.label)))), linkType !== "none" && /* @__PURE__ */ React.createElement(Field, { label: "Select" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Tour with the Smiths, Meeting with management", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Time (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "time", className: inputCls, value: time, onChange: (e) => setTime(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Related To" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: linkType, onChange: (e) => changeLinkType(e.target.value) }, APPOINTMENT_LINK_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.key, value: t.key }, t.label)))), linkType !== "none" && /* @__PURE__ */ React.createElement(Field, { label: "Select" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: linkOptions,
     value: linkId,
     onChange: setLinkId,
@@ -8756,7 +8761,7 @@ function InventoryView({ db, persist, saveCottage }) {
 }
 function CreateCottageFromOrderModal({ order, onCreate, onSkip }) {
   const [name, setName] = useState(order.model || "");
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Add this to Cottages?", onClose: onSkip }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This order is now marked Delivered. Want to create a real Cottage record for it \u2014 so it shows up for work orders, winterizing, and everything else going forward?"), /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onSkip, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not Yet"), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Add this to Cottages?", onClose: onSkip }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "This order is now marked Delivered. Want to create a real Cottage record for it \u2014 so it shows up for work orders, winterizing, and everything else going forward?"), /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onSkip, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not Yet"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onCreate(name),
@@ -8854,7 +8859,7 @@ function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirty
       onChange: setSiteId,
       placeholder: "Search sites\u2026"
     }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Model" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: model, onChange: (e) => setModel(e.target.value), placeholder: "e.g. Northlander Ranch 2BR", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Size" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: size, onChange: (e) => setSize(e.target.value), placeholder: "e.g. 32' x 12'" })), /* @__PURE__ */ React.createElement(Field, { label: "Bedrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls, value: bedrooms, onChange: (e) => setBedrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Bathrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.5", className: inputCls, value: bathrooms, onChange: (e) => setBathrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Deck / Porch" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: deckPorch, onChange: (e) => setDeckPorch(e.target.value), placeholder: "e.g. 10x20 covered deck" })), /* @__PURE__ */ React.createElement(Field, { label: "Sunroom / Sunspace" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sunroom, onChange: (e) => setSunroom(e.target.value), placeholder: "e.g. 10x12 sunroom with vinyl windows" })), /* @__PURE__ */ React.createElement(Field, { label: "Ordered Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: orderedDate, onChange: (e) => setOrderedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Expected Delivery" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: expectedDeliveryDate, onChange: (e) => setExpectedDeliveryDate(e.target.value) }))), type === "Display Model" && status === "Delivered/Onsite" && /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement(Field, { label: "Model" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: model, onChange: (e) => setModel(e.target.value), placeholder: "e.g. Northlander Ranch 2BR", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Size" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: size, onChange: (e) => setSize(e.target.value), placeholder: "e.g. 32' x 12'" })), /* @__PURE__ */ React.createElement(Field, { label: "Bedrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls, value: bedrooms, onChange: (e) => setBedrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Bathrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.5", className: inputCls, value: bathrooms, onChange: (e) => setBathrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Deck / Porch" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: deckPorch, onChange: (e) => setDeckPorch(e.target.value), placeholder: "e.g. 10x20 covered deck" })), /* @__PURE__ */ React.createElement(Field, { label: "Sunroom / Sunspace" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sunroom, onChange: (e) => setSunroom(e.target.value), placeholder: "e.g. 10x12 sunroom with vinyl windows" })), /* @__PURE__ */ React.createElement(Field, { label: "Ordered Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: orderedDate, onChange: (e) => setOrderedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Expected Delivery" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: expectedDeliveryDate, onChange: (e) => setExpectedDeliveryDate(e.target.value) }))), type === "Display Model" && status === "Delivered/Onsite" && /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740]" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "checkbox",
@@ -8979,7 +8984,7 @@ function SunspaceOrderForm({ initial, sites, customers, cottages, onSave, onCanc
     /* @__PURE__ */ React.createElement(
       "div",
       { className: "grid sm:grid-cols-3 gap-x-4" },
-      /* @__PURE__ */ React.createElement(Field, { label: "Total Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: totalPrice, onChange: (e) => setTotalPrice(e.target.value), autoFocus: true })),
+      /* @__PURE__ */ React.createElement(Field, { label: "Total Price" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: totalPrice, onChange: (e) => setTotalPrice(e.target.value), autoFocus: AUTO_FOCUS })),
       /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: depositAmount, onChange: (e) => setDepositAmount(e.target.value) })),
       /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) }))
     ),
@@ -9868,7 +9873,7 @@ function CloseUnitSaleModal({ deal, order, db, persist, saveCustomer, saveSite, 
     onChange: setTradeInCottageId,
     placeholder: "Search cottages\u2026",
     noneLabel: "\u2014 Select a cottage \u2014"
-  })), !takingOffSite && hasTradeIn && /* @__PURE__ */ React.createElement(Field, { label: "Trade-In Value ($)" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: tradeInValue, onChange: (e) => setTradeInValue(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Sale Price ($)" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: true })), takingOffSite && buyer && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#F1EEE9] px-3 py-2.5 mb-3 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Buyer (on file)"), /* @__PURE__ */ React.createElement("div", null, buyer.name), buyer.phone && /* @__PURE__ */ React.createElement("div", null, buyer.phone), buyer.email && /* @__PURE__ */ React.createElement("div", null, buyer.email), formatCustomerAddress(buyer.billingAddress) && /* @__PURE__ */ React.createElement("div", null, formatCustomerAddress(buyer.billingAddress))), takingOffSite && existingCottageForOrder && /* @__PURE__ */ React.createElement(Field, { label: "Please enter the location this cottage is being sold to" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: destination, onChange: (e) => setDestination(e.target.value), placeholder: "e.g. Belleville, ON \u2014 picked up Sept 5" })), takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Additional Notes (optional)" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: offSiteNotes, onChange: (e) => setOffSiteNotes(e.target.value) })), !takingOffSite && price !== "" && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-3 space-y-0.5" }, hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Sale price: ", formatPrice(priceNum)), hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Less trade-in credit: -", formatPrice(tradeInNum)), hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Net before tax: ", formatPrice(netBeforeTax)), /* @__PURE__ */ React.createElement("p", null, "Tax (", taxRate, "%): ", formatPrice(taxAmount)), /* @__PURE__ */ React.createElement("p", { className: "font-medium text-[#1E1A13]" }, "Total owing: ", formatPrice(totalOwing))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep(takingOffSite ? "location" : allowTradeIn ? "trade-question" : "site-only"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
+  })), !takingOffSite && hasTradeIn && /* @__PURE__ */ React.createElement(Field, { label: "Trade-In Value ($)" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: tradeInValue, onChange: (e) => setTradeInValue(e.target.value), placeholder: "0.00" })), /* @__PURE__ */ React.createElement(Field, { label: "Sale Price ($)" }, /* @__PURE__ */ React.createElement("input", { type: "number", className: inputCls, value: price, onChange: (e) => setPrice(e.target.value), placeholder: "0.00", autoFocus: AUTO_FOCUS })), takingOffSite && buyer && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#F1EEE9] px-3 py-2.5 mb-3 text-xs text-[#4B4740] space-y-0.5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[10px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Buyer (on file)"), /* @__PURE__ */ React.createElement("div", null, buyer.name), buyer.phone && /* @__PURE__ */ React.createElement("div", null, buyer.phone), buyer.email && /* @__PURE__ */ React.createElement("div", null, buyer.email), formatCustomerAddress(buyer.billingAddress) && /* @__PURE__ */ React.createElement("div", null, formatCustomerAddress(buyer.billingAddress))), takingOffSite && existingCottageForOrder && /* @__PURE__ */ React.createElement(Field, { label: "Please enter the location this cottage is being sold to" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: destination, onChange: (e) => setDestination(e.target.value), placeholder: "e.g. Belleville, ON \u2014 picked up Sept 5" })), takingOffSite && /* @__PURE__ */ React.createElement(Field, { label: "Additional Notes (optional)" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: offSiteNotes, onChange: (e) => setOffSiteNotes(e.target.value) })), !takingOffSite && price !== "" && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-3 space-y-0.5" }, hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Sale price: ", formatPrice(priceNum)), hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Less trade-in credit: -", formatPrice(tradeInNum)), hasTradeIn && /* @__PURE__ */ React.createElement("p", null, "Net before tax: ", formatPrice(netBeforeTax)), /* @__PURE__ */ React.createElement("p", null, "Tax (", taxRate, "%): ", formatPrice(taxAmount)), /* @__PURE__ */ React.createElement("p", { className: "font-medium text-[#1E1A13]" }, "Total owing: ", formatPrice(totalOwing))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setStep(takingOffSite ? "location" : allowTradeIn ? "trade-question" : "site-only"), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Back"), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: submit,
@@ -10387,7 +10392,7 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   const stageField = stageLocked ? /* @__PURE__ */ React.createElement(Field, { label: "Stage" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] px-1" }, initial.stage, " \u2014 use \u201CClose Deal\u201D or \u201CDeal Fell Through\u201D on the board to move this further.")) : /* @__PURE__ */ React.createElement(Field, { label: "Stage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: stage, onChange: (e) => setStage(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "Interested" }, "Interested"), /* @__PURE__ */ React.createElement("option", { value: "Not Interested" }, "Not Interested")), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Moving to Deposit or Sold happens from the board, since those need price and deposit details."));
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, leadTypeToggle, existingCustomerField, leadType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Linked to an existing customer \u2014 fields below are pre-filled from their profile and can be edited for this deal only."), switchConfirmModal, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Lead Source" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: source, onChange: (e) => setSource(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not specified"), PROSPECT_SOURCES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Interested In" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: listingId, onChange: (e) => setListingId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "General interest (no specific listing)"), activeListings.map((l) => {
+  } }, leadTypeToggle, existingCustomerField, leadType === "existing" && customerId && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] -mt-2 mb-3" }, "Linked to an existing customer \u2014 fields below are pre-filled from their profile and can be edited for this deal only."), switchConfirmModal, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Lead Source" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: source, onChange: (e) => setSource(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not specified"), PROSPECT_SOURCES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Interested In" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: listingId, onChange: (e) => setListingId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "General interest (no specific listing)"), activeListings.map((l) => {
     const cottage = (cottages || []).find((c) => c.id === l.cottageId);
     return /* @__PURE__ */ React.createElement("option", { key: l.id, value: l.id }, cottage ? cottage.name : "Unknown cottage");
   }))), stageField, /* @__PURE__ */ React.createElement(Field, { label: "Expected Closing Date (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: closingDate, onChange: (e) => setClosingDate(e.target.value) }), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1" }, "Setting or changing this automatically creates (or updates) a Gas Test work order due that day.")), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "What they're looking for, when they'd like to visit, etc." })), /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5] mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Comments"), commentLog.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-40 overflow-y-auto" }, commentLog.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, c.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, c.author, " \xB7 ", new Date(c.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement(
@@ -11075,7 +11080,7 @@ function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Winterize docks", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: frequencyDays, onChange: (e) => setFrequencyDays(e.target.value) }, FREQUENCY_OPTIONS.map((f) => /* @__PURE__ */ React.createElement("option", { key: f.days, value: f.days }, f.label)))), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: cottageId, onChange: (e) => setCottageId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), cottages.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement(Field, { label: "Next Due Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: nextDueDate, onChange: (e) => setNextDueDate(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What this task involves" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Recurring Task")));
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Winterize docks", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Frequency" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: frequencyDays, onChange: (e) => setFrequencyDays(e.target.value) }, FREQUENCY_OPTIONS.map((f) => /* @__PURE__ */ React.createElement("option", { key: f.days, value: f.days }, f.label)))), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: siteId, onChange: (e) => setSiteId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), sites.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.id }, "Site ", s.number)))), /* @__PURE__ */ React.createElement(Field, { label: "Cottage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: cottageId, onChange: (e) => setCottageId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "None"), cottages.map((c) => /* @__PURE__ */ React.createElement("option", { key: c.id, value: c.id }, c.name)))), /* @__PURE__ */ React.createElement(Field, { label: "Next Due Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: nextDueDate, onChange: (e) => setNextDueDate(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "What this task involves" })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Recurring Task")));
 }
 function WorkOrderTemplatesModal({ db, persist, onClose }) {
   var _a, _b;
@@ -11137,7 +11142,7 @@ function WorkOrderTemplateForm({ initial, parts, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Dock Repair", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created work order is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: workGroup, onChange: (e) => setWorkGroup(e.target.value), placeholder: "e.g. Tree Work Orders" }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "Default description for jobs from this template" })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Parts"), defaultParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, defaultParts.map((pu) => {
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Dock Repair", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created work order is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: workGroup, onChange: (e) => setWorkGroup(e.target.value), placeholder: "e.g. Tree Work Orders" }))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: description, onChange: (e) => setDescription(e.target.value), placeholder: "Default description for jobs from this template" })), parts && parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Parts"), defaultParts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-2" }, defaultParts.map((pu) => {
     const part = parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => removePart(pu.partId), className: "text-[#a8532a] hover:underline text-xs" }, "Remove"));
   })), /* @__PURE__ */ React.createElement("div", { className: "w-56" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
@@ -11230,7 +11235,7 @@ function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, on
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Standard Gas Test", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Quote Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created quote is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Labor Hours" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: laborHours, onChange: (e) => setLaborHours(e.target.value), placeholder: "0" })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("percent"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "%"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("flat"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "flat" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "$")), shopSuppliesMode === "percent" ? /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.1", className: inputCls, value: shopSuppliesPercent, onChange: (e) => setShopSuppliesPercent(e.target.value), placeholder: "0" }) : /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: shopSuppliesAmount, onChange: (e) => setShopSuppliesAmount(e.target.value), placeholder: "0.00" }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Default notes shown on the quote" })), /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement("input", {
+  } }, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Template Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Standard Gas Test", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Quote Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "What the created quote is titled" })), /* @__PURE__ */ React.createElement(Field, { label: "Labor Hours" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.25", className: inputCls, value: laborHours, onChange: (e) => setLaborHours(e.target.value), placeholder: "0" })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("percent"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "%"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setShopSuppliesMode("flat"), className: "px-2 text-xs font-medium " + (shopSuppliesMode === "flat" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]") }, "$")), shopSuppliesMode === "percent" ? /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.1", className: inputCls, value: shopSuppliesPercent, onChange: (e) => setShopSuppliesPercent(e.target.value), placeholder: "0" }) : /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.01", className: inputCls, value: shopSuppliesAmount, onChange: (e) => setShopSuppliesAmount(e.target.value), placeholder: "0.00" }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Default notes shown on the quote" })), /* @__PURE__ */ React.createElement("div", { className: "mt-1 mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Default Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement("input", {
     className: inputCls + " flex-1",
     value: li.description,
     onChange: (e) => updateLine(li.id, "description", e.target.value),
@@ -11686,7 +11691,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), !initial && /propane/i.test(`${title} ${workGroup}`) && /* @__PURE__ */ React.createElement("div", { className: "rounded-md border border-[#F5E3D9] bg-[#FBEEDA] px-3 py-2 mb-3 text-xs text-[#9A6B1F]" }, "Propane requests are tracked on the ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, "Propane tab"), " \u2014 it schedules the 10am/4pm run and tracks payment. Consider creating this there instead."), comebackSuggestion && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 rounded-md border border-[#E2DED5] bg-[#F1EEE9] px-3 py-2 mb-3 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("span", null, "Is this related to “", comebackSuggestion.title, "”, completed ", comebackSuggestion.completedDate, "?"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRelatedWorkOrderId(comebackSuggestion.id), className: "font-semibold text-[#377249] hover:underline" }, "Link it"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setComebackSuggestionDismissed(true), className: "text-[#9A968D] hover:underline" }, "Dismiss"))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: true })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Set a future date to schedule work in advance (e.g. a gas test) \u2014 it'll show on the Calendar and Dashboard.")), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
+  } }, !initial && templates && templates.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Start from Template (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: templateId, onChange: (e) => applyTemplate(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Blank work order"), templates.map((t) => /* @__PURE__ */ React.createElement("option", { key: t.id, value: t.id }, t.name)))), !initial && /propane/i.test(`${title} ${workGroup}`) && /* @__PURE__ */ React.createElement("div", { className: "rounded-md border border-[#F5E3D9] bg-[#FBEEDA] px-3 py-2 mb-3 text-xs text-[#9A6B1F]" }, "Propane requests are tracked on the ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, "Propane tab"), " \u2014 it schedules the 10am/4pm run and tracks payment. Consider creating this there instead."), comebackSuggestion && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 rounded-md border border-[#E2DED5] bg-[#F1EEE9] px-3 py-2 mb-3 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("span", null, "Is this related to “", comebackSuggestion.title, "”, completed ", comebackSuggestion.completedDate, "?"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setRelatedWorkOrderId(comebackSuggestion.id), className: "font-semibold text-[#377249] hover:underline" }, "Link it"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => setComebackSuggestionDismissed(true), className: "text-[#9A968D] hover:underline" }, "Dismiss"))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: "e.g. Fix leaking faucet", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Set a future date to schedule work in advance (e.g. a gas test) \u2014 it'll show on the Calendar and Dashboard.")), /* @__PURE__ */ React.createElement(Field, { label: "Site" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}` })),
@@ -11812,7 +11817,7 @@ function ServiceAppointmentForm({ initial, defaultDate, onSave, onCancel }) {
       className: `px-3 py-1.5 rounded-md text-sm font-medium border ${kind === k.key ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
     },
     k.label
-  ))), /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === "delivery" ? "e.g. Propane delivery" : "e.g. Meet with the Smiths", autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Time (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "time", className: inputCls, value: time, onChange: (e) => setTime(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value), placeholder: kind === "delivery" ? "e.g. Propane delivery" : "e.g. Meet with the Smiths", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Time (optional)" }, /* @__PURE__ */ React.createElement("input", { type: "time", className: inputCls, value: time, onChange: (e) => setTime(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -13294,7 +13299,7 @@ function TreeRequestForm({ initial, db, onSave, onCancel }) {
     onChange: pickCustomer,
     placeholder: "Search customers…",
     noneLabel: "No customer linked"
-  })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Stage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: stage, onChange: (e) => setStage(e.target.value) }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement(Field, { label: "Noted Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: notedDate, onChange: (e) => setNotedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: 'What & where — e.g. "Large dead oak leaning over the driveway near Site 42"', autoFocus: true })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !description.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, initial ? "Save Changes" : "Log Tree")));
+  })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Stage" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: stage, onChange: (e) => setStage(e.target.value) }, TREE_STAGES.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))), /* @__PURE__ */ React.createElement(Field, { label: "Noted Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: notedDate, onChange: (e) => setNotedDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 3, value: description, onChange: (e) => setDescription(e.target.value), placeholder: 'What & where — e.g. "Large dead oak leaning over the driveway near Site 42"', autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !description.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, initial ? "Save Changes" : "Log Tree")));
 }
 function TreeRow({ tree, db, onEdit, onDelete, onCreateWorkOrder, onSetStage, onViewWorkOrder, onWorkOrderStatus, onEditWorkOrder }) {
   const site = tree.siteId ? db.sites.find((s) => s.id === tree.siteId) : null;
@@ -14653,7 +14658,7 @@ function HydroMeterView({ db, persist }) {
     value: filter,
     onChange: (e) => setFilter(e.target.value),
     placeholder: "Type a site #\u2026",
-    autoFocus: true,
+    autoFocus: AUTO_FOCUS,
     className: "w-full mb-4 border border-[#E2DED5] rounded-lg px-4 py-3 text-lg bg-white"
   }), filter ? (filteredSites.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic px-1" }, "No sites match \u201C", filter, "\u201D.") : renderSitesBlock(filteredSites)) : /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, groupSitesByHydroRange(sites).map((group) => {
     const isOpen = openGroups.has(group.label);
@@ -15151,7 +15156,7 @@ function RateOptionForm({ initial, showAccount, onSave, onCancel }) {
       value: label,
       onChange: (e) => setLabel(e.target.value),
       placeholder: "Name",
-      autoFocus: true
+      autoFocus: AUTO_FOCUS
     }), React.createElement("input", {
       type: "number",
       min: "0",
@@ -15471,7 +15476,7 @@ function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
       value: text,
       onChange: (e) => setText(e.target.value),
       placeholder: "e.g.\n400,389.45,12\n409,450,9",
-      autoFocus: true
+      autoFocus: AUTO_FOCUS
     }
   )), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-1" }, validRows.length, " site", validRows.length === 1 ? "" : "s", " ready to import"), unmatchedCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-1" }, unmatchedCount, " row", unmatchedCount === 1 ? "" : "s", " had a site number that didn't match an existing site \u2014 those will be skipped: ", unmatchedRows.map((r) => r.siteNumber).join(", ")), invalidAmountCount > 0 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, invalidAmountCount, " row", invalidAmountCount === 1 ? "" : "s", " had a missing or invalid lot fee amount \u2014 those will be skipped."), !yearValid && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, "Enter a valid 4-digit season year."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement(
     "button",
@@ -15733,7 +15738,7 @@ function SystemHealthView({ db, persist }) {
   const clearErrors = () => {
     persist({ ...db, systemErrorLog: [] });
   };
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "System Health & Alerts", subtitle: "Data volume, third-party usage limits, and recent errors." }), React.createElement(ServerAlertsPanel, { db }), React.createElement(ClientErrorsPanel, { db }), React.createElement(LostWorkOrdersCheck, { db }), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Data Stored", value: `${estimatedMB.toFixed(1)} MB`, subtitle: "of 1 GB free tier" }), /* @__PURE__ */ React.createElement(StatCard, { label: "Email Usage", value: `${emailPct}%`, tone: toneFor(emailPct), subtitle: `${emailsUsedThisMonth} of ${emailLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Zoho Flow Usage", value: `${zohoPct}%`, tone: toneFor(zohoPct), subtitle: `${zohoUsed} of ${zohoLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Errors Logged", value: errorLog.length, tone: errorLog.length > 0 ? "text-[#a8532a]" : void 0 })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size.")), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(sharedRecordPct)}` }, Math.round(sharedRecordKB).toLocaleString(), " KB shared settings record"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1,024 KB limit")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(sharedRecordPct)}`, style: { width: `${Math.max(sharedRecordPct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Settings, deals, cottage orders, trash and the activity log share one database record with a hard 1 MB limit. If this nears the limit, saving those stops working \u2014 ask for more of it to be split out."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 not in use since photo uploads are disabled."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(AdminSectionHeader, { title: "System Health & Alerts", subtitle: "Data volume, third-party usage limits, and recent errors." }), React.createElement(ServerAlertsPanel, { db }), React.createElement(ClientErrorsPanel, { db }), React.createElement(LostWorkOrdersCheck, { db }), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5" }, /* @__PURE__ */ React.createElement(StatCard, { label: "Data Stored", value: `${estimatedMB.toFixed(1)} MB`, subtitle: "of 1 GB free tier" }), /* @__PURE__ */ React.createElement(StatCard, { label: "Email Usage", value: `${emailPct}%`, tone: toneFor(emailPct), subtitle: `${emailsUsedThisMonth} of ${emailLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Zoho Flow Usage", value: `${zohoPct}%`, tone: toneFor(zohoPct), subtitle: `${zohoUsed} of ${zohoLimit}/mo` }), /* @__PURE__ */ React.createElement(StatCard, { label: "Errors Logged", value: errorLog.length, tone: errorLog.length > 0 ? "text-[#a8532a]" : void 0 })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Data Volume"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1 mb-3" }, recordCounts.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.label, className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", null, r.label), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, r.count)))), /* @__PURE__ */ React.createElement("div", { className: "pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm font-medium text-[#1E1A13]" }, estimatedMB.toFixed(2), " MB (est.)"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1 GB Firestore free tier")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: "h-full rounded-full bg-[#377249]", style: { width: `${Math.max(storagePct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Rough estimate based on data currently loaded \u2014 not Firestore's actual billed size.")), /* @__PURE__ */ React.createElement("div", { className: "pt-3 mt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(sharedRecordPct)}` }, Math.round(sharedRecordKB).toLocaleString(), " KB shared settings record"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of 1,024 KB limit")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(sharedRecordPct)}`, style: { width: `${Math.max(sharedRecordPct, 1)}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Settings, deals, cottage orders, trash and the activity log share one database record with a hard 1 MB limit. If this nears the limit, saving those stops working \u2014 ask for more of it to be split out."))), /* @__PURE__ */ React.createElement("div", { className: "space-y-4" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Email Usage (EmailJS)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-sm font-medium ${toneFor(emailPct)}` }, emailsUsedThisMonth, " sent"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: emailLimit, onChange: (e) => updateSetting("emailMonthlyLimit", Number(e.target.value) || 2e3), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(emailPct)}`, style: { width: `${emailPct}%` } })), emailPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit.")), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Zoho Flow Tasks (manual entry)"), /* @__PURE__ */ React.createElement("div", { className: "flex items-baseline justify-between mb-1.5 gap-2" }, /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Used this month: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoUsed, onChange: (e) => updateSetting("zohoFlowUsedThisMonth", Number(e.target.value) || 0), className: "w-16 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center ml-1" })), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "of ", /* @__PURE__ */ React.createElement("input", { type: "number", value: zohoLimit, onChange: (e) => updateSetting("zohoFlowMonthlyLimit", Number(e.target.value) || 100), className: "w-14 border border-[#E2DED5] rounded px-1 py-0.5 text-xs text-center" }), " /mo")), /* @__PURE__ */ React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, /* @__PURE__ */ React.createElement("div", { className: `h-full rounded-full ${barToneFor(zohoPct)}`, style: { width: `${zohoPct}%` } })), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] mt-1.5" }, "Zoho doesn't expose usage to the app \u2014 check your Zoho Flow dashboard and update this monthly."), zohoPct >= 90 && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, "Close to the monthly limit \u2014 winterize auto-fill may stop processing.")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5" }, /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "App Version / Build Log"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3" }, /* @__PURE__ */ React.createElement("input", { type: "text", value: versionNote, onChange: (e) => setVersionNote(e.target.value), placeholder: "e.g. Added Seasonal Fees tab", className: "flex-1 border border-[#E2DED5] rounded-lg px-3 py-1.5 text-sm" }), /* @__PURE__ */ React.createElement("button", { onClick: addVersionNote, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white" }, "Log update")), versionLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No updates logged yet.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 max-h-56 overflow-y-auto" }, versionLog.map((v) => /* @__PURE__ */ React.createElement("div", { key: v.id, className: "flex justify-between gap-3 text-xs" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, v.note), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, v.date))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13]" }, "Recent Errors"), errorLog.length > 0 && /* @__PURE__ */ React.createElement("button", { onClick: clearErrors, className: "text-xs text-[#75716A] hover:underline" }, "Clear")), errorLog.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A]" }, "No errors logged. Failed email sends will show up here.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-56 overflow-y-auto" }, errorLog.map((e) => /* @__PURE__ */ React.createElement("div", { key: e.id, className: "text-xs border-b border-[#F1EEE9] pb-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#a8532a]" }, e.source), /* @__PURE__ */ React.createElement("span", { className: "text-[#9A968D] flex-shrink-0" }, timeAgo(e.ts))), /* @__PURE__ */ React.createElement("div", { className: "text-[#4B4740]" }, e.message)))))), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "font-serif text-base font-semibold text-[#1E1A13] mb-3" }, "Known Free-Tier Limits (reference)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] space-y-1.5" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firestore (Spark/free): "), "1 GB stored, 50,000 reads/day, 20,000 writes/day \u2014 check the Firebase console for actual usage."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Firebase Storage (Blaze free tier): "), "5 GB stored, 1 GB/day downloaded \u2014 used for work order photos (shrunk to about 0.3 MB each) and email attachments."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "EmailJS Personal plan: "), "2,000 emails/month."), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-medium text-[#1E1A13]" }, "Zoho Flow free plan: "), "5 flows, 100 tasks/month."), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#9A968D] pt-1" }, "These limits will change once EmailJS and Zoho Flow are upgraded \u2014 update the numbers above when that happens."))));
 }
 const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders", "consignments", "sunspace", "admindashboard", "adminreports", "seasonalfees", "hydroreview", "salestransactions"]);
 function matchCustomerByEmail(customers, email) {
@@ -15753,7 +15758,7 @@ function CorrespondenceLinkPicker({ customers, onPick, onCancel }) {
     return hay.includes(q);
   }).slice(0, 8) : [];
   return /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] mt-3 pt-3" }, /* @__PURE__ */ React.createElement("input", {
-    autoFocus: true,
+    autoFocus: AUTO_FOCUS,
     className: "w-full text-sm rounded-md border border-[#E2DED5] px-3 py-2 mb-2",
     placeholder: "Search customer to link\u2026",
     value: term,
@@ -16201,7 +16206,41 @@ const FIELD_TABS = [
   { key: "park", label: "Park" },
   { key: "more", label: "More" }
 ];
-function FieldHeader({ title, subtitle, online }) {
+// Whether this phone still has changes the server hasn't confirmed. Firestore
+// keeps them on the device and sends them when it can; waitForPendingWrites
+// resolves once everything written so far has been received.
+function usePendingWrites() {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (!db_ || typeof db_.waitForPendingWrites !== "function") return;
+    let alive = true;
+    let waiting = false;
+    const check = () => {
+      if (waiting) return;
+      waiting = true;
+      let done = false;
+      Promise.resolve().then(() => db_.waitForPendingWrites()).then(() => {
+        done = true;
+        waiting = false;
+        if (alive) setPending(false);
+      }, () => {
+        waiting = false;
+      });
+      setTimeout(() => {
+        if (!done && alive) setPending(true);
+      }, 600);
+    };
+    check();
+    const t = setInterval(check, 2e3);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  return pending;
+}
+function FieldHeader({ title, subtitle, online, pending }) {
+  const status = !online ? pending ? { label: "Not sent yet", dot: "bg-[#9A6B1F]" } : { label: "Offline", dot: "bg-[#9A6B1F]" } : pending ? { label: "Saving\u2026", dot: "bg-[#C1652F] animate-pulse" } : { label: "Synced", dot: "bg-[#377249]" };
   return React.createElement(
     "div",
     { className: "flex-shrink-0 bg-[#FFFDFA] border-b border-[#E2DED5] px-4 pb-2.5 flex items-start justify-between gap-3", style: { paddingTop: "max(14px, env(safe-area-inset-top))" } },
@@ -16214,8 +16253,8 @@ function FieldHeader({ title, subtitle, online }) {
     React.createElement(
       "span",
       { className: "flex-shrink-0 min-h-[34px] flex items-center gap-1.5 rounded-full border border-[#E2DED5] bg-[#F9F5EC] px-2.5 py-1.5 text-[11px] font-semibold text-[#4B4740] whitespace-nowrap" },
-      React.createElement("span", { className: `w-[7px] h-[7px] rounded-full flex-shrink-0 ${online ? "bg-[#377249]" : "bg-[#9A6B1F]"}` }),
-      online ? "Synced" : "Offline"
+      React.createElement("span", { className: `w-[7px] h-[7px] rounded-full flex-shrink-0 ${status.dot}` }),
+      status.label
     )
   );
 }
@@ -16223,7 +16262,7 @@ function FieldOfflineBanner() {
   return React.createElement(
     "div",
     { className: "flex-shrink-0 bg-[#FBEEDA] border-b border-[#e8d7b4] px-4 py-2" },
-    React.createElement("p", { className: "text-[11.5px] font-medium text-[#9A6B1F]" }, "Offline — changes are saved on this device and will sync when you're back in range.")
+    React.createElement("p", { className: "text-[11.5px] font-medium text-[#9A6B1F]" }, "Offline \u2014 changes are saved on this device and will send when you're back in range. Keep the app open or come back to it once you have signal.")
   );
 }
 // Outline icons for the field app's bottom tabs (24x24, drawn with the
@@ -16416,10 +16455,62 @@ function FieldSignupsReviewModal({ entries, db, confirmPendingSignup, removePend
     )
   );
 }
+// Field job list helpers. "Assigned to" is free text (usually a first name),
+// or occasionally a staff id, so both are checked.
+function fieldIsMine(wo, actor, staff) {
+  const me = (actor || "").trim().toLowerCase();
+  if (!me) return false;
+  const a = (wo.assignedTo || "").trim();
+  if (a.toLowerCase() === me) return true;
+  const st = (staff || []).find((x) => x.id === a);
+  return !!st && (st.name || "").trim().toLowerCase() === me;
+}
+function fieldJobBucket(wo) {
+  if (wo.status === "Completed") return "done";
+  if (!wo.date) return "nodate";
+  const today = todayISO();
+  return wo.date < today ? "overdue" : wo.date === today ? "today" : "upcoming";
+}
+const FIELD_JOB_BUCKETS = [
+  { key: "overdue", label: "Overdue", color: "#a8532a" },
+  { key: "today", label: "Today", color: "#1E1A13" },
+  { key: "upcoming", label: "Coming up", color: "#1E1A13" },
+  { key: "nodate", label: "No date", color: "#75716A" }
+];
+function fieldJobMatches(wo, db, query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const site = db.sites.find((x) => x.id === wo.siteId);
+  const cottage = db.cottages.find((x) => x.id === wo.cottageId);
+  const customer = wo.customerId ? db.customers.find((x) => x.id === wo.customerId) : null;
+  const hay = [wo.title, wo.description, wo.workOrderNumber, wo.assignedTo, site && site.number, site && `site ${site.number}`, cottage && cottage.name, customer && customer.name].filter(Boolean).join(" ").toLowerCase();
+  return q.split(/\s+/).every((word) => hay.includes(word));
+}
+function fieldJobSort(a, b) {
+  const aFlag = a.priority === "Urgent" ? 0 : 1;
+  const bFlag = b.priority === "Urgent" ? 0 : 1;
+  if (aFlag !== bFlag) return aFlag - bFlag;
+  return (a.date || "").localeCompare(b.date || "");
+}
+function FieldJobGroups({ jobs, db, onOpenJob, Row, limitUpcoming }) {
+  return FIELD_JOB_BUCKETS.map((b) => {
+    let list = jobs.filter((w) => fieldJobBucket(w) === b.key).sort(fieldJobSort);
+    if (!list.length) return null;
+    const more = b.key === "upcoming" && limitUpcoming && list.length > limitUpcoming ? list.length - limitUpcoming : 0;
+    if (more) list = list.slice(0, limitUpcoming);
+    return React.createElement(
+      "div",
+      { key: b.key, className: "mb-3" },
+      React.createElement("h3", { className: "text-[11px] font-bold uppercase tracking-[0.07em] mb-1.5", style: { color: b.color } }, `${b.label} (${list.length + more})`),
+      list.map((w) => React.createElement(Row, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) })),
+      more > 0 && React.createElement("p", { className: "text-xs text-[#75716A] -mt-1 mb-2" }, `+ ${more} more coming up`)
+    );
+  });
+}
 function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const signupsNeedingReview = (pendingSignups || []).length;
-  const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && (w.assignedTo || "").trim().toLowerCase() === (actor || "").trim().toLowerCase());
+  const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff));
   const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const overdueCount = db.workOrders.filter(isOverdue).length;
@@ -16435,12 +16526,9 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
     fourPmPropane.length > 0 && `${fourPmPropane.length} on 4pm run`
   ].filter(Boolean);
   const pendingPropaneSubtitle = pendingPropaneParts.length > 0 ? pendingPropaneParts.join(" \xB7 ") : "All caught up";
-  const todaysJobs = openWorkOrders.slice().sort((a, b) => {
-    const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
-    const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
-    if (aFlag !== bFlag) return aFlag - bFlag;
-    return (a.date || "").localeCompare(b.date || "");
-  }).slice(0, 5);
+  // Your own jobs when you have any, otherwise everyone's.
+  const listMine = myOpenJobs.length > 0;
+  const todaysJobs = listMine ? myOpenJobs : openWorkOrders;
   const recentActivity = (db.activityLog || []).slice(0, 6);
   return React.createElement(
     React.Fragment,
@@ -16495,10 +16583,10 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
     React.createElement(
       "div",
       { className: "flex items-center justify-between mb-2" },
-      React.createElement("h2", { className: "text-[15px] font-bold text-[#1E1A13]" }, "Today's Jobs"),
-      React.createElement("button", { type: "button", onClick: () => onSeeAllJobs(), className: "text-xs font-semibold text-[#377249]" }, "See all")
+      React.createElement("h2", { className: "text-[15px] font-bold text-[#1E1A13]" }, listMine ? "My Jobs" : "Open Jobs"),
+      React.createElement("button", { type: "button", onClick: () => onSeeAllJobs(), className: "min-h-[32px] text-xs font-semibold text-[#377249]" }, "See all")
     ),
-    todaysJobs.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Nothing open right now.") : React.createElement("div", { className: "mb-5" }, todaysJobs.map((w) => React.createElement(FieldJobRow, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) }))),
+    todaysJobs.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Nothing open right now.") : React.createElement("div", { className: "mb-5" }, React.createElement(FieldJobGroups, { jobs: todaysJobs, db, onOpenJob, Row: FieldJobRow, limitUpcoming: 3 })),
     React.createElement(
       "div",
       { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" },
@@ -16512,15 +16600,14 @@ function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, rem
     )
   );
 }
-function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, onOpenJob, setToast }) {
+function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, whose, onWhose, query, onQuery, onOpenJob, setToast }) {
   const [newOpen, setNewOpen] = useState(false);
-  const filtered = db.workOrders.filter((w) => w.status === filter).sort((a, b) => {
-    if (filter === "Completed") return (b.completedDate || "").localeCompare(a.completedDate || "");
-    const aFlag = isOverdue(a) || a.priority === "Urgent" ? 0 : 1;
-    const bFlag = isOverdue(b) || b.priority === "Urgent" ? 0 : 1;
-    if (aFlag !== bFlag) return aFlag - bFlag;
-    return (a.date || "").localeCompare(b.date || "");
-  });
+  const searching = query.trim() !== "";
+  const scoped = db.workOrders.filter((w) => whose !== "mine" || fieldIsMine(w, actor, db.staff));
+  // A search looks through every status, so finished jobs turn up too.
+  const filtered = scoped.filter((w) => (searching || w.status === filter) && fieldJobMatches(w, db, query));
+  const byNewest = (a, b) => (b.completedDate || b.date || "").localeCompare(a.completedDate || a.date || "");
+  const mineCount = db.workOrders.filter((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff)).length;
   const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
   const saveNew = (wo) => {
     const activityLog = addLog(db, actor, `Created work order "${wo.title}"`);
@@ -16554,8 +16641,23 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
         }
       })
     ),
-    React.createElement("button", { type: "button", onClick: () => setNewOpen(true), className: "w-full min-h-[44px] mb-4 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Work Order"),
+    React.createElement("button", { type: "button", onClick: () => setNewOpen(true), className: "w-full min-h-[44px] mb-3 rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249]" }, "+ New Work Order"),
     React.createElement(
+      "div",
+      { className: "relative mb-2.5" },
+      React.createElement("input", { type: "text", inputMode: "search", enterKeyHint: "search", value: query, onChange: (e) => onQuery(e.target.value), placeholder: "Search site #, name, job\u2026", "aria-label": "Search jobs", className: inputCls + " min-h-[44px] pr-10 text-[15px]" }),
+      searching && React.createElement("button", { type: "button", onClick: () => onQuery(""), "aria-label": "Clear search", className: "absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full text-[#75716A] text-lg" }, "\xD7")
+    ),
+    React.createElement(
+      "div",
+      { className: "flex rounded-full border border-[#E2DED5] bg-[#FFFDFA] p-1 mb-2.5" },
+      [["mine", `My jobs${mineCount ? ` (${mineCount})` : ""}`], ["all", "Everyone"]].map(([key, label]) => React.createElement(
+        "button",
+        { key, type: "button", onClick: () => onWhose(key), "aria-pressed": whose === key, className: `flex-1 min-h-[36px] rounded-full text-[13px] font-semibold ${whose === key ? "bg-[#1E1A13] text-[#F9F5EC]" : "text-[#4B4740]"}` },
+        label
+      ))
+    ),
+    !searching && React.createElement(
       "div",
       { className: "flex gap-2 mb-4" },
       STATUS.map((s) => React.createElement(
@@ -16564,12 +16666,14 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
           key: s,
           type: "button",
           onClick: () => onFilter(s),
+          "aria-pressed": filter === s,
           className: `flex-1 min-h-[40px] rounded-full text-[12.5px] font-semibold border ${filter === s ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "bg-[#FFFDFA] text-[#4B4740] border-[#E2DED5]"}`
         },
         s
       ))
     ),
-    filtered.length === 0 ? React.createElement(EmptyState, { text: `No ${filter.toLowerCase()} jobs.` }) : filtered.map((w) => React.createElement(FieldJobCard, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) }))
+    searching && React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, `${filtered.length} match${filtered.length === 1 ? "" : "es"} across all statuses${whose === "mine" ? " (your jobs)" : ""}`),
+    filtered.length === 0 ? React.createElement(EmptyState, { text: searching ? "No jobs match that search." : whose === "mine" ? `No ${filter.toLowerCase()} jobs assigned to you.` : `No ${filter.toLowerCase()} jobs.` }) : searching || filter === "Completed" ? filtered.slice().sort(byNewest).map((w) => React.createElement(FieldJobCard, { key: w.id, wo: w, db, onOpen: () => onOpenJob(w.id) })) : React.createElement(FieldJobGroups, { jobs: filtered, db, onOpenJob, Row: FieldJobCard })
   );
 }
 function FieldAddPartModal({ db, onAdd, onClose }) {
@@ -16593,6 +16697,107 @@ function FieldAddPartModal({ db, onAdd, onClose }) {
       { className: "flex justify-end gap-2 mt-4" },
       React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
       React.createElement("button", { type: "button", disabled: !valid, onClick: () => onAdd(partId, qtyNum), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Add Part")
+    )
+  );
+}
+// Before/after photos on a work order. Shrunk on the phone first (longest
+// side 1600px, JPEG) so uploads are quick on site and storage stays small.
+const WO_PHOTO_MAX_SIDE = 1600;
+function resizeImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, WO_PHOTO_MAX_SIDE / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Couldn't read that photo.")), "image/jpeg", 0.8);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("That file isn't a photo the app can read."));
+    };
+    img.src = url;
+  });
+}
+function WorkOrderPhotos({ wo, saveWorkOrder, actor, compact }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  const photos = wo.photos || [];
+  const add = async (files) => {
+    const list = Array.from(files || []).slice(0, 6);
+    if (!list.length) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setError("Photos need a connection \u2014 add them once you have signal.");
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    try {
+      const added = [];
+      for (const file of list) {
+        const blob = await resizeImageFile(file);
+        const id = uid();
+        const path = `work-order-photos/${wo.id}/${Date.now()}-${id}.jpg`;
+        const ref = storage_.ref().child(path);
+        await ref.put(blob, { contentType: "image/jpeg" });
+        added.push({ id, url: await ref.getDownloadURL(), path, by: actor || "", ts: (/* @__PURE__ */ new Date()).toISOString() });
+      }
+      await saveWorkOrder({ ...wo, photos: [...photos, ...added] });
+    } catch (e) {
+      setError(e && e.message || "Couldn't add that photo. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (photo) => {
+    setConfirmRemove(null);
+    setViewing(null);
+    await saveWorkOrder({ ...wo, photos: photos.filter((p) => p.id !== photo.id) });
+    if (photo.path) storage_.ref().child(photo.path).delete().catch(() => {
+    });
+  };
+  return React.createElement(
+    "div",
+    { className: compact ? "mb-5" : "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" },
+    React.createElement("h3", { className: compact ? "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" : "text-sm font-bold text-[#1E1A13] mb-2" }, "Photos", photos.length ? ` (${photos.length})` : ""),
+    photos.length > 0 && React.createElement(
+      "div",
+      { className: "grid grid-cols-3 gap-2 mb-2" },
+      photos.map((p) => React.createElement(
+        "button",
+        { key: p.id, type: "button", onClick: () => setViewing(p), className: "aspect-square rounded-lg overflow-hidden bg-[#F1EEE9] border border-[#E2DED5]", "aria-label": "View photo" },
+        React.createElement("img", { src: p.url, alt: "", loading: "lazy", className: "w-full h-full object-cover" })
+      ))
+    ),
+    React.createElement("input", { ref: inputRef, type: "file", accept: "image/*", multiple: true, className: "hidden", "data-testid": "wo-photo-input", onChange: (e) => {
+      add(e.target.files);
+      e.target.value = "";
+    } }),
+    React.createElement("button", { type: "button", disabled: busy, onClick: () => inputRef.current && inputRef.current.click(), className: "w-full min-h-[44px] rounded-lg border border-dashed border-[#C7C2B8] text-sm font-medium text-[#377249] disabled:opacity-60" }, busy ? "Adding photo\u2026" : "+ Add photo"),
+    error && React.createElement("p", { className: "text-xs text-[#a8532a] mt-1.5" }, error),
+    viewing && React.createElement(
+      Modal,
+      { title: "Photo", onClose: () => setViewing(null), wide: true },
+      React.createElement("img", { src: viewing.url, alt: "Work order photo", className: "w-full max-h-[70vh] object-contain rounded-lg bg-[#F1EEE9]" }),
+      React.createElement("p", { className: "text-xs text-[#75716A] mt-2" }, [viewing.by, viewing.ts ? timeAgo(viewing.ts) : null].filter(Boolean).join(" \xB7 ")),
+      confirmRemove === viewing.id ? React.createElement(
+        "div",
+        { className: "flex items-center justify-between gap-2 mt-3 rounded-lg bg-[#F5E3D9] px-3 py-2 text-sm" },
+        React.createElement("span", null, "Remove this photo?"),
+        React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => remove(viewing), className: "px-3 py-1.5 rounded-md bg-[#a8532a] text-white text-xs font-semibold" }, "Remove"), React.createElement("button", { type: "button", onClick: () => setConfirmRemove(null), className: "px-3 py-1.5 rounded-md text-xs text-[#75716A]" }, "Cancel"))
+      ) : React.createElement(
+        "div",
+        { className: "flex justify-between gap-2 mt-3" },
+        React.createElement("button", { type: "button", onClick: () => setConfirmRemove(viewing.id), className: "px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Remove photo"),
+        React.createElement("a", { href: viewing.url, target: "_blank", rel: "noopener noreferrer", className: "px-3 py-2 text-sm text-[#377249] font-semibold" }, "Open full size")
+      )
     )
   );
 }
@@ -16725,6 +16930,7 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         React.createElement("p", { className: "text-[10.5px] text-[#75716A] mt-1" }, n.author, " \xB7 ", timeAgo(n.ts))
       ))
     ),
+    React.createElement(WorkOrderPhotos, { wo, saveWorkOrder, actor }),
     React.createElement(
       "div",
       { className: card },
@@ -16798,8 +17004,11 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
 }
 function FieldPropaneRow({ request, db, onComplete, onExpired, onMoveRun }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
-  const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  const siteId = cottage && cottage.siteId || request.siteId;
+  const site = siteId ? db.sites.find((s) => s.id === siteId) : null;
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
+  // Where the tank is, in the clearest form available.
+  const where = [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" \xB7 ");
   const otherRun = request.run === "10am" ? "4pm" : "10am";
   const runAccent = request.completed ? "#377249" : request.run === "10am" ? "#C1652F" : "#3B6E91";
   const paymentLabel = request.payment === "Paid" ? `Paid — ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
@@ -16813,10 +17022,11 @@ function FieldPropaneRow({ request, db, onComplete, onExpired, onMoveRun }) {
     React.createElement(
       "div",
       { className: "flex items-start justify-between gap-2" },
-      React.createElement("span", { className: `text-[15px] font-semibold ${request.completed ? "text-[#75716A]" : "text-[#1E1A13]"}` }, site ? `Site ${site.number}` : "No site", request.completed ? " — done" : ""),
+      React.createElement("span", { className: `text-[15px] font-semibold ${request.completed ? "text-[#75716A]" : "text-[#1E1A13]"}` }, where || customer && customer.name || "Location not set", request.completed ? " \u2014 done" : ""),
       paymentLabel && React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${request.payment === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, paymentLabel)
     ),
-    React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-1 truncate" }, [customer ? customer.name : null, tankSummary || null].filter(Boolean).join(" \xB7 ") || "—"),
+    React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-1 truncate" }, [where && customer ? customer.name : null, tankSummary || null, request.notes || null].filter(Boolean).join(" \xB7 ")),
+    !where && !request.completed && React.createElement("p", { className: "text-[12px] font-medium text-[#9A6B1F] bg-[#FBEEDA] rounded-md px-2 py-1 mt-1.5" }, "No site or cottage linked \u2014 check where this goes before heading out."),
     !request.completed && React.createElement(
       "div",
       { className: "grid grid-cols-2 gap-2 mt-3" },
@@ -17204,36 +17414,110 @@ function fieldParkDetail(db, kind, ref) {
   }
   return "";
 }
+// The Park tab's "Recently opened", kept on this device only.
+const FIELD_PARK_RECENT_KEY = "qic-field-park-recent";
+function readParkRecent() {
+  try {
+    const list = JSON.parse(localStorage.getItem(FIELD_PARK_RECENT_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+function fieldParkItem(db, kind, id) {
+  if (kind === "Site") {
+    const s2 = db.sites.find((x) => x.id === id);
+    return s2 && { kind, id, title: `Site ${s2.number}`, sub: s2.section || "", ref: s2 };
+  }
+  if (kind === "Cottage") {
+    const c = db.cottages.find((x) => x.id === id);
+    return c && { kind, id, title: c.name, sub: c.year || c.modelNumber || "", ref: c };
+  }
+  const cu = db.customers.find((x) => x.id === id);
+  return cu && { kind, id, title: cu.name, sub: cu.phone || cu.email || "", ref: cu };
+}
+const compareSiteNumber = (a, b) => String(a.number).localeCompare(String(b.number), void 0, { numeric: true });
 function FieldParkScreen({ db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence }) {
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelectedState] = useState(null);
+  const [recent, setRecent] = useState(readParkRecent);
+  const [openSection, setOpenSection] = useState(null);
+  const setSelected = (sel) => {
+    setSelectedState(sel);
+    if (!sel) return;
+    const next = [sel, ...recent.filter((r) => !(r.kind === sel.kind && r.id === sel.id))].slice(0, 6);
+    setRecent(next);
+    try {
+      localStorage.setItem(FIELD_PARK_RECENT_KEY, JSON.stringify(next));
+    } catch (e) {
+    }
+  };
   const results = fieldParkResults(db, query);
+  const resultCard = (r) => React.createElement(
+    "button",
+    {
+      key: `${r.kind}-${r.id}`,
+      type: "button",
+      onClick: () => setSelected({ kind: r.kind, id: r.id }),
+      className: "w-full text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3.5 mb-2.5"
+    },
+    React.createElement(
+      "div",
+      { className: "flex items-start justify-between gap-2" },
+      React.createElement("span", { className: "text-base font-bold text-[#1E1A13]" }, r.title),
+      React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F1EEE9] text-[#75716A] flex-shrink-0" }, r.kind)
+    ),
+    r.sub && React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-0.5" }, r.sub),
+    React.createElement("div", { className: "text-[12px] text-[#75716A] mt-1" }, fieldParkDetail(db, r.kind, r.ref) || "\u2014")
+  );
+  const recentItems = recent.map((r) => fieldParkItem(db, r.kind, r.id)).filter(Boolean);
+  // Sites by section, in the park's usual order; anything unlisted last.
+  const sectionNames = Array.from(new Set(db.sites.map((x) => x.section || "Other"))).sort((a, b) => {
+    const ia = SECTION_ORDER.findIndex((x) => x.toLowerCase() === a.toLowerCase());
+    const ib = SECTION_ORDER.findIndex((x) => x.toLowerCase() === b.toLowerCase());
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  const browse = React.createElement(
+    React.Fragment,
+    null,
+    recentItems.length > 0 && React.createElement("h3", { className: "text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A] mb-1.5" }, "Recently opened"),
+    recentItems.map(resultCard),
+    React.createElement("h3", { className: `text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A] mb-1.5 ${recentItems.length ? "mt-4" : ""}` }, "Browse by section"),
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" },
+      sectionNames.map((name, i) => {
+        const sites = db.sites.filter((x) => (x.section || "Other") === name).sort(compareSiteNumber);
+        const isOpen = openSection === name;
+        return React.createElement(
+          "div",
+          { key: name, className: i > 0 ? "border-t border-[#EEEBE5]" : "" },
+          React.createElement(
+            "button",
+            { type: "button", onClick: () => setOpenSection(isOpen ? null : name), "aria-expanded": isOpen, className: "w-full min-h-[52px] px-4 flex items-center justify-between gap-3 text-left" },
+            React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, name),
+            React.createElement("span", { className: "text-xs text-[#75716A]" }, `${sites.length} site${sites.length === 1 ? "" : "s"} `, React.createElement("span", { className: `inline-block transition-transform ${isOpen ? "rotate-180" : ""}` }, "\u25BE"))
+          ),
+          isOpen && React.createElement(
+            "div",
+            { className: "grid grid-cols-4 gap-2 px-3 pb-3" },
+            sites.map((x) => React.createElement("button", { key: x.id, type: "button", onClick: () => setSelected({ kind: "Site", id: x.id }), className: "min-h-[44px] rounded-lg border border-[#E2DED5] bg-[#F9F5EC] text-sm font-semibold text-[#1E1A13]" }, x.number))
+          )
+        );
+      })
+    )
+  );
   return React.createElement(
     React.Fragment,
     null,
     React.createElement("input", {
       className: inputCls + " min-h-[50px] text-base mb-4",
-      placeholder: "Site #, customer, or cottage…",
+      placeholder: "Site #, customer, or cottage\u2026",
+      "aria-label": "Search the park",
       value: query,
       onChange: (e) => setQuery(e.target.value)
     }),
-    query.trim() === "" ? React.createElement("p", { className: "text-xs text-[#9A968D] text-center mt-6" }, "Start typing to search sites, cottages, and customers.") : results.length === 0 ? React.createElement(EmptyState, { text: "No matches." }) : results.map((r) => React.createElement(
-      "button",
-      {
-        key: `${r.kind}-${r.id}`,
-        type: "button",
-        onClick: () => setSelected({ kind: r.kind, id: r.id }),
-        className: "w-full text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3.5 mb-2.5"
-      },
-      React.createElement(
-        "div",
-        { className: "flex items-start justify-between gap-2" },
-        React.createElement("span", { className: "text-base font-bold text-[#1E1A13]" }, r.title),
-        React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F1EEE9] text-[#75716A] flex-shrink-0" }, r.kind)
-      ),
-      r.sub && React.createElement("div", { className: "text-[12.5px] text-[#75716A] mt-0.5" }, r.sub),
-      React.createElement("div", { className: "text-[12px] text-[#75716A] mt-1" }, fieldParkDetail(db, r.kind, r.ref) || "—")
-    )),
+    query.trim() === "" ? browse : results.length === 0 ? React.createElement(EmptyState, { text: "No matches." }) : results.map(resultCard),
     selected && selected.kind === "Site" && React.createElement(SiteDetailModal, {
       site: db.sites.find((s) => s.id === selected.id),
       db,
@@ -17314,8 +17598,7 @@ function FieldMoreScreen({ onNavigate, onSignOut, isAdminOrManager }) {
         },
         React.createElement("span", { className: "text-[15px] font-semibold text-[#1E1A13]" }, r.label),
         React.createElement("span", { className: "text-[#C7C2B8]" }, "›")
-      )),
-      React.createElement("div", { className: "px-4 py-3 border-t border-[#EEEBE5]" }, React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Push notifications and sync settings are coming in a later update — use the desktop view for those for now."))
+      ))
     ),
     onSignOut && React.createElement(MobileSignOutButton, { onSignOut })
   );
@@ -17743,10 +18026,50 @@ function FieldSaveErrorBar({ error, onRetry }) {
   );
 }
 function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveWinterizingRequest, saveInvoice, deleteInvoice, saveQuote, saveCottage, saveSite, saveCorrespondence, deleteCorrespondence, saveCustomer, saveTreeRequest, pendingSignups, confirmPendingSignup, removePendingSignup, isAdminOrManager, onCreateInvoice, onGoToDesktopTab, onSignOut }) {
-  const [screen, setScreen] = useState("today");
+  // Screens are recorded in the browser history so the phone's Back button
+  // or swipe steps back through the app (job -> jobs -> today) instead of
+  // leaving it.
+  const HOME = { screen: "today", jobId: null, hydroSiteId: null, idx: 0 };
+  const [nav, setNav] = useState(() => window.history.state && window.history.state.qicField || HOME);
+  useEffect(() => {
+    window.history.replaceState({ ...window.history.state || {}, qicField: nav }, "");
+    const onPop = (e) => setNav(e.state && e.state.qicField || HOME);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const go = (patch) => {
+    const next = { screen: nav.screen, jobId: null, hydroSiteId: null, ...patch, idx: nav.idx + 1 };
+    if (next.screen === nav.screen && next.jobId === nav.jobId && next.hydroSiteId === nav.hydroSiteId) return;
+    window.history.pushState({ ...window.history.state || {}, qicField: next }, "");
+    setNav(next);
+  };
+  // In-app "back" links use the same history, falling back to a screen when
+  // the app was opened straight onto this one.
+  const back = (fallback) => {
+    if (nav.idx > 0) window.history.back();
+    else go(fallback);
+  };
+  const { screen, jobId, hydroSiteId } = nav;
+  const pendingWrites = usePendingWrites();
   const [jobFilter, setJobFilter] = useState("Open");
-  const [jobId, setJobId] = useState(null);
-  const [hydroSiteId, setHydroSiteId] = useState(null);
+  const [jobQuery, setJobQuery] = useState("");
+  // "My jobs" or "Everyone", remembered on this device. Starts on My jobs
+  // when you have any assigned.
+  const [jobWhose, setJobWhoseState] = useState(() => {
+    try {
+      const saved = localStorage.getItem("qic-field-job-whose");
+      if (saved === "mine" || saved === "all") return saved;
+    } catch (e) {
+    }
+    return db.workOrders.some((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff)) ? "mine" : "all";
+  });
+  const setJobWhose = (v) => {
+    setJobWhoseState(v);
+    try {
+      localStorage.setItem("qic-field-job-whose", v);
+    } catch (e) {
+    }
+  };
   const [toast, setToast] = useState(null);
   const [online, setOnline] = useState(typeof navigator === "undefined" || navigator.onLine);
   useEffect(() => {
@@ -17759,19 +18082,9 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
       window.removeEventListener("offline", goOffline);
     };
   }, []);
-  const openJob = (id) => {
-    setJobId(id);
-    setScreen("job");
-  };
-  const goToJobs = () => {
-    setJobId(null);
-    setScreen("jobs");
-  };
-  const selectTab = (key) => {
-    setJobId(null);
-    setHydroSiteId(null);
-    setScreen(key);
-  };
+  const openJob = (id) => go({ screen: "job", jobId: id });
+  const goToJobs = () => go({ screen: "jobs" });
+  const selectTab = (key) => go({ screen: key });
   const titles = {
     today: ["Today", new Date().toLocaleDateString(void 0, { weekday: "long", day: "2-digit", month: "long" }) + (actor ? ` \xB7 ${actor}` : "")],
     jobs: ["Work Orders", null],
@@ -17791,7 +18104,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
   return React.createElement(
     "div",
     { className: "h-[100dvh] flex flex-col bg-[#F9F5EC] text-[#1E1A13]" },
-    React.createElement(FieldHeader, { title, subtitle, online }),
+    React.createElement(FieldHeader, { title, subtitle, online, pending: pendingWrites }),
     !online && React.createElement(FieldOfflineBanner, null),
     React.createElement(
       "div",
@@ -17807,14 +18120,14 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         onSeeAllJobs: goToJobs,
         onGoToRuns: () => selectTab("runs")
       }),
-      screen === "jobs" && React.createElement(FieldJobsScreen, { db, persist, actor, saveWorkOrder, filter: jobFilter, onFilter: setJobFilter, onOpenJob: openJob, setToast }),
+      screen === "jobs" && React.createElement(FieldJobsScreen, { db, persist, actor, saveWorkOrder, filter: jobFilter, onFilter: setJobFilter, whose: jobWhose, onWhose: setJobWhose, query: jobQuery, onQuery: setJobQuery, onOpenJob: openJob, setToast }),
       screen === "job" && React.createElement(FieldJobDetailScreen, {
         db,
         persist,
         actor,
         wo,
         saveWorkOrder,
-        onBack: goToJobs,
+        onBack: () => back({ screen: "jobs" }),
         setToast,
         onCreateInvoice: (order) => onCreateInvoice(order),
         onGoToSiteMap: () => onGoToDesktopTab("map")
@@ -17831,14 +18144,11 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         setToast
       }),
       screen === "park" && React.createElement(FieldParkScreen, { db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence }),
-      screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: setScreen, onSignOut, isAdminOrManager }),
+      screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: (key) => go({ screen: key }), onSignOut, isAdminOrManager }),
       screen === "hydro" && React.createElement(FieldHydroListScreen, {
         db,
-        onEnterReading: (id) => {
-          setHydroSiteId(id);
-          setScreen("hydropad");
-        },
-        onBack: () => selectTab("more"),
+        onEnterReading: (id) => go({ screen: "hydropad", hydroSiteId: id }),
+        onBack: () => back({ screen: "more" }),
         onGoToDesktopTab
       }),
       screen === "hydropad" && React.createElement(FieldHydroPadScreen, {
@@ -17847,25 +18157,25 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         actor,
         siteId: hydroSiteId,
         setToast,
-        onSaved: () => setScreen("hydro"),
-        onBack: () => setScreen("hydro")
+        onSaved: () => back({ screen: "hydro" }),
+        onBack: () => back({ screen: "hydro" })
       }),
-      screen === "parts" && isAdminOrManager && React.createElement(FieldPartsScreen, { db, onBack: () => selectTab("more") }),
+      screen === "parts" && isAdminOrManager && React.createElement(FieldPartsScreen, { db, onBack: () => back({ screen: "more" }) }),
       screen === "quotes" && isAdminOrManager && React.createElement(FieldQuotesScreen, {
         db,
         persist,
         actor,
         saveQuote,
         saveWorkOrder,
-        onBack: () => selectTab("more"),
+        onBack: () => back({ screen: "more" }),
         onGoToJobs: () => selectTab("jobs"),
         setToast
       }),
-      screen === "invoices" && isAdminOrManager && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, deleteInvoice, onBack: () => selectTab("more"), setToast }),
+      screen === "invoices" && isAdminOrManager && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, deleteInvoice, onBack: () => back({ screen: "more" }), setToast }),
       screen === "correspondence" && isAdminOrManager && saveCorrespondence && React.createElement(
         React.Fragment,
         null,
-        React.createElement("button", { onClick: () => selectTab("more"), className: "text-xs font-semibold text-[#377249] mb-3 hover:underline" }, "← Back"),
+        React.createElement("button", { onClick: () => back({ screen: "more" }), className: "min-h-[36px] text-xs font-semibold text-[#377249] mb-1 hover:underline" }, "\u2190 Back"),
         React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage })
       )
     ),

@@ -34,6 +34,15 @@ service firebase.storage {
       allow read: if isStaff();
       allow write: if isStaff();
     }
+    // Before/after photos on work orders, added from the job screen. The
+    // app shrinks them to JPEGs first; anything over 5 MB or not an image
+    // is refused.
+    match /work-order-photos/{workOrderId}/{fileName} {
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
     // Files attached to outgoing correspondence emails (Correspondence
     // reply box, Work Order "Email Customer", service request replies).
     match /correspondence-attachments/{fileName} {

@@ -125,3 +125,114 @@ test("field app tabs have icons and mark the current tab", async () => {
   assert.equal(await page.getByRole("button", { name: "Jobs" }).getAttribute("aria-current"), "page", "a job's screen counts as the Jobs tab");
   await page.close();
 });
+
+test("field jobs list: my jobs / everyone, grouped by when they're due, and search across statuses", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => {
+    const t = todayISO();
+    const day = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const W = (id, title, status, date, assignedTo, siteId) => ({ id, title, status, date, assignedTo, siteId, priority: "Medium", partsUsed: [], notes: [] });
+    const db = { settings: {}, sites: [{ id: "s1", number: "1065" }, { id: "s2", number: "530" }], cottages: [], customers: [], staff: [{ id: "st1", name: "Dave" }], parts: [], workOrderTemplates: [], invoices: [], activityLog: [],
+      workOrders: [W("a", "Leaky tap", "Open", day(-3), "Dave", "s1"), W("b", "Step", "Open", t, "st1", "s2"), W("c", "Gas test", "Open", day(4), "Mike", "s2"), W("d", "Old deck job", "Completed", day(-30), "Mike", "s1")] };
+    function Host() {
+      const [filter, setFilter] = React.useState("Open");
+      const [whose, setWhose] = React.useState("mine");
+      const [query, setQuery] = React.useState("");
+      return React.createElement(FieldJobsScreen, { db, persist() {}, actor: "Dave", saveWorkOrder() {}, filter, onFilter: setFilter, whose, onWhose: setWhose, query, onQuery: setQuery, onOpenJob() {}, setToast() {} });
+    }
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(Host));
+  });
+  await page.getByText("Overdue (1)").waitFor();
+  assert.ok(await page.getByText("Today (1)").isVisible(), "a job assigned by staff id counts as mine");
+  assert.equal(await page.getByText("Gas test").count(), 0, "someone else's job is hidden on My jobs");
+  await page.getByRole("button", { name: "Everyone" }).click();
+  await page.getByText("Coming up (1)").waitFor();
+  await page.getByLabel("Search jobs").fill("1065");
+  await page.getByText("2 matches across all statuses").waitFor();
+  assert.ok(await page.getByText("Old deck job").isVisible(), "search finds completed jobs too");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("field propane runs say where each tank is, and warn when nothing is linked", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => {
+    const db = { sites: [{ id: "s1", number: "530" }, { id: "s2", number: "1015" }], cottages: [{ id: "k1", name: "Maple", siteId: "s1" }], customers: [{ id: "c1", name: "Lynn Morris" }], parts: [] };
+    const row = (request) => React.createElement(FieldPropaneRow, { request: { run: "10am", completed: false, ...request }, db, onComplete() {}, onExpired() {}, onMoveRun() {} });
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement("div", null,
+      row({ id: "a", cottageId: "k1" }), row({ id: "b", siteId: "s2", customerId: "c1" }), row({ id: "c", customerId: "c1" })));
+  });
+  await page.getByText("Site 530 · Maple").waitFor();
+  assert.ok(await page.getByText("Site 1015").isVisible(), "a site on the request itself is used");
+  assert.equal(await page.getByText("No site or cottage linked").count(), 1, "only the unlinked one is flagged");
+  assert.equal(await page.getByText("No site", { exact: true }).count(), 0);
+  await page.close();
+});
+
+test("on a phone, opening a form doesn't jump into the first box; on a computer it still does", async () => {
+  const render = () => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(StaffForm, { initial: null, onSave() {}, onCancel() {} }));
+  const phone = await openApp(browser, "stub", { viewport: { width: 390, height: 800 }, touch: true });
+  await phone.evaluate(render);
+  await phone.locator("#test input").first().waitFor();
+  assert.equal(await phone.evaluate(() => document.activeElement && document.activeElement.tagName), "BODY", "nothing is focused on a phone");
+  await phone.close();
+  const computer = await openApp(browser, "stub");
+  await computer.evaluate(render);
+  await computer.locator("#test input").first().waitFor();
+  assert.equal(await computer.evaluate(() => document.activeElement && document.activeElement.tagName), "INPUT");
+  await computer.close();
+});
+
+test("field app: the phone's Back button steps back through screens instead of leaving", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 }, touch: true });
+  await page.evaluate(() => {
+    const wo = { id: "w1", workOrderNumber: "WO-0001", title: "Leaky tap", status: "Open", priority: "Medium", date: todayISO(), assignedTo: "Dave", partsUsed: [], notes: [] };
+    const db = { settings: {}, sites: [], cottages: [], customers: [], parts: [], staff: [], invoices: [], quotes: [], workOrders: [wo], workOrderTemplates: [], activityLog: [], propaneRequests: [], winterizingRequests: [], treeRequests: [], hydroReadings: [] };
+    const noop = () => {};
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(FieldApp, { db, persist: noop, actor: "Dave", saveWorkOrder: noop, savePropaneRequest: noop, saveWinterizingRequest: noop, saveInvoice: noop, deleteInvoice: noop, saveQuote: noop, saveCottage: noop, saveSite: noop, saveCorrespondence: noop, deleteCorrespondence: noop, saveCustomer: noop, saveTreeRequest: noop, pendingSignups: [], confirmPendingSignup: noop, removePendingSignup: noop, isAdminOrManager: true, onCreateInvoice: noop, onGoToDesktopTab: noop, onSignOut: noop }));
+  });
+  await page.getByRole("button", { name: "Jobs", exact: true }).click();
+  await page.getByText("Leaky tap").first().click();
+  await page.getByRole("button", { name: "Start Job" }).waitFor();
+  await page.goBack();
+  await page.getByPlaceholder(/Search site/).waitFor();
+  await page.goBack();
+  await page.getByText("My Jobs").first().waitFor();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Parts" }).click();
+  await page.getByText("←", { exact: false }).first().click();
+  await page.getByRole("button", { name: "Hydro Readings" }).waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("field Park tab: browse by section and remember recently opened sites", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => {
+    localStorage.removeItem("qic-field-park-recent");
+    const db = { settings: {}, sites: [{ id: "s1", number: "12", section: "Limestone South" }, { id: "s2", number: "9", section: "Limestone South" }, { id: "s3", number: "1065", section: "Pebble Beach Seasonal" }], cottages: [], customers: [], workOrders: [], correspondence: [], parts: [], staff: [], invoices: [], quotes: [], activityLog: [] };
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(FieldParkScreen, { db, persist() {}, saveWorkOrder() {}, saveCottage() {}, saveSite() {}, saveCorrespondence() {} }));
+  });
+  await page.getByText("Browse by section").waitFor();
+  const sections = await page.locator("button[aria-expanded] > span:first-child").allTextContents();
+  assert.deepEqual(sections, ["Pebble Beach Seasonal", "Limestone South"], "sections in the park's usual order");
+  await page.getByRole("button", { name: /Limestone South/ }).click();
+  assert.deepEqual(await page.locator("div.grid button").allTextContents(), ["9", "12"], "sites in number order");
+  await page.getByRole("button", { name: "12", exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("qic-field-park-recent"))), [{ kind: "Site", id: "s1" }]);
+  await page.close();
+});
+
+test("field header shows Saving / Not sent yet when changes haven't reached the server", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 300 } });
+  const label = (props) => page.evaluate((p) => {
+    const el = document.getElementById("test");
+    ReactDOM.flushSync(() => ReactDOM.createRoot(el).render(React.createElement(FieldHeader, { title: "Today", ...p })));
+    return el.textContent;
+  }, props);
+  assert.match(await label({ online: true, pending: false }), /Synced/);
+  assert.match(await label({ online: true, pending: true }), /Saving/);
+  assert.match(await label({ online: false, pending: true }), /Not sent yet/);
+  assert.match(await label({ online: false, pending: false }), /Offline/);
+  await page.close();
+});
