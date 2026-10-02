@@ -262,3 +262,12 @@ test("hydro readings include every seasonal and 4 season site, whatever the tag'
   assert.deepEqual(result, [true, true, true, true, true, true, true, true, false, false]);
   await page.close();
 });
+
+test("side panels (work order / invoice from a customer card) fit on a phone screen", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(DrawerShell, { title: "Sunroom caulking", eyebrow: "Work order", width: "480px", onClose() {} }, React.createElement("p", null, "Customer's info: With heavy rain, we are having water seep in."))));
+  await page.getByText("Sunroom caulking").waitFor();
+  const width = await page.evaluate(() => [...document.querySelectorAll("div")].find((d) => d.style.width === "480px").getBoundingClientRect().width);
+  assert.ok(width <= 390, `the 480px panel shrinks to the screen (got ${width}px)`);
+  await page.close();
+});
