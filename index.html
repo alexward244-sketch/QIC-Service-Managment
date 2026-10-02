@@ -236,11 +236,24 @@ function sendEmail({ toEmail, toName, subject, message, department, source, atta
     ...attachmentBase64 ? { attachment: attachmentBase64, attachment_name: attachmentName || "attachment" } : {}
   }).then((result) => {
     if (emailUsageRecorder) emailUsageRecorder();
+    recordAppSentEmail(toEmail, subject);
     return result;
   }).catch((err) => {
     reportFailure((err && (err.text || err.message)) || "Unknown error");
     throw err;
   });
+}
+
+// Everything the app emails goes out through the department's Zoho
+// mailbox, so it also lands in Zoho's Sent folder. A note of each send lets
+// the server's "replies sent from Zoho" job tell those apart from emails
+// someone actually wrote in Zoho. Best-effort: a failed note only means the
+// email may also show up in Correspondence as sent from Zoho.
+function recordAppSentEmail(toEmail, subject) {
+  try {
+    db_.collection("appSentEmails").add({ toEmail: String(toEmail || "").trim().toLowerCase().slice(0, 200), subject: String(subject || "").slice(0, 300), sentAt: (/* @__PURE__ */ new Date()).toISOString() }).catch(() => {});
+  } catch (e) {
+  }
 }
 
 // Texts staff by emailing their carrier's email-to-SMS gateway (Telus).
@@ -16036,6 +16049,11 @@ function CorrespondenceIsSnoozed(c) {
 // back on for the ones a collapsed row would hide.
 // One row per customer; messages not linked to anyone are grouped by the
 // other person's address, so our reply and their answer stay together.
+// The Handled list: newest first by when each message was actually sent or
+// received - not when someone marked it handled - so it reads as a timeline.
+function handledCorrespondence(items) {
+  return items.filter((c) => c.status === "handled" || c.direction === "out" && c.status !== "snoozed").sort((a, b) => (b.receivedAt || "").localeCompare(a.receivedAt || ""));
+}
 function groupCorrespondenceByCustomer(items) {
   const rows = [];
   const index = /* @__PURE__ */ new Map();
@@ -16099,7 +16117,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
   const all = (db.correspondence || []);
   const needsAttention = all.filter(CorrespondenceIsNew).sort((a, b) => (b.receivedAt || "").localeCompare(a.receivedAt || ""));
   const snoozed = all.filter(CorrespondenceIsSnoozed).sort((a, b) => (a.followUpAt || "").localeCompare(b.followUpAt || ""));
-  const handled = all.filter((c) => c.status === "handled" || c.direction === "out" && c.status !== "snoozed").sort((a, b) => (b.handledAt || b.receivedAt || "").localeCompare(a.handledAt || a.receivedAt || ""));
+  const handled = handledCorrespondence(all);
   const q = filter.trim().toLowerCase();
   const matchesFilter = (item) => {
     if (!q) return true;

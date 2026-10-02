@@ -157,6 +157,9 @@ test("the work order summary needs a staff role and returns Claude's text", asyn
   assert.equal(ok.body.summary, "We replaced the tap washer.");
 });
 
+// Zoho's sentDateInGMT runs ahead by the mailbox's time-zone offset.
+const SHIFT = 4 * 3600e3;
+
 test("replies sent from Zoho: a missing permission is reported in System Health", async () => {
   zoho.on = true;
   zoho.foldersStatus = 400;
@@ -175,10 +178,10 @@ test("replies sent from Zoho are filed under the customer, once, and answer thei
   await db.collection("correspondence").doc("app1").set({ id: "app1", direction: "out", status: "handled", customerId: null, fromEmail: "service@qicampark.com", toEmail: "Bob@Y.com", subject: "Gate code", body: "It's 1234", receivedAt: iso(now - 3600e3) });
   zoho.on = true;
   zoho.sent = [
-    { messageId: "m1", subject: "Re: Leak", fromAddress: "service@qicampark.com", toAddress: "&quot;Anne Lee&quot; &lt;Anne@X.com&gt;", sentDateInGMT: String(now - 2 * 3600e3), hasAttachment: "0" },
-    { messageId: "m2", subject: "Gate code", fromAddress: "service@qicampark.com", toAddress: "bob@y.com", sentDateInGMT: String(now - 3600e3 + 60e3), hasAttachment: "0" },
-    { messageId: "m3", subject: "Prepaid propane", fromAddress: "service@qicampark.com", toAddress: "accounting@qicampark.com", sentDateInGMT: String(now - 1800e3), hasAttachment: "0" },
-    { messageId: "m4", subject: "Old", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", sentDateInGMT: String(now - 48 * 3600e3), hasAttachment: "0" }
+    { messageId: "m1", subject: "Re: Leak", fromAddress: "service@qicampark.com", toAddress: "&quot;Anne Lee&quot; &lt;Anne@X.com&gt;", receivedTime: String(now - 2 * 3600e3), sentDateInGMT: String(now - 2 * 3600e3 + SHIFT), hasAttachment: "0" },
+    { messageId: "m2", subject: "Gate code", fromAddress: "service@qicampark.com", toAddress: "bob@y.com", receivedTime: String(now - 3600e3 + 60e3), sentDateInGMT: String(now - 3600e3 + 60e3 + SHIFT), hasAttachment: "0" },
+    { messageId: "m3", subject: "Prepaid propane", fromAddress: "service@qicampark.com", toAddress: "accounting@qicampark.com", receivedTime: String(now - 1800e3), sentDateInGMT: String(now - 1800e3 + SHIFT), hasAttachment: "0" },
+    { messageId: "m4", subject: "Old", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", receivedTime: String(now - 48 * 3600e3), sentDateInGMT: String(now - 48 * 3600e3 + SHIFT), hasAttachment: "0" }
   ];
   zoho.content = { m1: "<div>We'll be there Tuesday.</div><div>On Mon, Anne Lee wrote:</div><div>&gt; The tap leaks</div>" };
 
@@ -196,12 +199,57 @@ test("replies sent from Zoho are filed under the customer, once, and answer thei
   assert.equal(waiting.handledBy, "Replied in Zoho");
   assert.equal((await all("serverAlerts")).length, 0);
 
+  // Emails the app sent itself (an invoice) are noted, and skipped here;
+  // old notes are cleared out.
+  await db.collection("appSentEmails").doc("n1").set({ toEmail: "anne@x.com", subject: "Invoice 1001", sentAt: iso(now - 9 * 60e3) });
+  await db.collection("appSentEmails").doc("n-old").set({ toEmail: "anne@x.com", subject: "Invoice 900", sentAt: iso(now - 3 * 24 * 3600e3) });
+  zoho.sent.unshift({ messageId: "m-inv", subject: "Invoice 1001", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", receivedTime: String(now - 10 * 60e3), sentDateInGMT: String(now - 10 * 60e3 + SHIFT), hasAttachment: "0" });
+  await fns.zohoSentMail();
+  assert.equal((await all("correspondence")).some((c) => c.zohoMessageId === "m-inv"), false);
+  assert.deepEqual((await all("appSentEmails")).map((n) => n.id), ["n1"]);
+
   // Later sends are picked up on the next run; an attachment gets a note.
-  zoho.sent.unshift({ messageId: "m5", subject: "Your quote", fromAddress: "service@qicampark.com", toAddress: "newperson@z.com", sentDateInGMT: String(now - 60e3), hasAttachment: "1", summary: "Quote attached" });
+  zoho.sent.unshift({ messageId: "m5", subject: "Your quote", fromAddress: "service@qicampark.com", toAddress: "newperson@z.com", receivedTime: String(now - 60e3), sentDateInGMT: String(now - 60e3 + SHIFT), hasAttachment: "1", summary: "Quote attached" });
   await fns.zohoSentMail();
   corr = await all("correspondence");
   const m5 = corr.find((c) => c.zohoMessageId === "m5");
   assert.equal(m5.customerId, null);
   assert.match(m5.body, /^Quote attached\n\n\(Sent with an attachment/);
   assert.equal(corr.filter((c) => c.sentVia === "zoho").length, 2);
+});
+
+test("replies sent from Zoho: entries filed with Zoho's shifted time are corrected once, and app duplicates dropped", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const real = now - 2 * 3600e3;
+  await db.collection("customers").doc("c1").set({ id: "c1", name: "Anne Lee", email: "anne@x.com" });
+  // What the first version left behind: lastSentAt (shifted), a real Zoho
+  // reply and a copy of an app reply, both stamped 4 hours late.
+  await db.doc("serverState/zohoSentSync").set({ lastSentAt: real + 60e3 + SHIFT });
+  await db.collection("correspondence").doc("zoho_sent_r1").set({ id: "zoho_sent_r1", direction: "out", sentVia: "zoho", zohoMessageId: "r1", customerId: "c1", toEmail: "anne@x.com", subject: "Re: Leak", body: "Tuesday", receivedAt: iso(real + SHIFT), handledAt: iso(real + SHIFT), status: "handled" });
+  await db.collection("correspondence").doc("app2").set({ id: "app2", direction: "out", customerId: "c1", toEmail: "anne@x.com", subject: "", body: "Hello", receivedAt: iso(real + 60e3), status: "handled" });
+  await db.collection("correspondence").doc("zoho_sent_r2").set({ id: "zoho_sent_r2", direction: "out", sentVia: "zoho", zohoMessageId: "r2", customerId: "c1", toEmail: "anne@x.com", subject: "Message from QIC", body: "Hello", receivedAt: iso(real + 60e3 + SHIFT), handledAt: iso(real + 60e3 + SHIFT), status: "handled" });
+  // Anne's emails the shifted reply marked handled: one before it (right),
+  // one that came in an hour after it (wrong).
+  await db.collection("correspondence").doc("in-before").set({ id: "in-before", direction: "in", customerId: "c1", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(real - 3600e3), status: "handled", handledAt: iso(real + SHIFT), handledBy: "Replied in Zoho" });
+  await db.collection("correspondence").doc("in-after").set({ id: "in-after", direction: "in", customerId: "c1", fromEmail: "anne@x.com", subject: "Also", receivedAt: iso(real + 3600e3), status: "handled", handledAt: iso(real + SHIFT), handledBy: "Replied in Zoho" });
+  zoho.on = true;
+  zoho.sent = [
+    { messageId: "r2", subject: "Message from QIC", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", receivedTime: String(real + 60e3), sentDateInGMT: String(real + 60e3 + SHIFT), hasAttachment: "0" },
+    { messageId: "r1", subject: "Re: Leak", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", receivedTime: String(real), sentDateInGMT: String(real + SHIFT), hasAttachment: "0" }
+  ];
+
+  await fns.zohoSentMail();
+  await fns.zohoSentMail();
+  const corr = Object.fromEntries((await all("correspondence")).map((c) => [c.id, c]));
+  assert.equal(corr.zoho_sent_r1.receivedAt, iso(real));
+  assert.equal(corr.zoho_sent_r1.handledAt, iso(real));
+  assert.equal(corr.zoho_sent_r2, undefined, "the copy of the app's own reply is removed");
+  assert.equal(corr["in-before"].status, "handled");
+  assert.equal(corr["in-before"].handledAt, iso(real));
+  assert.equal(corr["in-after"].status, "new");
+  assert.equal(Object.keys(corr).length, 4);
+  const state = (await db.doc("serverState/zohoSentSync").get()).data();
+  assert.equal(state.timesRepaired, true);
+  assert.ok(state.lastReceivedAt <= now);
 });

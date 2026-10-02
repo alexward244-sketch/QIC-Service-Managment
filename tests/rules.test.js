@@ -92,6 +92,17 @@ test("device error reports: staff can add their own, only Admins and Service Man
   await assertSucceeds(withEmail("admin", "boss@qicampark.com").doc("clientErrors/a").delete());
 });
 
+test("notes of emails the app sent: staff can add them in the set shape, nobody reads them", async () => {
+  await seed();
+  const note = (extra = {}) => ({ toEmail: "anne@x.com", subject: "Invoice 1001", sentAt: "2026-10-02T12:00:00Z", ...extra });
+  const as = (role) => env.authenticatedContext("s-" + role, role ? { role } : {}).firestore();
+  await assertSucceeds(as("office").doc("appSentEmails/a").set(note()));
+  await assertFails(as("office").doc("appSentEmails/b").set(note({ body: "x" })));
+  await assertFails(as("").doc("appSentEmails/c").set(note()));
+  await assertFails(as("admin").doc("appSentEmails/a").get());
+  await assertFails(as("admin").doc("appSentEmails/a").delete());
+});
+
 test("file storage needs a staff role", async () => {
   const st = (role) => env.authenticatedContext("s-" + role, role === "noRole" ? {} : { role }).storage();
   await assertSucceeds(st("office").ref("correspondence-attachments/a.txt").putString("hi"));

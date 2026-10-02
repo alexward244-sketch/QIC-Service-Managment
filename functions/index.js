@@ -719,7 +719,8 @@ exports.generalServiceRequest = onRequest(
 // customer as a sent message in Correspondence, so the customer's thread
 // shows both sides. Mail to our own addresses (accounting notices, notes to
 // coworkers) is left out, and anything the app sent itself (which can also
-// land in Zoho's Sent folder) is recognised and not logged twice.
+// land in Zoho's Sent folder - the app notes each one in appSentEmails,
+// invoices and notices included) is recognised and not logged twice.
 const ZOHO_SENT_STATE = db.collection("serverState").doc("zohoSentSync");
 // On the very first run, pick up the last day's replies rather than
 // everything ever sent.
@@ -732,9 +733,12 @@ function emailsIn(text) {
   return Array.from(new Set((decoded.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) || []).map((e) => e.toLowerCase())));
 }
 
+// Loose on purpose: an email template may wrap the subject it's given.
 function sameSubject(a, b) {
   const norm = (s) => toStr(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
-  return norm(a) === norm(b);
+  const x = norm(a);
+  const y = norm(b);
+  return x === y || (x && y && (x.includes(y) || y.includes(x)));
 }
 
 let cachedSentFolderId = null;
@@ -751,18 +755,72 @@ async function zohoSentFolderId(accessToken) {
   return cachedSentFolderId;
 }
 
+// When a message went out. Zoho's "sentDateInGMT" is shifted by the
+// mailbox's time zone (seen live: exactly 4 hours ahead in summer), so the
+// real moment comes from "receivedTime" - when it was stored in Sent.
+function zohoSentTime(m) {
+  return Number(m.receivedTime || m.sentDateInGMT) || 0;
+}
+
+// Whether an email in Zoho's Sent folder is one the app sent (and logged
+// or noted) itself.
+async function sentByApp(to, subject, sentAt, exceptId) {
+  const lo = new Date(sentAt - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
+  const hi = new Date(sentAt + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
+  const nearby = await db.collection("correspondence").where("receivedAt", ">=", lo).where("receivedAt", "<=", hi).get();
+  const logged = nearby.docs.some((d) => {
+    const c = d.data();
+    // A reply written in the app with no subject goes out as "Message from QIC".
+    return d.id !== exceptId && c.direction === "out" && c.sentVia !== "zoho" && toStr(c.toEmail).toLowerCase() === to && sameSubject(c.subject || "Message from QIC", subject);
+  });
+  if (logged) return true;
+  const notes = await db.collection("appSentEmails").where("sentAt", ">=", lo).where("sentAt", "<=", hi).get();
+  return notes.docs.some((d) => toStr(d.data().toEmail).toLowerCase() === to && sameSubject(d.data().subject, subject));
+}
+
+// One-time clean-up of what the first version filed with the shifted time:
+// put the right time on each, drop the ones that were really the app's own
+// sends, and reopen customer emails a shifted reply wrongly marked handled
+// (ones that actually arrived after the reply).
+async function repairZohoSentTimes(listedById) {
+  const filed = await db.collection("correspondence").where("sentVia", "==", "zoho").get();
+  for (const d of filed.docs) {
+    const c = d.data();
+    const m = listedById.get(toStr(c.zohoMessageId));
+    if (!m) continue;
+    const realIso = new Date(zohoSentTime(m)).toISOString();
+    const shiftedIso = toStr(c.receivedAt);
+    if (realIso === shiftedIso) continue;
+    const wronglyHandled = await db.collection("correspondence").where("handledBy", "==", "Replied in Zoho").get();
+    await Promise.all(wronglyHandled.docs
+      .filter((w) => toStr(w.data().handledAt) === shiftedIso && toStr(w.data().receivedAt) > realIso)
+      .map((w) => w.ref.update({ status: "new", handledAt: null, handledBy: null })));
+    await Promise.all(wronglyHandled.docs
+      .filter((w) => toStr(w.data().handledAt) === shiftedIso && toStr(w.data().receivedAt) <= realIso)
+      .map((w) => w.ref.update({ handledAt: realIso })));
+    if (await sentByApp(toStr(c.toEmail).toLowerCase(), c.subject, zohoSentTime(m), d.id)) {
+      await d.ref.delete();
+    } else {
+      await d.ref.update({ receivedAt: realIso, handledAt: realIso });
+    }
+  }
+}
+
 async function syncZohoSentMail() {
   const accessToken = await getZohoAccessToken();
   const folderId = await zohoSentFolderId(accessToken);
   const stateSnap = await ZOHO_SENT_STATE.get();
-  const since = stateSnap.exists && stateSnap.data().lastSentAt ? Number(stateSnap.data().lastSentAt) : Date.now() - ZOHO_SENT_FIRST_LOOKBACK_MS;
+  const state = stateSnap.exists ? stateSnap.data() : {};
+  // lastReceivedAt replaced lastSentAt, which held the shifted time.
+  const since = state.lastReceivedAt ? Number(state.lastReceivedAt) : Date.now() - ZOHO_SENT_FIRST_LOOKBACK_MS;
 
   const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${folderId}&limit=50&sortBy=date`, accessToken);
   if (!listed.response) throw new Error(`Zoho wouldn't list the Sent folder (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
-  const messages = ((await listed.response.json()).data || [])
-    .map((m) => ({ ...m, sentAt: Number(m.sentDateInGMT || m.receivedTime) || 0 }))
-    .filter((m) => m.sentAt > since)
-    .sort((a, b) => a.sentAt - b.sentAt);
+  const all = ((await listed.response.json()).data || []).map((m) => ({ ...m, sentAt: zohoSentTime(m) }));
+  if (state.lastSentAt && !state.timesRepaired) {
+    await repairZohoSentTimes(new Map(all.map((m) => [toStr(m.messageId), m])));
+  }
+  const messages = all.filter((m) => m.sentAt > since).sort((a, b) => a.sentAt - b.sentAt);
 
   let added = 0;
   let newest = since;
@@ -775,16 +833,8 @@ async function syncZohoSentMail() {
     if (!to) continue;
     const sentIso = new Date(m.sentAt).toISOString();
 
-    // The app's own sends are already logged; don't add them a second time.
-    const nearby = await db.collection("correspondence")
-      .where("receivedAt", ">=", new Date(m.sentAt - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString())
-      .where("receivedAt", "<=", new Date(m.sentAt + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString())
-      .get();
-    const loggedByApp = nearby.docs.some((d) => {
-      const c = d.data();
-      return c.direction === "out" && c.sentVia !== "zoho" && toStr(c.toEmail).toLowerCase() === to && sameSubject(c.subject, m.subject);
-    });
-    if (loggedByApp) continue;
+    // The app's own sends are already logged or noted; don't add them again.
+    if (await sentByApp(to, m.subject, m.sentAt)) continue;
 
     const content = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${m.messageId}/content`, accessToken);
     const html = content.response ? toStr(((await content.response.json()).data || {}).content) : "";
@@ -821,8 +871,11 @@ async function syncZohoSentMail() {
         .map((d) => d.ref.update({ status: "handled", handledAt: sentIso, followUpAt: null, handledBy: "Replied in Zoho" })));
     }
   }
-  if (newest > since || !stateSnap.exists) {
-    await ZOHO_SENT_STATE.set({ lastSentAt: newest, checkedAt: new Date().toISOString() }, { merge: true });
+  // The app's notes of its own sends are only needed for a little while.
+  const stale = await db.collection("appSentEmails").where("sentAt", "<", new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()).limit(200).get();
+  await Promise.all(stale.docs.map((d) => d.ref.delete()));
+  if (newest > since || !state.lastReceivedAt || (state.lastSentAt && !state.timesRepaired)) {
+    await ZOHO_SENT_STATE.set({ lastReceivedAt: newest, timesRepaired: true, checkedAt: new Date().toISOString() }, { merge: true });
   }
   return { added };
 }
