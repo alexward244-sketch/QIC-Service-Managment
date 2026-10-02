@@ -101,6 +101,9 @@ test("Completing through the wrap-up window saves hours, service call and parts 
   assert.equal(wo.laborHours, 3.5);
   assert.deepEqual(wo.laborEntries.map((e) => [e.name, e.hours]), [["Dave", 2], ["Mike", 1.5]]);
   assert.equal(wo.serviceCallType, "Tech");
+  const last = wo.statusHistory[wo.statusHistory.length - 1];
+  assert.deepEqual([last.from, last.status], ["In Progress", "Completed"], "the status change is recorded on the work order");
+  assert.ok(last.by && last.at);
   assert.equal(wo.serviceCall, 70);
   assert.ok(wo.completedDate);
   assert.equal(wo.notes[0].text, "Work done: Swapped the washer");
@@ -129,5 +132,23 @@ test("An account without a role can't read or save work orders", async () => {
   });
   assert.equal(result.read, "permission-denied");
   assert.equal(result.write, "permission-denied");
+  await page.close();
+});
+
+test("Every status change is recorded on the work order, including a reopen", async () => {
+  await resetData({
+    "campground/data": SETTINGS,
+    "workOrders/w1": { id: "w1", title: "Sunroom caulking", status: "Completed", completedDate: "2026-09-10", priority: "Medium", date: "2026-09-05", workOrderNumber: "WO-0009", partsUsed: [], notes: [] }
+  });
+  const page = await openApp(browser, "emulator", { role: "admin" });
+  await mountWithDb(page, `(r) => React.createElement(CurrentUserContext.Provider, { value: "tester@qicampark.com" }, React.createElement(WorkOrdersView, { db: r.db, persist: r.persist, saveWorkOrder: r.saveWorkOrder, deleteWorkOrder: r.deleteWorkOrder, saveCottage: () => {}, saveCorrespondence: () => {}, onCreateInvoice: () => {}, workOrderPrefill: null, onConsumeWorkOrderPrefill: () => {} }))`, "(r) => r.db.workOrders.length === 1");
+  await page.evaluate(() => { const w = window.__api.db.workOrders[0]; return window.__api.saveWorkOrder({ ...w, status: "Open", completedDate: null }); });
+  const wo = await waitFor(async () => { const w = await findWorkOrder("Sunroom caulking"); return w && w.status === "Open" ? w : null; }, "the reopen to save");
+  assert.equal(wo.statusHistory.length, 1);
+  assert.deepEqual([wo.statusHistory[0].from, wo.statusHistory[0].status, wo.statusHistory[0].by], ["Completed", "Open", "tester@qicampark.com"]);
+  // A save that doesn't change the status adds nothing.
+  await page.evaluate(() => { const w = window.__api.db.workOrders[0]; return window.__api.saveWorkOrder({ ...w, notes: [{ id: "n", text: "hi" }] }); });
+  const again = await waitFor(async () => { const w = await findWorkOrder("Sunroom caulking"); return w && w.notes.length ? w : null; }, "the note to save");
+  assert.equal(again.statusHistory.length, 1);
   await page.close();
 });

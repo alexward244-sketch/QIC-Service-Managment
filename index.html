@@ -1131,10 +1131,48 @@ const PinNameContext = React.createContext(null);
 function useAuthEmail() {
   return React.useContext(CurrentUserContext);
 }
+// The last person seen by useCurrentActor, so saves made outside a screen
+// (e.g. the work order status history in useDb) can say who did them.
+let HISTORY_ACTOR = "";
 function useCurrentActor() {
   const email = React.useContext(CurrentUserContext);
   const pinName = React.useContext(PinNameContext);
-  return pinName || email || "Unknown";
+  const actor = pinName || email || "Unknown";
+  if (actor !== "Unknown") HISTORY_ACTOR = actor;
+  return actor;
+}
+// Every status change on a work order is recorded on it (who, when, from
+// what), so "how did this finished job end up open again?" has an answer.
+function withStatusHistory(prev, next, by) {
+  if (prev && prev.status === next.status) return next;
+  const entry = { status: next.status || "Open", from: prev ? prev.status || null : null, by: by || HISTORY_ACTOR || "Unknown", at: (/* @__PURE__ */ new Date()).toISOString() };
+  return { ...next, statusHistory: [...next.statusHistory || prev && prev.statusHistory || [], entry].slice(-30) };
+}
+function isReopening(wo, nextStatus) {
+  return wo && wo.status === "Completed" && nextStatus && nextStatus !== "Completed";
+}
+function workOrderHasInvoice(db, wo) {
+  return (db.invoices || []).some((inv) => inv.sourceType === "workOrder" && inv.sourceId === wo.id);
+}
+// "Are you sure?" before a completed job goes back to open - by drag, the
+// status menu, bulk edit or the field app's Reopen button.
+function ReopenConfirmModal({ ask, onCancel }) {
+  if (!ask) return null;
+  return React.createElement(
+    Modal,
+    { title: ask.count > 1 ? `Reopen ${ask.count} completed jobs?` : "Reopen this job?", onClose: onCancel },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, ask.count > 1 ? `${ask.count} of these work orders are marked completed${ask.invoiced ? `, and ${ask.invoiced} already ${ask.invoiced === 1 ? "has an invoice" : "have invoices"}` : ""}.` : `"${ask.title}" is marked completed${ask.invoiced ? " and already has an invoice" : ""}.`),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-5" }, "Reopening clears the completed date, and it's recorded in the job's status history."),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep completed"),
+      React.createElement("button", { type: "button", onClick: () => {
+        onCancel();
+        ask.proceed();
+      }, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Reopen")
+    )
+  );
 }
 function useIsMobile() {
   const query = "(max-width: 639px)";
@@ -1841,7 +1879,8 @@ function useDb() {
   const saveWorkOrder = useCallback(async (woIn) => {
     // firestoreSafe drops undefined fields; a new work order with no number
     // gets the next one.
-    const wo = withWorkOrderNumber(firestoreSafe(woIn));
+    const prev = workOrdersListRef.current.find((w) => w.id === woIn.id);
+    const wo = withStatusHistory(prev, withWorkOrderNumber(firestoreSafe(woIn)));
     const attempt = () => WORK_ORDERS_REF.doc(wo.id).set(wo);
     lastAttempt.current = attempt;
     try {
@@ -3279,7 +3318,20 @@ function WorkOrderViewModal({ wo: woProp, db, persist, saveWorkOrder, saveCorres
   const isDrawer = variant === "drawer";
   const Wrap = isDrawer ? DrawerShell : Modal;
   const wrapProps = isDrawer ? { title: wo.title, eyebrow: `${wo.workOrderNumber ? wo.workOrderNumber + " \xB7 " : ""}Work order${site ? " \xB7 Site " + site.number : cottage ? " \xB7 " + cottage.name : ""}`, badges: [wo.priority && /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${PRIORITY_STYLES[wo.priority] || ""}` }, wo.priority), /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)].filter(Boolean), onClose, width: "480px" } : { title: wo.workOrderNumber ? `${wo.workOrderNumber} — ${wo.title}` : wo.title, onClose, xl: true };
-  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.serviceCallType && wo.serviceCallType !== "None" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call: "), wo.serviceCallType, " (", formatPrice(wo.serviceCall || 0), ")"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), relatedSection, wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), saveWorkOrder && React.createElement(WorkOrderPhotos, { wo, saveWorkOrder, actor, compact: true }), wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
+  const statusHistory = (wo.statusHistory || []).slice().reverse();
+  const invoicedNotDone = linkedInvoice && wo.status !== "Completed" ? React.createElement("p", { className: "text-sm text-[#7A5418] bg-[#FBEEDA] border border-[#e8d7b4] rounded-md px-3 py-2 mb-4" }, "This job has an invoice but isn't marked completed. If the work is done, complete it from the Work Orders tab.") : null;
+  const historySection = statusHistory.length > 0 ? React.createElement(
+    "div",
+    { className: "mb-5" },
+    React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Status history"),
+    statusHistory.slice(0, 8).map((h, i) => React.createElement(
+      "div",
+      { key: i, className: "flex justify-between gap-3 text-[13px] py-1 border-b border-[#F1EEE9] last:border-b-0" },
+      React.createElement("span", { className: "text-[#1E1A13]" }, h.from ? `${h.from} \u2192 ${h.status}` : `Created as ${h.status}`),
+      React.createElement("span", { className: "text-[#75716A] text-right" }, [h.by, h.at ? new Date(h.at).toLocaleString(void 0, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null].filter(Boolean).join(" \xB7 "))
+    ))
+  ) : null;
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, invoicedNotDone, /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-[15px] text-[#4B4740] mb-5 pb-4 border-b border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Date: "), wo.date), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Status: "), wo.status), wo.priority && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Priority: "), wo.priority), wo.workGroup && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Work Group: "), wo.workGroup), wo.paymentStatus && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment: "), paymentStatusLabel(wo.paymentStatus)), site && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Site: "), site.number), cottage && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Cottage: "), cottage.name), customer && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Customer: "), customer.name), wo.assignedTo && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Assigned To: "), wo.assignedTo), Number(wo.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Labour: "), wo.laborHours, " hrs \xD7 ", wo.laborRateType, " (", formatPrice(wo.laborRate || 0), "/hr)"), wo.serviceCallType && wo.serviceCallType !== "None" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call: "), wo.serviceCallType, " (", formatPrice(wo.serviceCall || 0), ")"), wo.completedDate && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Completed: "), wo.completedDate)), invoiceSection, quoteSection, sourceLine && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] italic mb-4" }, sourceLine), relatedSection, wo.description && /* @__PURE__ */ React.createElement("div", { className: "mb-5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Description"), /* @__PURE__ */ React.createElement("p", { className: "text-[15px] text-[#1E1A13] whitespace-pre-wrap leading-relaxed" }, wo.description)), saveWorkOrder && React.createElement(WorkOrderPhotos, { wo, saveWorkOrder, actor, compact: true }), historySection, wo.partsUsed && wo.partsUsed.length > 0 && /* @__PURE__ */ React.createElement(DetailSection, { title: "Parts Used", empty: "" }, wo.partsUsed.map((pu) => {
     const part = db.parts.find((p) => p.id === pu.partId);
     return /* @__PURE__ */ React.createElement("div", { key: pu.partId, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, part ? part.name : "Unknown part"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "x", pu.quantity));
   })), wo.customerSummary && /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold" }, "Customer Summary"), /* @__PURE__ */ React.createElement("button", { onClick: editSavedSummary, className: "text-xs font-semibold text-[#377249] hover:underline" }, "Edit")), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap bg-[#F9F5EC] border border-[#E2DED5] rounded-md px-3 py-2" }, wo.customerSummary)), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("h4", { className: "text-xs uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Notes"), notes.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-2" }, "No notes yet \u2014 handy for jobs that span more than one day.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-2 max-h-52 overflow-y-auto" }, notes.map((n) => /* @__PURE__ */ React.createElement("div", { key: n.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("p", { className: "text-[#1E1A13] whitespace-pre-wrap" }, n.text), /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1" }, n.author, " \xB7 ", new Date(n.ts).toLocaleString())))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
@@ -10571,8 +10623,13 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     setDiscardConfirmOpen(false);
     setModal(null);
   };
-  const save = async (wo) => {
+  const [reopenAsk, setReopenAsk] = useState(null);
+  const save = async (wo, confirmed) => {
     const existing = db.workOrders.find((x) => x.id === wo.id);
+    if (!confirmed && isReopening(existing, wo.status)) {
+      setReopenAsk({ title: existing.title, invoiced: workOrderHasInvoice(db, existing), proceed: () => save({ ...wo, completedDate: null }, true) });
+      return;
+    }
     // Save first: if it fails, the form stays open with everything typed
     // and the error bar says why - nothing is logged or emailed.
     if (!await saveSucceeded(saveWorkOrder(wo))) return;
@@ -10710,6 +10767,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
   const [wrapUpWO, setWrapUpWO] = useState(null);
   const completeOrWrapUp = (wo, nextStatus) => {
     if (nextStatus === "Completed" && wo.status !== "Completed") setWrapUpWO(wo);
+    else if (isReopening(wo, nextStatus)) setReopenAsk({ title: wo.title, invoiced: workOrderHasInvoice(db, wo), proceed: () => changeStatus(wo, nextStatus) });
     else changeStatus(wo, nextStatus);
   };
   const advance = (wo) => {
@@ -10767,18 +10825,27 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     const wo = db.workOrders.find((w) => w.id === id);
     if (wo) completeOrWrapUp(wo, status);
   };
-  const bulkUpdate = (field, value, ids) => {
+  const bulkUpdate = (field, value, ids, confirmed) => {
     const idSet = new Set(ids);
+    const reopening = field === "status" ? db.workOrders.filter((w) => idSet.has(w.id) && isReopening(w, value)) : [];
+    if (!confirmed && reopening.length) {
+      setReopenAsk({ count: reopening.length, title: reopening[0].title, invoiced: reopening.filter((w) => workOrderHasInvoice(db, w)).length, proceed: () => bulkUpdate(field, value, ids, true) });
+      return;
+    }
     let parts = db.parts;
     const changed = [];
     db.workOrders.forEach((w) => {
       if (!idSet.has(w.id)) return;
-      const updated = { ...w, [field]: value };
+      let updated = { ...w, [field]: value };
       if (field === "status" && value === "Completed" && w.status !== "Completed") {
         updated.completedDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         updated.archived = false;
         parts = deductPartsUsed(parts, w.partsUsed);
+      } else if (field === "status" && isReopening(w, value)) {
+        updated.completedDate = null;
+        parts = restorePartsUsed(parts, w.partsUsed);
       }
+      if (field === "status") updated = withStatusHistory(w, updated, actor);
       changed.push(updated);
     });
     const fieldLabel = field === "status" ? "status" : "assignment";
@@ -10915,7 +10982,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
         formDirtyRef.current = d;
       }
     }
-  )), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this work order that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), wrapUpWO && React.createElement(WorkOrderWrapUpModal, {
+  )), React.createElement(ReopenConfirmModal, { ask: reopenAsk, onCancel: () => setReopenAsk(null) }), discardConfirmOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Discard unsaved changes?", onClose: () => setDiscardConfirmOpen(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "You've made changes to this work order that haven't been saved. Discard them?"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setDiscardConfirmOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Keep Editing"), /* @__PURE__ */ React.createElement("button", { onClick: confirmDiscard, className: "px-4 py-2 text-sm bg-[#a8532a] text-white rounded-md hover:bg-[#8a431f] font-medium" }, "Discard"))), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), wrapUpWO && React.createElement(WorkOrderWrapUpModal, {
     wo: wrapUpWO,
     db,
     actor,
@@ -16942,6 +17009,7 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
   const [noteText, setNoteText] = useState("");
   const [wrapUpOpen, setWrapUpOpen] = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
+  const [reopenAsk, setReopenAsk] = useState(null);
   // Hours typed here are kept as text locally (so "1." isn't cut short) and
   // saved as numbers; picked up again if they change elsewhere (e.g. wrap-up).
   const [fieldLabor, setFieldLabor] = useState(() => laborEntriesFrom(wo || {}));
@@ -17037,6 +17105,7 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${WO_STATUS_STYLES[wo.status] || ""}` }, wo.status)
       ),
       React.createElement("h1", { className: "font-serif text-[22px] leading-tight text-[#1E1A13]" }, wo.title),
+      hasInvoice && !isDone && React.createElement("p", { className: "text-[12px] font-medium text-[#9A6B1F] bg-[#FBEEDA] rounded-md px-2 py-1 mt-1.5" }, "Invoiced but not marked completed."),
       React.createElement("div", { className: "text-[15px] font-semibold text-[#1E1A13] mt-2" }, [site ? `Site ${site.number}` : null, cottage ? cottage.name : null].filter(Boolean).join(" \xB7 ") || "No site"),
       React.createElement("div", { className: "text-sm text-[#4B4740]" }, customer ? customer.name : "No customer on file"),
       wo.description && React.createElement("p", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap leading-relaxed mt-3 pt-3 border-t border-[#EEEBE5]" }, wo.description),
@@ -17121,10 +17190,11 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         "div",
         { className: "flex gap-2" },
         isDone && onCreateInvoice && !hasInvoice && React.createElement("button", { type: "button", onClick: () => onCreateInvoice(wo), className: "flex-1 min-h-[54px] rounded-xl bg-[#C1652F] active:bg-[#A9551F] text-white text-base font-bold shadow-[0_2px_8px_rgba(30,26,19,.15)]" }, "Create Invoice"),
-        React.createElement("button", { type: "button", onClick: () => primaryNext === "Completed" ? setWrapUpOpen(true) : changeJobStatus(primaryNext), className: isDone ? "min-h-[54px] px-4 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] text-[#4B4740] text-sm font-semibold" + (onCreateInvoice && !hasInvoice ? "" : " flex-1") : "flex-1 min-h-[54px] rounded-xl bg-[#377249] active:bg-[#28633C] text-white text-base font-bold shadow-[0_2px_8px_rgba(30,26,19,.15)]" }, primaryLabel)
+        React.createElement("button", { type: "button", onClick: () => primaryNext === "Completed" ? setWrapUpOpen(true) : isReopening(wo, primaryNext) ? setReopenAsk({ title: wo.title, invoiced: hasInvoice, proceed: () => changeJobStatus(primaryNext) }) : changeJobStatus(primaryNext), className: isDone ? "min-h-[54px] px-4 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] text-[#4B4740] text-sm font-semibold" + (onCreateInvoice && !hasInvoice ? "" : " flex-1") : "flex-1 min-h-[54px] rounded-xl bg-[#377249] active:bg-[#28633C] text-white text-base font-bold shadow-[0_2px_8px_rgba(30,26,19,.15)]" }, primaryLabel)
       ),
       !isDone && onCreateInvoice && !hasInvoice && React.createElement("button", { type: "button", onClick: () => onCreateInvoice(wo), className: "w-full mt-1.5 min-h-[36px] text-[13px] font-semibold text-[#C1652F]" }, "Create invoice now")
     ),
+    React.createElement(ReopenConfirmModal, { ask: reopenAsk, onCancel: () => setReopenAsk(null) }),
     wrapUpOpen && React.createElement(WorkOrderWrapUpModal, {
       wo,
       db,
