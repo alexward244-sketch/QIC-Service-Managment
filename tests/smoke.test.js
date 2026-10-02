@@ -153,3 +153,18 @@ test("field jobs list: my jobs / everyone, grouped by when they're due, and sear
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("field propane runs say where each tank is, and warn when nothing is linked", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 900 } });
+  await page.evaluate(() => {
+    const db = { sites: [{ id: "s1", number: "530" }, { id: "s2", number: "1015" }], cottages: [{ id: "k1", name: "Maple", siteId: "s1" }], customers: [{ id: "c1", name: "Lynn Morris" }], parts: [] };
+    const row = (request) => React.createElement(FieldPropaneRow, { request: { run: "10am", completed: false, ...request }, db, onComplete() {}, onExpired() {}, onMoveRun() {} });
+    ReactDOM.createRoot(document.getElementById("test")).render(React.createElement("div", null,
+      row({ id: "a", cottageId: "k1" }), row({ id: "b", siteId: "s2", customerId: "c1" }), row({ id: "c", customerId: "c1" })));
+  });
+  await page.getByText("Site 530 · Maple").waitFor();
+  assert.ok(await page.getByText("Site 1015").isVisible(), "a site on the request itself is used");
+  assert.equal(await page.getByText("No site or cottage linked").count(), 1, "only the unlinked one is flagged");
+  assert.equal(await page.getByText("No site", { exact: true }).count(), 0);
+  await page.close();
+});
