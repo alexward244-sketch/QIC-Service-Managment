@@ -1431,6 +1431,8 @@ function useDb() {
   const [customersList, setCustomersList] = useState(null);
   const [quotesList, setQuotesList] = useState(null);
   const [invoicesList, setInvoicesList] = useState(null);
+  const invoicesListRef = useRef([]);
+  invoicesListRef.current = invoicesList || [];
   const [correspondenceList, setCorrespondenceList] = useState(null);
   const [sitesList, setSitesList] = useState(null);
   const [cottagesList, setCottagesList] = useState(null);
@@ -1930,7 +1932,10 @@ function useDb() {
     // firestoreSafe drops undefined fields; a new work order with no number
     // gets the next one.
     const prev = workOrdersListRef.current.find((w) => w.id === woIn.id);
-    const wo = withStatusHistory(prev, withWorkOrderNumber(firestoreSafe(woIn)));
+    // When it was first created, kept through later edits (shown in the
+    // customer's correspondence timeline).
+    const createdAt = woIn.createdAt || (prev ? prev.createdAt : (/* @__PURE__ */ new Date()).toISOString());
+    const wo = withStatusHistory(prev, withWorkOrderNumber(firestoreSafe({ ...woIn, createdAt })));
     const attempt = () => WORK_ORDERS_REF.doc(wo.id).set(wo);
     lastAttempt.current = attempt;
     try {
@@ -2012,7 +2017,17 @@ function useDb() {
       return false;
     }
   }, []);
-  const saveInvoice = useCallback(async (invoice) => {
+  const saveInvoice = useCallback(async (invoiceIn) => {
+    // When it was created and when it was emailed, kept through later edits
+    // (shown in the customer's correspondence timeline).
+    const prev = invoicesListRef.current.find((i) => i.id === invoiceIn.id);
+    const invoice = {
+      ...invoiceIn,
+      createdAt: invoiceIn.createdAt || (prev ? prev.createdAt : (/* @__PURE__ */ new Date()).toISOString()),
+      // undefined (dropped), not null, so an untouched field stays absent -
+      // staff without invoice access may only change the notes.
+      sentAt: invoiceIn.sentDate ? invoiceIn.sentAt || prev && prev.sentAt || void 0 : void 0
+    };
     const attempt = () => INVOICES_REF.doc(invoice.id).set(firestoreSafe(invoice));
     lastAttempt.current = attempt;
     try {
@@ -5153,12 +5168,126 @@ function normalizeSubject(subject) {
   }
   return s.toLowerCase();
 }
-function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, onReply }) {
+// ---------------------------------------------------------------------------
+// Work orders and invoices in a customer's correspondence
+// ---------------------------------------------------------------------------
+// Shown between the emails at the point each happened - display only, so
+// they never start a conversation or move one up the inbox.
+const TIMELINE_ICONS = {
+  workorder: ["M14.7 6.3a4 4 0 0 0-5.4 5.1L4 16.7V20h3.3l5.3-5.3a4 4 0 0 0 5.1-5.4l-2.6 2.6-2.4-.6-.6-2.4z"],
+  invoice: ["M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5z", "M9 8h6", "M9 12h6", "M9 16h3"],
+  emailed: ["M3 6h18v12H3z", "M3 7l9 6 9-6"]
+};
+function TimelineIcon({ kind }) {
+  return React.createElement(
+    "svg",
+    { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
+    (TIMELINE_ICONS[kind] || []).map((d, i) => React.createElement("path", { key: i, d }))
+  );
+}
+// Midnight (local) at the start of a YYYY-MM-DD day, for records that only
+// kept a date.
+function startOfDayIso(day) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day || "");
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toISOString() : null;
+}
+// The customer's work orders and invoices as timeline entries:
+// { key, at, kind: "workorder"|"invoice"|"emailed", record, label, detail, status }.
+// Older records that never saved an exact time are placed at the start of
+// their day (a work order made from an email: right after that email).
+function correspondenceTimelineMarkers(db, customer, emails, { includeInvoices } = {}) {
+  const siteIds = customerSiteIds(customer);
+  const out = [];
+  const plusMs = (iso, ms) => new Date(new Date(iso).getTime() + ms).toISOString();
+  // Theirs: named on it, or - when it names no one - on one of their sites.
+  // One naming someone else (e.g. the site's previous owner) isn't theirs.
+  const isTheirs = (r) => r.customerId ? r.customerId === customer.id : !!r.siteId && siteIds.includes(r.siteId);
+  (db.workOrders || []).filter(isTheirs).forEach((wo) => {
+    const fromEmail = emails.find((c) => c.workOrderId === wo.id && c.receivedAt);
+    const firstStatus = (wo.statusHistory || []).find((h) => h.from == null && h.at);
+    const at = wo.createdAt || fromEmail && plusMs(fromEmail.receivedAt, 1) || firstStatus && firstStatus.at || startOfDayIso(wo.date);
+    if (!at) return;
+    out.push({ key: `tl-wo-${wo.id}`, at, kind: "workorder", record: wo, label: `Work order ${wo.workOrderNumber || ""} created`.replace("  ", " "), detail: wo.title || "", status: wo.status || "Open" });
+  });
+  if (includeInvoices) {
+    const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+    (db.invoices || []).filter(isTheirs).forEach((inv) => {
+      const rate = inv.taxRate != null ? inv.taxRate : taxRate;
+      const { total } = computeQuoteTotals(inv, rate);
+      const status = invoiceStatus(inv, rate);
+      const created = inv.createdAt || startOfDayIso(inv.date);
+      if (created) out.push({ key: `tl-inv-${inv.id}`, at: created, kind: "invoice", record: inv, label: `Invoice ${inv.invoiceNumber || ""} created`, detail: `${inv.title ? `${inv.title} · ` : ""}$${(Number(total) || 0).toFixed(2)}`, status });
+      if (inv.sentDate) {
+        const dayStart = startOfDayIso(inv.sentDate);
+        const sent = inv.sentAt || (created && dayStart && created > dayStart ? plusMs(created, 1) : dayStart);
+        if (sent) out.push({ key: `tl-sent-${inv.id}`, at: sent, kind: "emailed", record: inv, label: `Invoice ${inv.invoiceNumber || ""} emailed`, detail: customer.email ? `to ${customer.email}` : "", status });
+      }
+    });
+  }
+  return out.sort((a, b) => timelineMs(a.at) - timelineMs(b.at));
+}
+// Compared as times, not text: "…:00Z" and "…:00.001Z" sort wrongly as text.
+function timelineMs(iso) {
+  const t = Date.parse(iso || "");
+  return isNaN(t) ? 0 : t;
+}
+// Emails and markers in one list, oldest first; a marker at the same moment
+// as an email comes after it.
+function mergeCorrespondenceTimeline(emails, markers) {
+  const rows = emails.map((c) => ({ type: "email", at: c.receivedAt || "", item: c })).concat(markers.map((m) => ({ type: "marker", at: m.at, marker: m })));
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => timelineMs(a.r.at) - timelineMs(b.r.at) || (a.r.type === b.r.type ? a.i - b.i : a.r.type === "email" ? -1 : 1)).map((x) => x.r);
+}
+const TIMELINE_TONES = {
+  workorder: "text-[#B8752F] bg-[#F2E3D0]",
+  invoice: "text-[#2E6E8E] bg-[#E4EEF2]",
+  emailed: "text-[#28633C] bg-[#DDF1E1]"
+};
+function timelineStatusTone(status) {
+  if (status === "Completed" || status === "Paid") return "bg-[#DDF1E1] text-[#28633C]";
+  if (status === "Sent" || status === "In Progress") return "bg-[#FBEEDA] text-[#9A6B1F]";
+  return "bg-[#F1EEE9] text-[#75716A]";
+}
+function CorrespondenceTimelineMarker({ marker, onView }) {
+  const when = new Date(marker.at);
+  return React.createElement(
+    "div",
+    { className: "flex items-center gap-2 my-2.5", "data-timeline": marker.kind },
+    React.createElement("div", { className: "w-3 h-px bg-[#E2DED5] flex-shrink-0" }),
+    React.createElement("span", { className: `w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${TIMELINE_TONES[marker.kind] || ""}` }, React.createElement(TimelineIcon, { kind: marker.kind })),
+    React.createElement(
+      "div",
+      { className: "flex-1 min-w-0 text-xs text-[#4B4740] flex items-center gap-1.5 flex-wrap" },
+      React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, marker.label),
+      marker.detail && React.createElement("span", { className: "truncate" }, "· ", marker.detail),
+      marker.kind !== "emailed" && React.createElement("span", { className: `text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${timelineStatusTone(marker.status)}` }, marker.status),
+      React.createElement("span", { className: "text-[#9A968D]" }, "· ", when.toLocaleDateString(void 0, { month: "short", day: "numeric" }))
+    ),
+    onView && React.createElement("button", { type: "button", onClick: () => onView(marker), className: "text-xs font-semibold text-[#377249] hover:underline flex-shrink-0" }, "View")
+  );
+}
+function readTimelinePref() {
+  try {
+    return localStorage.getItem("qic-thread-markers") !== "0";
+  } catch (e) {
+    return true;
+  }
+}
+function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveInvoice, onReply }) {
   const [creatingFrom, setCreatingFrom] = useState(null);
   const [creatingPropaneFrom, setCreatingPropaneFrom] = useState(null);
   const [creatingTreeFrom, setCreatingTreeFrom] = useState(null);
   const [viewingWO, setViewingWO] = useState(null);
+  const [viewingInvoice, setViewingInvoice] = useState(null);
+  const [showMarkers, setShowMarkersState] = useState(readTimelinePref);
+  const setShowMarkers = (v) => {
+    setShowMarkersState(v);
+    try {
+      localStorage.setItem("qic-thread-markers", v ? "1" : "0");
+    } catch (e) {
+    }
+  };
   const items = (db.correspondence || []).filter((c) => c.customerId === customer.id).sort((a, b) => (a.receivedAt || "").localeCompare(b.receivedAt || ""));
+  const markers = items.length ? correspondenceTimelineMarkers(db, customer, items, { includeInvoices: !!saveInvoice }) : [];
   const modal = creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
     db,
     saveWorkOrder: (wo) => {
@@ -5196,14 +5325,30 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
       ...correspondencePrefill(db, creatingTreeFrom, customer.id, "tree")
     }
   });
-  const viewModal = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" });
+  const viewModal = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: (db.workOrders || []).find((w) => w.id === viewingWO.id) || viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" });
+  const invoiceModal = viewingInvoice && saveInvoice && React.createElement(QuickInvoiceModal, { db, initial: (db.invoices || []).find((i) => i.id === viewingInvoice.id) || viewingInvoice, saveInvoice, onClose: () => setViewingInvoice(null) });
   if (items.length === 0) {
     return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No correspondence yet."), modal, propaneModal, treeModal, viewModal);
   }
+  const viewMarker = (m) => m.kind === "workorder" ? setViewingWO(m.record) : setViewingInvoice(m.record);
   let lastWO = null;
   let prevItem = null;
   const rows = [];
-  items.forEach((item) => {
+  if (markers.length) {
+    rows.push(React.createElement(
+      "label",
+      { key: "tl-toggle", className: "flex items-center justify-end gap-1.5 text-[11px] text-[#75716A] mb-2 cursor-pointer select-none" },
+      React.createElement("input", { type: "checkbox", checked: showMarkers, onChange: (e) => setShowMarkers(e.target.checked), className: "accent-[#377249]" }),
+      "Show work orders & invoices"
+    ));
+  }
+  const timeline = mergeCorrespondenceTimeline(items, showMarkers ? markers : []);
+  timeline.forEach((entry) => {
+    if (entry.type === "marker") {
+      rows.push(React.createElement(CorrespondenceTimelineMarker, { key: entry.marker.key, marker: entry.marker, onView: viewMarker }));
+      return;
+    }
+    const item = entry.item;
     if (prevItem) {
       const subjectChanged = normalizeSubject(item.subject) !== normalizeSubject(prevItem.subject);
       const gapExceeded = item.receivedAt && prevItem.receivedAt && new Date(item.receivedAt) - new Date(prevItem.receivedAt) > CONVERSATION_GAP_MS;
@@ -5212,14 +5357,15 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
       }
     }
     prevItem = item;
-    if (item.workOrderId && item.workOrderId !== lastWO) {
+    // With the timeline showing, the work order has its own marker.
+    if (!showMarkers && item.workOrderId && item.workOrderId !== lastWO) {
       const wo = (db.workOrders || []).find((w) => w.id === item.workOrderId);
       rows.push(wo ? /* @__PURE__ */ React.createElement("button", { key: `wo-${item.id}`, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4] inline-block mt-3 mb-1.5" }, "WORK ORDER \u2014 ", wo.title) : /* @__PURE__ */ React.createElement("div", { key: `wo-${item.id}`, className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] inline-block mt-3 mb-1.5" }, "WORK ORDER"));
     }
     lastWO = item.workOrderId || null;
     rows.push(/* @__PURE__ */ React.createElement(CorrespondenceMessage, { key: item.id, item, db, saveCorrespondence, onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onCreatePropane: savePropaneRequest ? setCreatingPropaneFrom : null, onCreateTree: saveTreeRequest ? setCreatingTreeFrom : null, onReply }));
   });
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal, propaneModal, treeModal, viewModal);
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, rows, modal, propaneModal, treeModal, viewModal, invoiceModal);
 }
 function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
@@ -5281,7 +5427,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
   }));
   const quotesSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this customer.", action: saveQuote && newBtn("New Quote", () => setCreatingQuote(true)) }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status))));
   const invoicesSection = /* @__PURE__ */ React.createElement(InvoicesDetailSection, { invoices, taxRate, empty: "No invoices for this customer.", action: saveInvoice && newBtn("New Invoice", () => setCreatingInvoice(true)), workOrders, onSelect: saveInvoice ? setViewingInvoice : null });
-  const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { key: customer.id, customer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies, lastInboundEmail: lastInboundEmailFor(db, customer.id) }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder, onReply: setReplyTo }));
+  const correspondenceSection = /* @__PURE__ */ React.createElement(DetailSection, { title: "Correspondence", empty: "No correspondence yet." }, saveCorrespondence && /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { key: customer.id, customer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies, lastInboundEmail: lastInboundEmailFor(db, customer.id) }), /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder, saveInvoice, onReply: setReplyTo }));
   const footer = /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), !nested && /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -6151,7 +6297,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     }
     Promise.all(sends).then(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
-      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO() };
+      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || (/* @__PURE__ */ new Date()).toISOString() };
       const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
       persist({ ...db, activityLog });
       saveInvoice(updated);
@@ -16088,7 +16234,7 @@ function CorrespondenceRow({ item, customer, active, onClick, count, hasWorkOrde
 }
 // TODO(design-handoff): who owns a failed send, and what happens at the monthly Zoho task
 // ceiling, are open decisions the handoff flags explicitly — not resolved here.
-function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }) {
+function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice }) {
   const actor = useCurrentActor();
   const [selectedId, setSelectedId] = useState(null);
   const [viewCustomerId, setViewCustomerId] = useState(null);
@@ -16207,7 +16353,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
   if (composePickerOpen) {
     readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13] mb-1" }, "New Message"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-2" }, "Pick a customer to start a new email thread with."), /* @__PURE__ */ React.createElement(CorrespondenceLinkPicker, { customers: db.customers, onPick: pickComposeCustomer, onCancel: () => setComposePickerOpen(false) }));
   } else if (viewCustomer) {
-    readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, viewCustomer.name), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "Matched")), selectedItem && /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "text-xs text-[#9A968D] hover:text-[#a8532a] hover:underline flex-shrink-0" }, "Delete this email")), linkedWorkOrders.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#9A968D] font-semibold" }, "Work Orders:"), linkedWorkOrders.map((wo) => /* @__PURE__ */ React.createElement("button", { key: wo.id, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-0.5 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4]" }, wo.title))), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer: viewCustomer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, onReply: setReplyTo })), /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { key: viewCustomer.id, customer: viewCustomer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies, lastInboundEmail: lastInboundEmailFor(db, viewCustomer.id) }));
+    readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-3 mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, viewCustomer.name), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "Matched")), selectedItem && /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "text-xs text-[#9A968D] hover:text-[#a8532a] hover:underline flex-shrink-0" }, "Delete this email")), linkedWorkOrders.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5 flex-wrap mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[10px] uppercase tracking-wide text-[#9A968D] font-semibold" }, "Work Orders:"), linkedWorkOrders.map((wo) => /* @__PURE__ */ React.createElement("button", { key: wo.id, onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-0.5 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4]" }, wo.title))), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement(CorrespondenceThread, { customer: viewCustomer, db, persist, saveCorrespondence, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveInvoice, onReply: setReplyTo })), /* @__PURE__ */ React.createElement(CorrespondenceComposeBox, { key: viewCustomer.id, customer: viewCustomer, saveCorrespondence, replyTo, onClearReply: () => setReplyTo(null), cannedReplies: db.cannedReplies, lastInboundEmail: lastInboundEmailFor(db, viewCustomer.id) }));
   } else if (selectedItem) {
     const isFYIStandalone = CorrespondenceIsFYI(selectedItem) && !overrideFYI && CorrespondenceIsNew(selectedItem);
     readingPane = /* @__PURE__ */ React.createElement("div", { className: "p-5" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-1" }, /* @__PURE__ */ React.createElement("h3", { className: "text-sm font-semibold text-[#1E1A13]" }, selectedItem.fromEmail), /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a]" }, "No match"), CorrespondenceIsFYI(selectedItem) && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "FYI")), selectedItem.forwardedBy && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "↪ Forwarded by ", selectedItem.forwardedBy), selectedItem.fromStaff && !selectedItem.forwardedBy && React.createElement("div", { className: "text-xs text-[#75716A] italic mb-1" }, "From staff"), /* @__PURE__ */ React.createElement("div", { className: "text-sm font-semibold text-[#1E1A13] mt-2" }, selectedItem.subject || "(no subject)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] mb-2" }, selectedItem.receivedAt ? new Date(selectedItem.receivedAt).toLocaleString() : ""), selectedItem.triage && selectedItem.triage.summary && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#4B4740] italic mb-2", title: "Summary suggested by Claude" }, "\u2728 ", selectedItem.triage.summary), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#1E1A13] whitespace-pre-wrap mb-3" }, selectedItem.body), selectedItem.suggestedFlag && /* @__PURE__ */ React.createElement("div", { className: "inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-[#FBEEDA] text-[#9A6B1F] mb-3" }, "⚡ ", selectedItem.suggestedFlag), selectedItem.workOrderId && (() => { const wo = (db.workOrders || []).find((w) => w.id === selectedItem.workOrderId); return wo ? /* @__PURE__ */ React.createElement("button", { onClick: () => setViewingWO(wo), className: "text-[11px] font-bold px-2 py-1 rounded-md bg-[#F2E3D0] text-[#B8752F] hover:bg-[#EBD5B4] inline-block mb-3" }, "WORK ORDER — ", wo.title) : null; })(), pendingCustomer ? /* @__PURE__ */ React.createElement("div", { className: "border-t border-[#E2DED5] pt-3" }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#1E1A13] mb-2" }, "Link this email to ", /* @__PURE__ */ React.createElement("span", { className: "font-semibold" }, pendingCustomer.name), "?"), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Save ", selectedItem.fromEmail, " to their record so future emails from this address match automatically?"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => handleLink(pendingCustomer, true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Yes, save it"), /* @__PURE__ */ React.createElement("button", { onClick: () => handleLink(pendingCustomer, false), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Just link, don't save"), /* @__PURE__ */ React.createElement("button", { onClick: () => setPendingCustomer(null), className: "px-3 py-1.5 rounded-md text-xs text-[#75716A]" }, "Cancel"))) : linking ? /* @__PURE__ */ React.createElement(CorrespondenceLinkPicker, { customers: db.customers, onPick: setPendingCustomer, onCancel: () => setLinking(false) }) : isFYIStandalone ? /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setLinking(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Link"), /* @__PURE__ */ React.createElement("button", { onClick: () => markHandled(selectedItem), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "✓ Acknowledge"), /* @__PURE__ */ React.createElement("button", { onClick: () => setOverrideFYI(true), className: "text-xs text-[#9A968D] hover:underline" }, "Needs a reply?"), /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "px-3 py-1.5 rounded-md text-xs font-semibold text-[#a8532a] hover:bg-[#F5E3D9]" }, "Delete")) : /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("button", { onClick: () => setLinking(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white" }, "Link"), selectedItem.direction !== "out" && /* @__PURE__ */ React.createElement(CorrespondenceCreateButton, { item: selectedItem, variant: "button", onCreateWorkOrder: saveWorkOrder ? setCreatingFrom : null, onCreatePropane: savePropaneRequest ? setCreatingPropaneFrom : null, onCreateTree: saveTreeRequest ? setCreatingTreeFrom : null }), CorrespondenceIsNew(selectedItem) && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => markHandled(selectedItem), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Mark Handled"), CorrespondenceIsNew(selectedItem) && !snoozing && /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(true), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Follow up…"), snoozing && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("input", { type: "date", value: followUpDate, min: todayISO(), onChange: (e) => setFollowUpDate(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1.5" }), /* @__PURE__ */ React.createElement("button", { onClick: () => handleSnooze(selectedItem, followUpDate), disabled: !followUpDate, className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, "Snooze"), /* @__PURE__ */ React.createElement("button", { onClick: () => setSnoozing(false), className: "text-xs text-[#75716A] hover:underline" }, "Cancel")), /* @__PURE__ */ React.createElement("button", { onClick: () => setDeleteConfirmId(selectedItem.id), className: "px-3 py-1.5 rounded-md text-xs font-semibold text-[#a8532a] hover:bg-[#F5E3D9]" }, "Delete")));
@@ -18229,7 +18375,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     }
     Promise.all(sends).then(() => {
       setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
-      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO() };
+      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || (/* @__PURE__ */ new Date()).toISOString() };
       const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
       persist({ ...db, activityLog });
       saveInvoice(updated);
@@ -19643,7 +19789,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),

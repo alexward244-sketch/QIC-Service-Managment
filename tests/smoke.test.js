@@ -291,6 +291,44 @@ test("field app: reopening a completed, invoiced job asks first", async () => {
   await page.close();
 });
 
+test("correspondence: a customer's work orders and invoices appear in their conversation at the right point", async () => {
+  const page = await openApp(browser, "stub");
+  const result = await page.evaluate(() => {
+    const c = { id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: ["s1"] };
+    const emails = [
+      { id: "e1", customerId: "c1", direction: "in", fromEmail: "anne@x.com", subject: "Leak", body: "Dripping", receivedAt: "2026-09-28T13:00:00Z", workOrderId: "w-old" },
+      { id: "e2", customerId: "c1", direction: "out", toEmail: "anne@x.com", subject: "Re: Leak", body: "Tuesday", receivedAt: "2026-09-28T14:00:00Z" },
+      { id: "e3", customerId: "c1", direction: "in", fromEmail: "anne@x.com", subject: "Re: Leak", body: "Thanks", receivedAt: "2026-10-01T20:00:00Z" }
+    ];
+    const db = { settings: { taxRate: 13 }, sites: [{ id: "s1", number: "573" }], cottages: [], customers: [c], quotes: [], parts: [], staff: [], activityLog: [], cannedReplies: [], correspondence: emails,
+      workOrders: [
+        { id: "w-old", workOrderNumber: "WO-0400", title: "Made from the email", status: "Open", date: "2026-09-29", siteId: "s1", partsUsed: [], notes: [] },
+        { id: "w-new", workOrderNumber: "WO-0412", title: "Fix tap", status: "Completed", date: "2026-09-29", customerId: "c1", createdAt: "2026-09-28T14:20:00Z", partsUsed: [], notes: [] },
+        { id: "w-other", workOrderNumber: "WO-0500", title: "Someone else", status: "Open", date: "2026-09-29", siteId: "s9", createdAt: "2026-09-28T14:30:00Z", partsUsed: [], notes: [] },
+        { id: "w-prev-owner", workOrderNumber: "WO-0100", title: "Previous owner's job", status: "Completed", date: "2026-09-29", siteId: "s1", customerId: "c-old", createdAt: "2026-09-28T14:40:00Z", partsUsed: [], notes: [] }
+      ],
+      invoices: [{ id: "i1", invoiceNumber: "INV-1088", customerId: "c1", date: "2026-09-30", sentDate: "2026-09-30", lineItems: [{ id: "l", quantity: 1, unitPrice: 100 }], laborHours: 0 }] };
+    const order = (includeInvoices) => mergeCorrespondenceTimeline(emails, correspondenceTimelineMarkers(db, c, emails, { includeInvoices })).map((r) => r.type === "email" ? r.item.id : r.marker.key);
+    const root = document.getElementById("root");
+    ReactDOM.createRoot(root).render(React.createElement(CorrespondenceThread, { customer: c, db, persist() {}, saveCorrespondence() {}, saveWorkOrder() {}, saveInvoice() {}, onReply() {} }));
+    return { withInvoices: order(true), withoutInvoices: order(false) };
+  });
+  assert.deepEqual(result.withInvoices, ["e1", "tl-wo-w-old", "e2", "tl-wo-w-new", "tl-inv-i1", "tl-sent-i1", "e3"]);
+  assert.deepEqual(result.withoutInvoices, ["e1", "tl-wo-w-old", "e2", "tl-wo-w-new", "e3"]);
+  // Rendered: markers with View buttons, and a switch that hides them (remembered).
+  await page.locator('[data-timeline="workorder"]').first().waitFor();
+  assert.equal(await page.locator("[data-timeline]").count(), 4);
+  await page.locator('[data-timeline="emailed"]').getByText("to anne@x.com").waitFor();
+  await page.getByLabel("Show work orders & invoices").uncheck();
+  assert.equal(await page.locator("[data-timeline]").count(), 0);
+  assert.equal(await page.evaluate(() => localStorage.getItem("qic-thread-markers")), "0");
+  await page.getByLabel("Show work orders & invoices").check();
+  await page.locator('[data-timeline="workorder"]').getByRole("button", { name: "View" }).first().click();
+  await page.getByText("Made from the email").last().waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
