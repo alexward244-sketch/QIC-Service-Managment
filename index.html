@@ -14187,7 +14187,8 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest, savePropaneRe
     Quote: ["Draft", "Sent", "Accepted", "Declined"],
     Invoice: ["Draft", "Sent", "Paid"]
   };
-  const [activeTypes, setActiveTypes] = useState(new Set(TYPES));
+  // Opens on work orders only; the other record types are a click away.
+  const [activeTypes, setActiveTypes] = useState(() => /* @__PURE__ */ new Set(["Work Order"]));
   const [activeStatuses, setActiveStatuses] = useState(/* @__PURE__ */ new Set());
   const [activeStaff, setActiveStaff] = useState(/* @__PURE__ */ new Set());
   const [activePayment, setActivePayment] = useState(/* @__PURE__ */ new Set());
