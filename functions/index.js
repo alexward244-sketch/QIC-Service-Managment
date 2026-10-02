@@ -559,6 +559,7 @@ const SERVER_ALERT_SOURCES = {
   webhookRejected: { label: "Web form / email intake rejected (wrong secret key)", check: "If sign-ups or emails stopped arriving, the secret key in Zoho Flow no longer matches the app's. Otherwise this can be someone probing the address, and nothing needs doing." },
   serviceCorrespondence: { label: "Incoming email intake", check: "Check the service inbox in Zoho for emails that didn't show up in the app's Correspondence tab." },
   zohoAttachments: { label: "Email attachments from Zoho", check: "The email arrived but its attachments may be missing - open the email in Zoho to see them. If this keeps happening, the Zoho connection may need to be re-authorized." },
+  zohoSentMail: { label: "Replies sent from Zoho", check: "Replies written in Zoho may not be showing in the app's Correspondence. They're still in Zoho's Sent folder. If this keeps happening, the Zoho connection may need re-authorizing." },
   emailTriage: { label: "Email triage (Claude)", check: "Emails still arrive, just without the suggested flag and summary. Usually a brief Claude outage; nothing to do unless it keeps happening." },
   morningSummary: { label: "Morning summary", check: "The summary may be missing or only have the plain counts today. Check the dashboard; you can regenerate it there." }
 };
@@ -705,6 +706,136 @@ exports.generalServiceRequest = onRequest(
       console.error("Failed to write general service request:", err);
       await reportServerProblem("generalServiceRequest", `Couldn't save a request from ${entry.submittedName || entry.submittedEmail || "a customer"} (site ${entry.submittedSiteNumber}): ${err.message || err}`);
       res.status(500).json({ ok: false, error: "Internal error" });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Replies sent from Zoho Mail
+// ---------------------------------------------------------------------------
+// Zoho Flow only fires on mail that arrives, so a reply written in Zoho
+// itself never reached the app. Every few minutes this reads the service
+// inbox's Sent folder through the Mail API and files each email sent to a
+// customer as a sent message in Correspondence, so the customer's thread
+// shows both sides. Mail to our own addresses (accounting notices, notes to
+// coworkers) is left out, and anything the app sent itself (which can also
+// land in Zoho's Sent folder) is recognised and not logged twice.
+const ZOHO_SENT_STATE = db.collection("serverState").doc("zohoSentSync");
+// On the very first run, pick up the last day's replies rather than
+// everything ever sent.
+const ZOHO_SENT_FIRST_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+// How close in time an email the app logged must be to count as the same one.
+const ZOHO_SENT_DUPLICATE_WINDOW_MS = 15 * 60 * 1000;
+
+function emailsIn(text) {
+  const decoded = toStr(text).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+  return Array.from(new Set((decoded.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) || []).map((e) => e.toLowerCase())));
+}
+
+function sameSubject(a, b) {
+  const norm = (s) => toStr(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+  return norm(a) === norm(b);
+}
+
+let cachedSentFolderId = null;
+async function zohoSentFolderId(accessToken) {
+  if (cachedSentFolderId) return cachedSentFolderId;
+  const result = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders`, accessToken);
+  if (!result.response) {
+    throw new Error(`Zoho wouldn't list the mailbox's folders (${result.status}). The Zoho connection may need re-authorizing with folder access: ${toStr(result.body).slice(0, 200)}`);
+  }
+  const data = await result.response.json();
+  const sent = (data.data || []).find((f) => toStr(f.folderType).toLowerCase() === "sent") || (data.data || []).find((f) => toStr(f.folderName).toLowerCase() === "sent");
+  if (!sent) throw new Error("Couldn't find a Sent folder in the service mailbox.");
+  cachedSentFolderId = sent.folderId;
+  return cachedSentFolderId;
+}
+
+async function syncZohoSentMail() {
+  const accessToken = await getZohoAccessToken();
+  const folderId = await zohoSentFolderId(accessToken);
+  const stateSnap = await ZOHO_SENT_STATE.get();
+  const since = stateSnap.exists && stateSnap.data().lastSentAt ? Number(stateSnap.data().lastSentAt) : Date.now() - ZOHO_SENT_FIRST_LOOKBACK_MS;
+
+  const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${folderId}&limit=50&sortBy=date`, accessToken);
+  if (!listed.response) throw new Error(`Zoho wouldn't list the Sent folder (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
+  const messages = ((await listed.response.json()).data || [])
+    .map((m) => ({ ...m, sentAt: Number(m.sentDateInGMT || m.receivedTime) || 0 }))
+    .filter((m) => m.sentAt > since)
+    .sort((a, b) => a.sentAt - b.sentAt);
+
+  let added = 0;
+  let newest = since;
+  for (const m of messages) {
+    newest = Math.max(newest, m.sentAt);
+    const id = `zoho_sent_${m.messageId}`;
+    const ref = db.collection("correspondence").doc(id);
+    if ((await ref.get()).exists) continue;
+    const to = emailsIn(m.toAddress).find((e) => !isInternalSender(e));
+    if (!to) continue;
+    const sentIso = new Date(m.sentAt).toISOString();
+
+    // The app's own sends are already logged; don't add them a second time.
+    const nearby = await db.collection("correspondence")
+      .where("receivedAt", ">=", new Date(m.sentAt - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString())
+      .where("receivedAt", "<=", new Date(m.sentAt + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString())
+      .get();
+    const loggedByApp = nearby.docs.some((d) => {
+      const c = d.data();
+      return c.direction === "out" && c.sentVia !== "zoho" && toStr(c.toEmail).toLowerCase() === to && sameSubject(c.subject, m.subject);
+    });
+    if (loggedByApp) continue;
+
+    const content = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${m.messageId}/content`, accessToken);
+    const html = content.response ? toStr(((await content.response.json()).data || {}).content) : "";
+    const plain = html ? htmlToPlainText(html) : toStr(m.summary);
+    const isForward = looksForwarded(m.subject, plain);
+    let body = isForward ? plain : stripQuotedReplyText(plain);
+    if (toBool(m.hasAttachment)) body = `${body}\n\n(Sent with an attachment - open the email in Zoho to see it.)`.trim();
+
+    const customerId = (await findCustomerByEmail(to)) || (await customerFromEarlierEmails(to));
+    await ref.set({
+      id,
+      customerId: customerId || null,
+      direction: "out",
+      sentVia: "zoho",
+      zohoMessageId: toStr(m.messageId),
+      fromEmail: emailsIn(m.fromAddress)[0] || "service@qicampark.com",
+      toEmail: to,
+      subject: toStr(m.subject),
+      body,
+      receivedAt: sentIso,
+      status: "handled",
+      handledAt: sentIso
+    });
+    added++;
+
+    // Answering someone in Zoho answers their waiting emails in the app too.
+    if (!isForward) {
+      const waiting = await db.collection("correspondence").where("fromEmail", "==", to).get();
+      await Promise.all(waiting.docs
+        .filter((d) => {
+          const c = d.data();
+          return c.direction !== "out" && (c.status === "new" || c.status === "snoozed" || c.status == null) && toStr(c.receivedAt) <= sentIso;
+        })
+        .map((d) => d.ref.update({ status: "handled", handledAt: sentIso, followUpAt: null, handledBy: "Replied in Zoho" })));
+    }
+  }
+  if (newest > since || !stateSnap.exists) {
+    await ZOHO_SENT_STATE.set({ lastSentAt: newest, checkedAt: new Date().toISOString() }, { merge: true });
+  }
+  return { added };
+}
+
+exports.zohoSentMail = onSchedule(
+  { schedule: "every 5 minutes", secrets: [ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY], timeoutSeconds: 120 },
+  async () => {
+    try {
+      const { added } = await syncZohoSentMail();
+      if (added) console.log(`Filed ${added} reply(ies) sent from Zoho.`);
+    } catch (err) {
+      console.error("Zoho sent mail sync failed:", err);
+      await reportServerProblem("zohoSentMail", `Couldn't read replies sent from Zoho: ${err.message || err}`);
     }
   }
 );
