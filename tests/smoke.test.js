@@ -168,3 +168,17 @@ test("field propane runs say where each tank is, and warn when nothing is linked
   assert.equal(await page.getByText("No site", { exact: true }).count(), 0);
   await page.close();
 });
+
+test("on a phone, opening a form doesn't jump into the first box; on a computer it still does", async () => {
+  const render = () => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(StaffForm, { initial: null, onSave() {}, onCancel() {} }));
+  const phone = await openApp(browser, "stub", { viewport: { width: 390, height: 800 }, touch: true });
+  await phone.evaluate(render);
+  await phone.locator("#test input").first().waitFor();
+  assert.equal(await phone.evaluate(() => document.activeElement && document.activeElement.tagName), "BODY", "nothing is focused on a phone");
+  await phone.close();
+  const computer = await openApp(browser, "stub");
+  await computer.evaluate(render);
+  await computer.locator("#test input").first().waitFor();
+  assert.equal(await computer.evaluate(() => document.activeElement && document.activeElement.tagName), "INPUT");
+  await computer.close();
+});
