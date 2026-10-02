@@ -196,6 +196,15 @@ test("replies sent from Zoho are filed under the customer, once, and answer thei
   assert.equal(waiting.handledBy, "Replied in Zoho");
   assert.equal((await all("serverAlerts")).length, 0);
 
+  // Emails the app sent itself (an invoice) are noted, and skipped here;
+  // old notes are cleared out.
+  await db.collection("appSentEmails").doc("n1").set({ toEmail: "anne@x.com", subject: "Invoice 1001", sentAt: iso(now - 9 * 60e3) });
+  await db.collection("appSentEmails").doc("n-old").set({ toEmail: "anne@x.com", subject: "Invoice 900", sentAt: iso(now - 3 * 24 * 3600e3) });
+  zoho.sent.unshift({ messageId: "m-inv", subject: "Invoice 1001", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", sentDateInGMT: String(now - 10 * 60e3), hasAttachment: "0" });
+  await fns.zohoSentMail();
+  assert.equal((await all("correspondence")).some((c) => c.zohoMessageId === "m-inv"), false);
+  assert.deepEqual((await all("appSentEmails")).map((n) => n.id), ["n1"]);
+
   // Later sends are picked up on the next run; an attachment gets a note.
   zoho.sent.unshift({ messageId: "m5", subject: "Your quote", fromAddress: "service@qicampark.com", toAddress: "newperson@z.com", sentDateInGMT: String(now - 60e3), hasAttachment: "1", summary: "Quote attached" });
   await fns.zohoSentMail();

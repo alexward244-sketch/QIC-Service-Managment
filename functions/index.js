@@ -719,7 +719,8 @@ exports.generalServiceRequest = onRequest(
 // customer as a sent message in Correspondence, so the customer's thread
 // shows both sides. Mail to our own addresses (accounting notices, notes to
 // coworkers) is left out, and anything the app sent itself (which can also
-// land in Zoho's Sent folder) is recognised and not logged twice.
+// land in Zoho's Sent folder - the app notes each one in appSentEmails,
+// invoices and notices included) is recognised and not logged twice.
 const ZOHO_SENT_STATE = db.collection("serverState").doc("zohoSentSync");
 // On the very first run, pick up the last day's replies rather than
 // everything ever sent.
@@ -732,9 +733,12 @@ function emailsIn(text) {
   return Array.from(new Set((decoded.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) || []).map((e) => e.toLowerCase())));
 }
 
+// Loose on purpose: an email template may wrap the subject it's given.
 function sameSubject(a, b) {
   const norm = (s) => toStr(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
-  return norm(a) === norm(b);
+  const x = norm(a);
+  const y = norm(b);
+  return x === y || (x && y && (x.includes(y) || y.includes(x)));
 }
 
 let cachedSentFolderId = null;
@@ -785,6 +789,11 @@ async function syncZohoSentMail() {
       return c.direction === "out" && c.sentVia !== "zoho" && toStr(c.toEmail).toLowerCase() === to && sameSubject(c.subject, m.subject);
     });
     if (loggedByApp) continue;
+    const sentByApp = await db.collection("appSentEmails")
+      .where("sentAt", ">=", new Date(m.sentAt - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString())
+      .where("sentAt", "<=", new Date(m.sentAt + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString())
+      .get();
+    if (sentByApp.docs.some((d) => toStr(d.data().toEmail).toLowerCase() === to && sameSubject(d.data().subject, m.subject))) continue;
 
     const content = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${folderId}/messages/${m.messageId}/content`, accessToken);
     const html = content.response ? toStr(((await content.response.json()).data || {}).content) : "";
@@ -821,6 +830,9 @@ async function syncZohoSentMail() {
         .map((d) => d.ref.update({ status: "handled", handledAt: sentIso, followUpAt: null, handledBy: "Replied in Zoho" })));
     }
   }
+  // The app's notes of its own sends are only needed for a little while.
+  const stale = await db.collection("appSentEmails").where("sentAt", "<", new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString()).limit(200).get();
+  await Promise.all(stale.docs.map((d) => d.ref.delete()));
   if (newest > since || !stateSnap.exists) {
     await ZOHO_SENT_STATE.set({ lastSentAt: newest, checkedAt: new Date().toISOString() }, { merge: true });
   }

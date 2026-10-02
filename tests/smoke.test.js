@@ -291,6 +291,18 @@ test("field app: reopening a completed, invoiced job asks first", async () => {
   await page.close();
 });
 
+test("correspondence: the Handled list is in the order messages were sent or received", async () => {
+  const page = await openApp(browser, "stub");
+  const ids = await page.evaluate(() => handledCorrespondence([
+    { id: "old-handled-today", direction: "in", status: "handled", receivedAt: "2026-09-20T10:00:00Z", handledAt: "2026-10-02T15:00:00Z" },
+    { id: "zoho-reply", direction: "out", sentVia: "zoho", status: "handled", receivedAt: "2026-10-01T09:00:00Z", handledAt: "2026-10-01T09:00:00Z" },
+    { id: "still-new", direction: "in", status: "new", receivedAt: "2026-10-02T11:00:00Z" },
+    { id: "sent-yesterday", direction: "out", receivedAt: "2026-10-01T12:00:00Z" }
+  ]).map((c) => c.id));
+  assert.deepEqual(ids, ["sent-yesterday", "zoho-reply", "old-handled-today"]);
+  await page.close();
+});
+
 test("correspondence: messages not linked to anyone are grouped by the other person's address", async () => {
   const page = await openApp(browser, "stub");
   const rows = await page.evaluate(() => groupCorrespondenceByCustomer([
