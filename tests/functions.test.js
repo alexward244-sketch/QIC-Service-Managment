@@ -60,6 +60,18 @@ test("incoming email: forwards keep their content, staff mail comes in, our own 
   assert.equal(mail.length, 4);
 });
 
+test("incoming email: a reply from an address we've written to joins that customer's thread", async () => {
+  await db.doc("customers/c1").set({ name: "Brenda Ferguson", email: "brenda@home.ca", siteIds: [] });
+  // Our reply to her web-form request, linked to her once the request was matched.
+  await db.doc("correspondence/out1").set({ id: "out1", direction: "out", toEmail: "Brenda.F@gmail.com", customerId: "c1", subject: "Re: your service request", receivedAt: "2026-09-30T12:00:00Z" });
+  const res = await callWebhook(fns.serviceCorrespondence, { fromEmail: "brenda.f@gmail.com", subject: "Re: your service request", body: "Thursday works." });
+  const saved = (await all("correspondence")).find((m) => m.id === res.body.id);
+  assert.equal(saved.customerId, "c1");
+  // Someone we've never linked stays unlinked.
+  const other = await callWebhook(fns.serviceCorrespondence, { fromEmail: "stranger@x.com", subject: "Hi", body: "hello" });
+  assert.equal((await all("correspondence")).find((m) => m.id === other.body.id).customerId, null);
+});
+
 test("the Email Intake ignore list is respected", async () => {
   await db.doc("campground/data").set({ settings: { correspondenceSkipSenders: ["sales@qicampark.com"] }, userRoles: {} });
   assert.equal((await callWebhook(fns.serviceCorrespondence, { fromEmail: "sales@qicampark.com", subject: "Note", body: "hi" })).body.reason, "skipped-sender");
