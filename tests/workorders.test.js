@@ -152,3 +152,34 @@ test("Every status change is recorded on the work order, including a reopen", as
   assert.equal(again.statusHistory.length, 1);
   await page.close();
 });
+
+test("Work orders and invoices keep the time they were created (for the correspondence timeline)", async () => {
+  await resetData({
+    "campground/data": SETTINGS,
+    "workOrders/old": { id: "old", title: "Older job", status: "Open", priority: "Medium", date: "2026-09-01", workOrderNumber: "WO-0041", partsUsed: [] },
+    "invoices/i-old": { id: "i-old", invoiceNumber: "INV-0001", date: "2026-09-02", sentDate: "2026-09-02", lineItems: [], notes: "" }
+  });
+  const page = await openApp(browser, "emulator", { role: "office" });
+  await mountWithDb(page, "(r) => React.createElement('div', null, 'ready')", "(r) => r.db.workOrders.length === 1 && r.db.invoices.length === 1");
+  await page.evaluate(() => window.__api.saveWorkOrder({ id: "n1", title: "New job", status: "Open", priority: "Medium", date: "2026-10-05", partsUsed: [] }));
+  const created = await waitFor(() => findWorkOrder("New job"), "the new work order");
+  assert.match(created.createdAt, /^\d{4}-\d{2}-\d{2}T/);
+  // An edit that doesn't carry createdAt (as the form's doesn't) keeps it;
+  // an older work order that never had one doesn't get one.
+  await waitFor(() => page.evaluate(() => window.__api.db.workOrders.some((w) => w.id === "n1")), "the new work order to load");
+  await page.evaluate(() => window.__api.saveWorkOrder({ id: "n1", title: "New job (edited)", status: "Open", priority: "Medium", date: "2026-10-05", partsUsed: [] }));
+  await page.evaluate(() => { const w = window.__api.db.workOrders.find((x) => x.id === "old"); return window.__api.saveWorkOrder({ ...w, title: "Older job (edited)" }); });
+  const edited = await waitFor(() => findWorkOrder("New job (edited)"), "the edit");
+  assert.equal(edited.createdAt, created.createdAt);
+  const old = await waitFor(() => findWorkOrder("Older job (edited)"), "the older edit");
+  assert.equal(old.createdAt, undefined);
+  // Office staff may only change an invoice's notes: adding one to an older
+  // invoice must not slip in the new time fields.
+  const ok = await page.evaluate(() => { const i = window.__api.db.invoices[0]; return window.__api.saveInvoice({ ...i, notes: "Customer called" }); });
+  assert.equal(ok, true);
+  const inv = await readDoc("invoices/i-old");
+  assert.equal(inv.notes, "Customer called");
+  assert.equal(inv.createdAt, undefined);
+  assert.equal(inv.sentAt, undefined);
+  await page.close();
+});
