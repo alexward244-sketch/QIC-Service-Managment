@@ -8,6 +8,10 @@ const ROOT = path.resolve(__dirname, "..", "..");
 const FN_MODULES = path.join(ROOT, "functions", "node_modules");
 const PROJECT_ID = "demo-qic-functions";
 process.env.GCLOUD_PROJECT = PROJECT_ID;
+// The emulator runner also sets FIREBASE_CONFIG (to the browser tests'
+// project), which the Admin SDK prefers - point it here too, so clearData
+// wipes the same project the functions write to.
+process.env.FIREBASE_CONFIG = JSON.stringify({ projectId: PROJECT_ID, storageBucket: `${PROJECT_ID}.appspot.com` });
 
 const SECRETS = { WINTERIZING_WEBHOOK_SECRET: "test-webhook-secret" };
 
@@ -45,13 +49,26 @@ Module._load = function (request, ...rest) {
   return origLoad.call(this, request, ...rest);
 };
 
-// Outgoing HTTP: EmailJS sends are recorded; anything else (Zoho) fails.
+// Outgoing HTTP: EmailJS sends are recorded. Zoho Mail answers only while
+// `zoho.on` is set, from `zoho.sent` (the Sent folder's listing) and
+// `zoho.content` (message id -> HTML); anything else fails.
 const emails = [];
+const zoho = { on: false, sent: [], content: {}, foldersStatus: 200 };
+const jsonResponse = (status, data) => ({ ok: status < 300, status, json: async () => data, text: async () => JSON.stringify(data) });
 global.fetch = async (url, opts) => {
   if (String(url).includes("api.emailjs.com")) {
     const body = JSON.parse(opts.body);
     emails.push({ to: body.template_params.to_email, subject: body.template_params.subject, message: body.template_params.message });
     return { ok: true, status: 200, text: async () => "OK" };
+  }
+  if (zoho.on && String(url).includes("zohocloud.ca")) {
+    const u = new URL(url);
+    if (u.pathname.endsWith("/oauth/v2/token")) return jsonResponse(200, { access_token: "zoho-token", expires_in: 3600 });
+    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
+    if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "sent1") return jsonResponse(200, { data: zoho.sent });
+    const m = u.pathname.match(/\/folders\/sent1\/messages\/([^/]+)\/content$/);
+    if (m && zoho.content[m[1]] != null) return jsonResponse(200, { data: { messageId: m[1], content: zoho.content[m[1]] } });
+    return jsonResponse(404, {});
   }
   throw new Error(`No network in tests (${url})`);
 };
@@ -89,6 +106,7 @@ async function clearData() {
   claude.script.length = 0;
   claude.calls.length = 0;
   emails.length = 0;
+  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200 });
   auth.users = {};
   auth.calls.length = 0;
 }
@@ -117,4 +135,4 @@ async function call(fn, data, role = "office", uid = "u-test") {
   try { return await fn({ auth, data }); } catch (e) { return { error: e.code || e.message }; }
 }
 
-module.exports = { fns, db, claude, emails, auth, clearData, callWebhook, call, SECRETS };
+module.exports = { fns, db, claude, emails, zoho, auth, clearData, callWebhook, call, SECRETS };

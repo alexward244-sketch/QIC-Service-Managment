@@ -2,7 +2,7 @@
 // sign-up matching, role changes, AI usage limits and problem alerts.
 const { test, beforeEach, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { fns, db, claude, emails, auth, clearData, callWebhook, call } = require("./helpers/functions");
+const { fns, db, claude, emails, zoho, auth, clearData, callWebhook, call } = require("./helpers/functions");
 
 beforeEach(async () => {
   await clearData();
@@ -155,4 +155,53 @@ test("the work order summary needs a staff role and returns Claude's text", asyn
   const ok = await summarize("staff1", "Replaced washer");
   assert.equal(ok.statusCode, 200);
   assert.equal(ok.body.summary, "We replaced the tap washer.");
+});
+
+test("replies sent from Zoho: a missing permission is reported in System Health", async () => {
+  zoho.on = true;
+  zoho.foldersStatus = 400;
+  await fns.zohoSentMail();
+  assert.equal((await all("correspondence")).length, 0);
+  const [alert] = await all("serverAlerts");
+  assert.equal(alert.source, "zohoSentMail");
+  assert.match(alert.lastMessage, /re-authoriz/);
+});
+
+test("replies sent from Zoho are filed under the customer, once, and answer their waiting email", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  await db.collection("customers").doc("c1").set({ id: "c1", name: "Anne Lee", email: "anne@x.com" });
+  await db.collection("correspondence").doc("in1").set({ id: "in1", direction: "in", status: "new", customerId: "c1", fromEmail: "anne@x.com", subject: "Leak", body: "The tap leaks", receivedAt: iso(now - 3 * 3600e3) });
+  await db.collection("correspondence").doc("app1").set({ id: "app1", direction: "out", status: "handled", customerId: null, fromEmail: "service@qicampark.com", toEmail: "Bob@Y.com", subject: "Gate code", body: "It's 1234", receivedAt: iso(now - 3600e3) });
+  zoho.on = true;
+  zoho.sent = [
+    { messageId: "m1", subject: "Re: Leak", fromAddress: "service@qicampark.com", toAddress: "&quot;Anne Lee&quot; &lt;Anne@X.com&gt;", sentDateInGMT: String(now - 2 * 3600e3), hasAttachment: "0" },
+    { messageId: "m2", subject: "Gate code", fromAddress: "service@qicampark.com", toAddress: "bob@y.com", sentDateInGMT: String(now - 3600e3 + 60e3), hasAttachment: "0" },
+    { messageId: "m3", subject: "Prepaid propane", fromAddress: "service@qicampark.com", toAddress: "accounting@qicampark.com", sentDateInGMT: String(now - 1800e3), hasAttachment: "0" },
+    { messageId: "m4", subject: "Old", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", sentDateInGMT: String(now - 48 * 3600e3), hasAttachment: "0" }
+  ];
+  zoho.content = { m1: "<div>We'll be there Tuesday.</div><div>On Mon, Anne Lee wrote:</div><div>&gt; The tap leaks</div>" };
+
+  await fns.zohoSentMail();
+  await fns.zohoSentMail();
+  let corr = await all("correspondence");
+  const fromZoho = corr.filter((c) => c.sentVia === "zoho");
+  assert.equal(fromZoho.length, 1, "only the customer reply is added, and only once");
+  assert.equal(fromZoho[0].customerId, "c1");
+  assert.equal(fromZoho[0].toEmail, "anne@x.com");
+  assert.equal(fromZoho[0].direction, "out");
+  assert.equal(fromZoho[0].body, "We'll be there Tuesday.");
+  const waiting = corr.find((c) => c.id === "in1");
+  assert.equal(waiting.status, "handled");
+  assert.equal(waiting.handledBy, "Replied in Zoho");
+  assert.equal((await all("serverAlerts")).length, 0);
+
+  // Later sends are picked up on the next run; an attachment gets a note.
+  zoho.sent.unshift({ messageId: "m5", subject: "Your quote", fromAddress: "service@qicampark.com", toAddress: "newperson@z.com", sentDateInGMT: String(now - 60e3), hasAttachment: "1", summary: "Quote attached" });
+  await fns.zohoSentMail();
+  corr = await all("correspondence");
+  const m5 = corr.find((c) => c.zohoMessageId === "m5");
+  assert.equal(m5.customerId, null);
+  assert.match(m5.body, /^Quote attached\n\n\(Sent with an attachment/);
+  assert.equal(corr.filter((c) => c.sentVia === "zoho").length, 2);
 });
