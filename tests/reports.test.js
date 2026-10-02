@@ -1,4 +1,5 @@
-// Service Reports: every record type in the list opens when clicked.
+// Service Reports: opens on work orders only, and every record type in the
+// list opens when clicked.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { launch, openApp } = require("./helpers/app");
@@ -22,6 +23,9 @@ test("Propane, tree and quote rows in Service Reports open their record", async 
   await mountWithDb(page, `(r) => React.createElement(ServiceReportsView, { db: r.db, persist: r.persist, saveWinterizingRequest: r.saveWinterizingRequest, savePropaneRequest: r.savePropaneRequest, saveTreeRequest: r.saveTreeRequest, saveQuote: r.saveQuote, saveWorkOrder: r.saveWorkOrder, saveInvoice: r.saveInvoice, saveCorrespondence: r.saveCorrespondence, onCreateInvoice: () => {} })`,
     "(r) => r.db.propaneRequests.length === 1 && r.db.treeRequests.length === 1 && r.db.quotes.length === 1 && r.db.cottages.length === 1");
 
+  // Only work orders are shown at first; turn the other types on.
+  assert.equal(await page.getByText("Propane — Maple Cottage").count(), 0);
+  for (const type of ["Propane", "Tree", "Quote"]) await page.getByRole("button", { name: type, exact: true }).click();
   await page.getByText("Propane — Maple Cottage").click();
   await page.getByText("Edit Propane Request").waitFor();
   await page.getByRole("button", { name: "Cancel" }).click();
