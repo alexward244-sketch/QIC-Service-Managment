@@ -237,6 +237,21 @@ test("field header shows Saving / Not sent yet when changes haven't reached the 
   await page.close();
 });
 
+test("site types: guessed from tags until set, and a set type always wins", async () => {
+  const page = await openApp(browser, "stub");
+  const r = await page.evaluate(() => ({
+    guesses: [{ tags: ["Pebble Beach Seasonal"] }, { tags: ["Original Park 4-Season"] }, { section: "Limestone South" }, { tags: ["QIC Facility", "Seasonal"] }, { tags: ["Rental"] }, { tags: ["Waterfront"] }].map(guessSiteType),
+    setWins: isHydroTrackedSite({ tags: ["Seasonal"], siteType: "Transient" }),
+    rental: isHydroTrackedSite({ siteType: "Rental Cottage" }),
+    fourSeason: isSeasonalSite({ siteType: "4 Season" })
+  }));
+  assert.deepEqual(r.guesses, ["Seasonal", "4 Season", "Seasonal", "QIC Facility", "Rental Cottage", "Transient"]);
+  assert.equal(r.setWins, false, "a site set to Transient isn't read even if tagged Seasonal");
+  assert.equal(r.rental, false, "rental cottages aren't in hydro readings");
+  assert.equal(r.fourSeason, true);
+  await page.close();
+});
+
 test("hydro readings include every seasonal and 4 season site, whatever the tag's wording", async () => {
   const page = await openApp(browser, "stub");
   const result = await page.evaluate(() => [
