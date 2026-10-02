@@ -90,6 +90,18 @@ test("incoming email: a website contact form, forwarded by a coworker, is filed 
   const d = (await all("correspondence")).find((m) => m.id === direct.body.id);
   assert.equal(d.fromEmail, "sam@lee.ca");
   assert.equal(d.webForm.siteNumber, "12");
+  // The website's sign-up forms already arrive under Sign-ups, so their
+  // notices are skipped - "a" or "the", direct or forwarded.
+  const propane = "Dave Quickert has filled out a Propane Request Form\nSubmisson:\nName:Dave, Quickert\nAddress:29 Davidson Rd\nEmail:dave.q@x.com\nSite Number:1316";
+  for (const [from, subject, body] of [
+    ["info@quintesisle.ca", "Propane Fill Request - 1316", propane],
+    ["info@quintesisle.ca", "Winterizing", "Jo Bloggs has filled out the Winterizing Sign Up Form\n\nName\n:\nJo"],
+    ["jayden@qicampark.com", "Fwd: Propane Fill Request - 1316", `---------- Forwarded message ---------\nFrom: <info@quintesisle.ca>\n\n${propane}`]
+  ]) {
+    const r = await callWebhook(fns.serviceCorrespondence, { fromEmail: from, subject, body });
+    assert.equal(r.body.reason, "form-notification", subject);
+  }
+  assert.equal((await all("correspondence")).length, 2, "only the two contact forms were kept");
 });
 
 test("the Email Intake ignore list is respected", async () => {

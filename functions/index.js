@@ -298,6 +298,16 @@ function extractForwardedSender(plainBody) {
   return null;
 }
 
+// Which website form a notice is for: "Dave Quickert has filled out a
+// Propane Request Form" -> "Propane Request"; null when it isn't one.
+function websiteFormName(plainBody) {
+  const m = toStr(plainBody).match(/has filled out (?:a|an|the|our)\s+([^\n]{0,60}?)\s*form\b/i);
+  return m ? m[1].trim() : null;
+}
+function isContactFormName(name) {
+  return /contact|general|inquir|enquir|question/i.test(toStr(name));
+}
+
 // The website's contact form ("Mike Hill has filled out a contact form" ->
 // Name / Email / Phone / Message, each as "Label : value") arrives from our
 // own address (info@quintesisle.ca), often forwarded on by a coworker. The
@@ -1174,8 +1184,13 @@ exports.serviceCorrespondence = onRequest(
       // the Zoho Flow sender filter, so this is a second, independent check
       // - skip writing these as correspondence even if the Flow-side filter
       // has a gap.
+      // The website's own form notices ("Dave Quickert has filled out a
+      // Propane Request Form") are the same: propane, winterizing and other
+      // sign-up forms already arrive under Sign-ups. Only its contact /
+      // general information form is a real message to keep (read above).
       const lowerBody = plainBody.toLowerCase();
-      if (lowerBody.includes("has submitted the following") || lowerBody.includes("has filled out the")) {
+      const siteForm = websiteFormName(plainBody);
+      if (lowerBody.includes("has submitted the following") || (siteForm !== null && !isContactFormName(siteForm))) {
         res.status(200).json({ ok: true, skipped: true, reason: "form-notification" });
         return;
       }
