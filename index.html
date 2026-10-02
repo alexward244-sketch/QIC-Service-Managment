@@ -5199,7 +5199,10 @@ function correspondenceTimelineMarkers(db, customer, emails, { includeInvoices }
   const siteIds = customerSiteIds(customer);
   const out = [];
   const plusMs = (iso, ms) => new Date(new Date(iso).getTime() + ms).toISOString();
-  (db.workOrders || []).filter((w) => w.customerId === customer.id || w.siteId && siteIds.includes(w.siteId)).forEach((wo) => {
+  // Theirs: named on it, or - when it names no one - on one of their sites.
+  // One naming someone else (e.g. the site's previous owner) isn't theirs.
+  const isTheirs = (r) => r.customerId ? r.customerId === customer.id : !!r.siteId && siteIds.includes(r.siteId);
+  (db.workOrders || []).filter(isTheirs).forEach((wo) => {
     const fromEmail = emails.find((c) => c.workOrderId === wo.id && c.receivedAt);
     const firstStatus = (wo.statusHistory || []).find((h) => h.from == null && h.at);
     const at = wo.createdAt || fromEmail && plusMs(fromEmail.receivedAt, 1) || firstStatus && firstStatus.at || startOfDayIso(wo.date);
@@ -5208,7 +5211,7 @@ function correspondenceTimelineMarkers(db, customer, emails, { includeInvoices }
   });
   if (includeInvoices) {
     const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
-    (db.invoices || []).filter((inv) => inv.customerId === customer.id || inv.siteId && siteIds.includes(inv.siteId)).forEach((inv) => {
+    (db.invoices || []).filter(isTheirs).forEach((inv) => {
       const rate = inv.taxRate != null ? inv.taxRate : taxRate;
       const { total } = computeQuoteTotals(inv, rate);
       const status = invoiceStatus(inv, rate);

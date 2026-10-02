@@ -304,7 +304,8 @@ test("correspondence: a customer's work orders and invoices appear in their conv
       workOrders: [
         { id: "w-old", workOrderNumber: "WO-0400", title: "Made from the email", status: "Open", date: "2026-09-29", siteId: "s1", partsUsed: [], notes: [] },
         { id: "w-new", workOrderNumber: "WO-0412", title: "Fix tap", status: "Completed", date: "2026-09-29", customerId: "c1", createdAt: "2026-09-28T14:20:00Z", partsUsed: [], notes: [] },
-        { id: "w-other", workOrderNumber: "WO-0500", title: "Someone else", status: "Open", date: "2026-09-29", siteId: "s9", createdAt: "2026-09-28T14:30:00Z", partsUsed: [], notes: [] }
+        { id: "w-other", workOrderNumber: "WO-0500", title: "Someone else", status: "Open", date: "2026-09-29", siteId: "s9", createdAt: "2026-09-28T14:30:00Z", partsUsed: [], notes: [] },
+        { id: "w-prev-owner", workOrderNumber: "WO-0100", title: "Previous owner's job", status: "Completed", date: "2026-09-29", siteId: "s1", customerId: "c-old", createdAt: "2026-09-28T14:40:00Z", partsUsed: [], notes: [] }
       ],
       invoices: [{ id: "i1", invoiceNumber: "INV-1088", customerId: "c1", date: "2026-09-30", sentDate: "2026-09-30", lineItems: [{ id: "l", quantity: 1, unitPrice: 100 }], laborHours: 0 }] };
     const order = (includeInvoices) => mergeCorrespondenceTimeline(emails, correspondenceTimelineMarkers(db, c, emails, { includeInvoices })).map((r) => r.type === "email" ? r.item.id : r.marker.key);
