@@ -72,3 +72,22 @@ test("A general service request becomes a work order with the next number", asyn
   await waitFor(async () => (await readCollection("pendingSignups")).length === 0, "the pending sign-up to be removed");
   await page.close();
 });
+
+test("Linking an email address to a customer also links earlier emails to and from it", async () => {
+  await resetData({
+    "campground/data": { settings: {}, activityLog: [], staff: [], parts: [], workOrderTemplates: [], userRoles: {} },
+    "customers/c1": { id: "c1", name: "Brenda Ferguson", email: "brenda@home.ca", siteIds: [] },
+    "correspondence/a": { id: "a", direction: "out", toEmail: "brenda.f@gmail.com", customerId: null, subject: "Re: your service request", receivedAt: "2026-09-30T12:00:00Z" },
+    "correspondence/b": { id: "b", direction: "in", fromEmail: "brenda.f@gmail.com", customerId: null, subject: "Re: your service request", receivedAt: "2026-10-01T12:00:00Z" },
+    "correspondence/c": { id: "c", direction: "in", fromEmail: "someone@else.com", customerId: null, receivedAt: "2026-10-01T12:00:00Z" }
+  });
+  const page = await openApp(browser, "emulator", { role: "office" });
+  const n = await page.evaluate(() => linkEarlierEmails("c1", "Brenda.F@gmail.com", [
+    { id: "a", direction: "out", toEmail: "brenda.f@gmail.com" }, { id: "b", direction: "in", fromEmail: "brenda.f@gmail.com" }, { id: "c", direction: "in", fromEmail: "someone@else.com" }
+  ]));
+  assert.equal(n, 2, "addresses match whatever their capitals");
+  const mail = await readCollection("correspondence");
+  assert.deepEqual(mail.filter((m) => m.customerId === "c1").map((m) => m.id).sort(), ["a", "b"]);
+  assert.equal(mail.find((m) => m.id === "c").customerId, null);
+  await page.close();
+});

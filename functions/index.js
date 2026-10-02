@@ -680,6 +680,32 @@ async function findCustomerByEmail(email) {
   return hit ? hit.id : null;
 }
 
+// An address that isn't on any customer yet but that we've already been
+// emailing with, in a conversation someone linked to a customer (e.g. we
+// replied to a web-form service request and the request was matched to a
+// customer): their reply joins that customer's thread instead of starting a
+// new, unlinked one. Uses the most recent such email.
+async function customerFromEarlierEmails(email) {
+  const target = toStr(email).trim();
+  if (!target) return null;
+  const lower = target.toLowerCase();
+  const variants = Array.from(new Set([target, lower]));
+  const snaps = await Promise.all(variants.flatMap((v) => [
+    db.collection("correspondence").where("toEmail", "==", v).get(),
+    db.collection("correspondence").where("fromEmail", "==", v).get()
+  ]));
+  let linked = snaps.flatMap((snap) => snap.docs.map((d) => d.data())).filter((c) => c.customerId);
+  if (!linked.length) {
+    // Addresses are stored as typed ("Brenda.F@gmail.com") and Firestore
+    // matches case-sensitively, so check the emails we've sent by hand.
+    const sent = await db.collection("correspondence").where("direction", "==", "out").get();
+    linked = sent.docs.map((d) => d.data()).filter((c) => c.customerId && toStr(c.toEmail).trim().toLowerCase() === lower);
+  }
+  if (!linked.length) return null;
+  linked.sort((a, b) => toStr(b.receivedAt).localeCompare(toStr(a.receivedAt)));
+  return linked[0].customerId;
+}
+
 // Zoho access tokens are short-lived (~1hr); cached at module scope so a
 // warm function instance reuses one instead of spending a refresh-token
 // grant (rate-limited to 10 per 10 minutes) on every inbound email.
@@ -922,7 +948,7 @@ exports.serviceCorrespondence = onRequest(
       // email) is the same: the forwarded part is the context.
       const storedBody = forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
 
-      const customerId = await findCustomerByEmail(effectiveFrom);
+      const customerId = (await findCustomerByEmail(effectiveFrom)) || (await customerFromEarlierEmails(effectiveFrom));
       const [{ suggestedFlag, needsReply, triage }, attachments] = await Promise.all([
         triageCorrespondence(toStr(body.subject), storedBody),
         fetchZohoAttachments({ fromEmail })

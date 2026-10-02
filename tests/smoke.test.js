@@ -290,3 +290,16 @@ test("field app: reopening a completed, invoiced job asks first", async () => {
   assert.deepEqual(await page.evaluate(() => window.__saved.map((w) => [w.status, w.completedDate])), [["Open", null]]);
   await page.close();
 });
+
+test("correspondence: messages not linked to anyone are grouped by the other person's address", async () => {
+  const page = await openApp(browser, "stub");
+  const rows = await page.evaluate(() => groupCorrespondenceByCustomer([
+    { id: "1", direction: "in", fromEmail: "Brenda.F@gmail.com" },
+    { id: "2", direction: "out", toEmail: "brenda.f@gmail.com" },
+    { id: "3", direction: "in", fromEmail: "other@x.com" },
+    { id: "4", direction: "in", fromEmail: "x@y.com", customerId: "c1" },
+    { id: "5", direction: "out", toEmail: "z@y.com", customerId: "c1" }
+  ]).map((r) => r.ids));
+  assert.deepEqual(rows, [["1", "2"], ["3"], ["4", "5"]]);
+  await page.close();
+});
