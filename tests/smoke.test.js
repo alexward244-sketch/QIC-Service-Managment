@@ -643,6 +643,28 @@ test("correspondence: every message in a customer's conversation can be deleted 
   await page.close();
 });
 
+test("customers: tidy names takes the site number off the end, only after review", async () => {
+  const page = await openApp(browser, "stub");
+  const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));
+  assert.deepEqual(cases, ["Bill & Susan March", "Anne Lee", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant"]);
+  await page.evaluate(() => {
+    window.__saved = [];
+    window.__persisted = [];
+    const db = { activityLog: [], customers: [{ id: "c1", name: "Bill & Susan March (0412A)", email: "m@x.com" }, { id: "c2", name: "Anne Lee (107)" }, { id: "c3", name: "Gary Callaghan" }] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CustomerNameTidyModal, { db, persist: (n) => window.__persisted.push(n), saveCustomer: async (c) => window.__saved.push(c), onClose() {} }));
+  });
+  assert.equal(await page.locator("[data-name-tidy]").count(), 2);
+  assert.equal(await page.evaluate(() => window.__saved.length), 0, "nothing saved before confirming");
+  await page.locator('[data-name-tidy="c2"] input').uncheck();
+  await page.getByRole("button", { name: "Confirm 1 change" }).click();
+  await page.waitForFunction(() => window.__saved.length === 1);
+  const saved = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual([saved.id, saved.name, saved.email], ["c1", "Bill & Susan March", "m@x.com"]);
+  assert.match(await page.evaluate(() => window.__persisted[0].activityLog[0].summary), /site number off 1 customer name/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
