@@ -304,8 +304,28 @@ function websiteFormName(plainBody) {
   const m = toStr(plainBody).match(/has filled out (?:a|an|the|our)\s+([^\n]{0,60}?)\s*form\b/i);
   return m ? m[1].trim() : null;
 }
+// "General Information/Contact Us" is a message; "General Service Request"
+// is a sign-up form (it arrives under Service Requests).
 function isContactFormName(name) {
-  return /contact|general|inquir|enquir|question/i.test(toStr(name));
+  return /contact|general info|inquir|enquir|question/i.test(toStr(name));
+}
+
+// The phone system's email for each voicemail left on the answering
+// machine ("V-Mail from SUSAN MARCH (613) 438-0648 to Service Department
+// 106"). Every one comes from the same no-reply address, so it never says
+// who called - these are never matched to a customer; the caller is read
+// from the subject. Returns { callerName, callerNumber, to } or null.
+function parseVoicemail(subject, plainBody) {
+  const subj = toStr(subject);
+  if (!/^\s*((re|fwd?|fw)\s*:\s*)*v-?mail from\b/i.test(subj) && !/you have a new voicemail from/i.test(plainBody || "")) return null;
+  const phone = "(\\(?\\d{3}\\)?[\\s.-]*\\d{3}[\\s.-]*\\d{4})";
+  const nice = (name) => {
+    const n = toStr(name).replace(/^from\s+/i, "");
+    if (!n) return null;
+    return n === n.toUpperCase() ? n.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase()) : n;
+  };
+  const m = new RegExp(`v-?mail from\\s+(.*?)\\s*${phone}(?:\\s+to\\s+(.+?))?\\s*$`, "i").exec(subj) || new RegExp(`new voicemail from\\s+(.*?)\\s*${phone}`, "i").exec(plainBody || "");
+  return m ? { callerName: nice(m[1]), callerNumber: m[2].trim(), to: m[3] ? m[3].trim() : null } : { callerName: null, callerNumber: null, to: null };
 }
 
 // The website's contact form ("Mike Hill has filled out a contact form" ->
@@ -1202,7 +1222,8 @@ exports.serviceCorrespondence = onRequest(
       // email) is the same: the forwarded part is the context.
       const storedBody = webForm && !fromStaff ? webForm.text : forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
 
-      const customerId = (await findCustomerByEmail(effectiveFrom)) || (await customerFromEarlierEmails(effectiveFrom));
+      const voicemail = parseVoicemail(body.subject, plainBody);
+      const customerId = voicemail ? null : (await findCustomerByEmail(effectiveFrom)) || (await customerFromEarlierEmails(effectiveFrom));
       const [{ suggestedFlag, needsReply, triage }, attachments] = await Promise.all([
         triageCorrespondence(toStr(body.subject), storedBody),
         fetchZohoAttachments({ fromEmail })
@@ -1216,6 +1237,7 @@ exports.serviceCorrespondence = onRequest(
         fromEmail: effectiveFrom,
         forwardedBy,
         fromStaff,
+        ...(voicemail ? { voicemail } : {}),
         ...(webForm && !fromStaff ? { webForm: { name: webForm.name, phone: webForm.phone, siteNumber: webForm.siteNumber, department: webForm.department } } : {}),
         suggestedFlag,
         needsReply,

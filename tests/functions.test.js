@@ -102,6 +102,24 @@ test("incoming email: a website contact form, forwarded by a coworker, is filed 
     assert.equal(r.body.reason, "form-notification", subject);
   }
   assert.equal((await all("correspondence")).length, 2, "only the two contact forms were kept");
+  // The General Service Request form is a sign-up too (Service Requests),
+  // even from Tim's address - but Tim's own emails still come in.
+  const gsr = await callWebhook(fns.serviceCorrespondence, { fromEmail: "tim@quintesisle.ca", subject: "General Service Request Form", body: "Jill Holliday at site # has filled out the General Service Request Form\nName:Jill" });
+  assert.equal(gsr.body.reason, "form-notification");
+  const tim = await callWebhook(fns.serviceCorrespondence, { fromEmail: "tim@quintesisle.ca", subject: "Site 412 deck", body: "Can someone look at the deck at 412 this week?" });
+  assert.ok(tim.body.id, "a normal email from Tim is kept");
+});
+
+test("incoming email: voicemails are never linked to a customer, and say who called", async () => {
+  // Someone once saved the phone system's address on a customer.
+  await db.doc("customers/c1").set({ name: "Bill & Susan March", email: "march@x.com", matchEmails: ["noreply@phones.example"], siteIds: [] });
+  const res = await callWebhook(fns.serviceCorrespondence, { fromEmail: "noreply@phones.example", subject: "V-Mail from SUSAN MARCH (613) 438-0648 to Service Department 106", body: "You have a new voicemail from (613) 438-0648. Large branch fell on the deck between 412A and 412B." });
+  const saved = (await all("correspondence")).find((m) => m.id === res.body.id);
+  assert.equal(saved.customerId, null);
+  assert.deepEqual(saved.voicemail, { callerName: "Susan March", callerNumber: "(613) 438-0648", to: "Service Department 106" });
+  const noName = await callWebhook(fns.serviceCorrespondence, { fromEmail: "noreply@phones.example", subject: "V-Mail from (647) 469-6932 to Service Department 106", body: "You have a new voicemail from (647) 469-6932" });
+  const saved2 = (await all("correspondence")).find((m) => m.id === noName.body.id);
+  assert.deepEqual([saved2.customerId, saved2.voicemail.callerName, saved2.voicemail.callerNumber], [null, null, "(647) 469-6932"]);
 });
 
 test("the Email Intake ignore list is respected", async () => {
