@@ -12905,6 +12905,14 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
     "Save Sign-Up"
   )));
 }
+function WinterizingNote({ text }) {
+  return React.createElement(
+    "span",
+    { className: "block mt-1.5 rounded-md bg-[#FBEEDA]/70 border border-[#E9D3B5] px-2.5 py-1.5 text-sm sm:text-xs text-[#4B4740] whitespace-pre-wrap break-words", "data-winter-note": "" },
+    React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, "Customer note: "),
+    String(text).trim()
+  );
+}
 function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode, selected, onEdit, onDelete, onToggle, onDirectComplete, onToggleSelect, onPrint, onEmailCustomer, onAnodeRodReplaced }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
@@ -12926,6 +12934,9 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
   // When there's nothing gate-worthy to check off, the checkbox still
   // toggles completion instantly, exactly as before.
   const isMobile = useIsMobile();
+  // What the customer wrote on the sign-up form (e.g. "dog in the yard"),
+  // on the card and the completion checklist so the crew sees it.
+  const hasNote = Boolean(request.notes && request.notes.trim());
   const [confirming, setConfirming] = useState(false);
   const [checkedLocal, setCheckedLocal] = useState(() => /* @__PURE__ */ new Set());
   const needsGate = gateItems.length > 0 || anodeRodRequested && !anodeRodReplaced;
@@ -12948,7 +12959,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
     });
   };
   const allLocalChecked = gateItems.every((opt) => checkedLocal.has(opt.key));
-  const confirmModal = confirming ? /* @__PURE__ */ React.createElement(Modal, { title: `Confirm Winterizing \u2014 ${cottage ? cottage.name : "Cottage"}`, onClose: () => setConfirming(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Check off each item as you complete it. This is for your reference only \u2014 the customer never sees it."), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-4" }, gateItems.map((opt) => /* @__PURE__ */ React.createElement(
+  const confirmModal = confirming ? /* @__PURE__ */ React.createElement(Modal, { title: `Confirm Winterizing \u2014 ${cottage ? cottage.name : "Cottage"}`, onClose: () => setConfirming(false) }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Check off each item as you complete it. This is for your reference only \u2014 the customer never sees it."), hasNote && React.createElement("div", { className: "mb-3" }, React.createElement(WinterizingNote, { text: request.notes })), /* @__PURE__ */ React.createElement("div", { className: "space-y-1.5 mb-4" }, gateItems.map((opt) => /* @__PURE__ */ React.createElement(
     "button",
     {
       key: opt.key,
@@ -13003,7 +13014,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
         key: opt.key,
         className: `text-xs sm:text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium ${opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]"}`
       }, opt.label);
-    })));
+    })), hasNote && React.createElement(WinterizingNote, { text: request.notes }));
   const toggleArea = isMobile ? /* @__PURE__ */ React.createElement("div", {
     onClick: readOnly ? void 0 : handleToggleChange,
     role: "button",
