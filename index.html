@@ -4579,6 +4579,66 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   )), ownerMode === "new" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerName, onChange: (e) => setNewOwnerName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerPhone, onChange: (e) => setNewOwnerPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: newOwnerEmail, onChange: (e) => setNewOwnerEmail(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Cottage")));
 }
 
+// Names saved with a site on the end ("Bill & Susan March (0412A)"): the
+// site already shows beside the name wherever it matters, so it comes off.
+// Only brackets with a number in them, at the very end, are removed.
+function nameWithoutSite(name) {
+  let n = String(name || "");
+  const re = /\s*\(([^()]*\d[^()]*)\)\s*$/;
+  while (re.test(n) && n.replace(re, "").trim()) n = n.replace(re, "");
+  return n.trim();
+}
+function CustomerNameTidyModal({ db, persist, saveCustomer, onClose }) {
+  const actor = useCurrentActor();
+  const changes = (db.customers || []).map((c) => ({ c, after: nameWithoutSite(c.name) })).filter((x) => x.after && x.after !== String(x.c.name || "").trim()).sort((a, b) => a.after.localeCompare(b.after));
+  const [chosen, setChosen] = useState(() => new Set(changes.map((x) => x.c.id)));
+  const [saving, setSaving] = useState(false);
+  const toggle = (id) => setChosen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const apply = async () => {
+    const list = changes.filter((x) => chosen.has(x.c.id));
+    if (!list.length) return;
+    setSaving(true);
+    await Promise.all(list.map((x) => saveCustomer({ ...x.c, name: x.after })));
+    persist({ ...db, activityLog: addLog(db, actor, `Took the site number off ${list.length} customer name${list.length === 1 ? "" : "s"}`) });
+    setSaving(false);
+    onClose();
+  };
+  return React.createElement(
+    Modal,
+    { title: "Tidy customer names", onClose, wide: true },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${changes.length} customer name${changes.length === 1 ? " has" : "s have"} a site number on the end. Untick any to leave as they are — nothing changes until you confirm.`),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-3 mb-2 text-xs" },
+      React.createElement("button", { type: "button", onClick: () => setChosen(new Set(changes.map((x) => x.c.id))), className: "text-[#377249] font-semibold hover:underline" }, "Select all"),
+      React.createElement("button", { type: "button", onClick: () => setChosen(new Set()), className: "text-[#75716A] hover:underline" }, "Clear"),
+      React.createElement("span", { className: "text-[#9A968D]" }, `${chosen.size} selected`)
+    ),
+    React.createElement(
+      "div",
+      { className: "max-h-[55vh] overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-4" },
+      changes.map((x) => React.createElement(
+        "label",
+        { key: x.c.id, "data-name-tidy": x.c.id, className: "flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-[#F1EEE9]" },
+        React.createElement("input", { type: "checkbox", checked: chosen.has(x.c.id), onChange: () => toggle(x.c.id), className: "accent-[#377249] w-4 h-4 flex-shrink-0" }),
+        React.createElement("span", { className: "flex-1 min-w-0 text-[#9A968D] line-through truncate" }, x.c.name),
+        React.createElement("span", { className: "text-[#9A968D]" }, "→"),
+        React.createElement("span", { className: "flex-1 min-w-0 font-medium text-[#1E1A13] truncate" }, x.after)
+      ))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      React.createElement("button", { type: "button", disabled: !chosen.size || saving, onClick: apply, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Confirm ${chosen.size} change${chosen.size === 1 ? "" : "s"}`)
+    )
+  );
+}
 function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -4588,6 +4648,11 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
   }, [filterPrefill && filterPrefill.ts]);
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [tidyOpen, setTidyOpen] = useState(false);
+  const namesToTidy = (db.customers || []).filter((c) => {
+    const after = nameWithoutSite(c.name);
+    return after && after !== String(c.name || "").trim();
+  }).length;
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (c) => {
@@ -4658,7 +4723,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Bulk Add"
-  ), /* @__PURE__ */ React.createElement(
+  ), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
@@ -4683,7 +4748,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       return (_a2 = db.sites.find((s) => s.id === id)) == null ? void 0 : _a2.number;
     }).filter(Boolean);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("button", { className: "text-left block font-semibold text-[#1E1A13] hover:underline", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "text-left block font-normal text-xs text-[#75716A] hover:underline mt-0.5", onClick: () => setDetailId(c.id) }, c.name2), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 space-y-0.5" }, c.phone && /* @__PURE__ */ React.createElement("div", null, c.phone), c.email && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.email), c.address && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.address), linkedSiteNumbers.length > 0 && /* @__PURE__ */ React.createElement("div", null, "Site ", linkedSiteNumbers.join(", "))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 mt-3 text-sm" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1", onClick: () => confirm.ask(c.id) }, "Delete")));
-  }))), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  }))), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === detailId),
