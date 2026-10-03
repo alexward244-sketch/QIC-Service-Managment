@@ -377,6 +377,27 @@ test("correspondence: with nothing from the last two years, the newest year is o
   await page.close();
 });
 
+test("winterizing: the customer's note from the sign-up form shows on the card and the completion checklist", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { settings: {}, sites: [{ id: "s1", number: "412" }], cottages: [{ id: "k1", name: "Maple Cottage", siteId: "s1" }], customers: [], parts: [] };
+    const row = (request) => React.createElement(WinterizingRequestRow, { request, db, readOnly: false, selectMode: false, selected: false, onEdit() {}, onDelete() {}, onToggle() {}, onDirectComplete() {}, onToggleSelect() {}, onPrint() {}, onEmailCustomer() {}, onAnodeRodReplaced() {} });
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement("div", null,
+      row({ id: "r1", cottageId: "k1", requestedDate: "2026-10-20", notes: "Dog in the yard \u2014 please close the gate.", options: { dishwasher: true } }),
+      row({ id: "r2", cottageId: "k1", requestedDate: "2026-10-21", notes: "   ", options: {} })));
+  });
+  const notes = page.locator("[data-winter-note]");
+  await notes.first().waitFor();
+  assert.equal(await notes.count(), 1, "a blank note shows nothing");
+  assert.equal(await notes.first().textContent(), "Customer note: Dog in the yard \u2014 please close the gate.");
+  // Opening the completion checklist shows it there too.
+  await page.getByRole("checkbox").first().click();
+  await page.getByText("Check off each item as you complete it.", { exact: false }).waitFor();
+  assert.equal(await notes.count(), 2);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
