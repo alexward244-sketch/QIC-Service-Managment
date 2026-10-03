@@ -13202,7 +13202,19 @@ function WinterizingReminderModal({ db, persist, rows, actor, onClose, inline })
 function winterPlannedDate(r) {
   return r.plannedDate != null ? r.plannedDate : r.requestedDate || "";
 }
+// Looked up once per sign-up per screen update (the lists sort and filter
+// on it many times over).
+const winterInfoCache = /* @__PURE__ */ new WeakMap();
 function winterInfo(db, r) {
+  let byDb = winterInfoCache.get(db);
+  if (!byDb) {
+    byDb = /* @__PURE__ */ new WeakMap();
+    winterInfoCache.set(db, byDb);
+  }
+  if (!byDb.has(r)) byDb.set(r, winterInfoUncached(db, r));
+  return byDb.get(r);
+}
+function winterInfoUncached(db, r) {
   const cottage = (db.cottages || []).find((c) => c.id === r.cottageId) || null;
   const site = cottage ? (db.sites || []).find((s) => s.id === cottage.siteId) || null : null;
   const customer = r.customerId ? (db.customers || []).find((c) => c.id === r.customerId) || null : null;
