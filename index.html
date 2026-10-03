@@ -13053,7 +13053,7 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
       onClick: () => onEmailCustomer(request),
       disabled: emailStatus === "sending",
       className: "min-h-[38px] sm:min-h-0 flex items-center justify-center text-sm sm:text-[11px] px-3.5 sm:px-2.5 py-2 sm:py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-medium whitespace-nowrap disabled:opacity-50"
-    }, emailStatus === "sending" ? "Sending\u2026" : "Email Customer"), /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 sm:gap-2 text-sm sm:text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1.5 sm:py-0", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1.5 sm:py-0", onClick: () => onDelete(request) }, "Delete")))
+    }, emailStatus === "sending" ? "Sending\u2026" : "Email Customer"), /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : winterPlannedDate(request) && winterPlannedDate(request) !== request.requestedDate ? `Planned ${winterPlannedDate(request)} (asked ${request.requestedDate || "\u2014"})` : winterPlannedDate(request) ? `Requested ${request.requestedDate}` : "Not scheduled yet"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 sm:gap-2 text-sm sm:text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1.5 sm:py-0", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1.5 sm:py-0", onClick: () => onDelete(request) }, "Delete")))
   ), confirmModal);
 }
 // ---------------------------------------------------------------------------
@@ -13091,7 +13091,7 @@ function fillWinterReminder(template, row) {
   const name = row.owner ? row.owner.name : "there";
   return String(template).replace(/\{name\}/g, name).replace(/\{cottage\}/g, row.cottage.name || "your cottage").replace(/\{site\}/g, row.site.number || "").replace(/\{link\}/g, WINTERIZING_SIGNUP_URL);
 }
-function WinterizingReminderModal({ db, persist, rows, actor, onClose }) {
+function WinterizingReminderModal({ db, persist, rows, actor, onClose, inline }) {
   const dbRef = useRef(db);
   dbRef.current = db;
   const canEmail = (r) => r.owner && r.owner.email;
@@ -13139,8 +13139,8 @@ function WinterizingReminderModal({ db, persist, rows, actor, onClose }) {
   const sending = progress && progress.sent == null;
   const emailable = rows.filter(canEmail);
   return React.createElement(
-    Modal,
-    { title: "Not signed up for winterizing yet", onClose, wide: true },
+    inline ? "div" : Modal,
+    inline ? { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5" } : { title: "Not signed up for winterizing yet", onClose, wide: true },
     React.createElement(
       "div",
       { className: "flex items-center justify-between gap-3 flex-wrap mb-3" },
@@ -13187,12 +13187,358 @@ function WinterizingReminderModal({ db, persist, rows, actor, onClose }) {
     React.createElement(
       "div",
       { className: "flex justify-end gap-2" },
-      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"),
+      !inline && React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"),
       React.createElement("button", { type: "button", disabled: !selected.size || sending, onClick: send, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, sending ? `Sending ${progress.done + 1} of ${progress.total}…` : `Email reminder to ${selected.size}`)
     )
   );
 }
-function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup }) {
+// ---------------------------------------------------------------------------
+// Winterizing on a computer: Overview (season cards + table), Plan (a week
+// board to drag cottages between days) and the cottage panel both open.
+// Phones keep the simpler list.
+// ---------------------------------------------------------------------------
+// The day the crew plans to do it: set by dragging on the Plan board, else
+// the day the customer asked for. "" = taken off the schedule.
+function winterPlannedDate(r) {
+  return r.plannedDate != null ? r.plannedDate : r.requestedDate || "";
+}
+function winterInfo(db, r) {
+  const cottage = (db.cottages || []).find((c) => c.id === r.cottageId) || null;
+  const site = cottage ? (db.sites || []).find((s) => s.id === cottage.siteId) || null : null;
+  const customer = r.customerId ? (db.customers || []).find((c) => c.id === r.customerId) || null : null;
+  const extras = WINTERIZING_OPTIONS.filter((o) => r.options && r.options[o.key]);
+  const section = site && site.section && site.section.trim() || "No Section";
+  const history = (db.winterizingRequests || []).filter((x) => x.id !== r.id && x.cottageId === r.cottageId && x.completed).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || ""));
+  return { cottage, site, customer, extras, section, history, planned: winterPlannedDate(r), note: String(r.notes || "").trim() };
+}
+function sortWinterSections(names) {
+  const idx = (n) => SECTION_ORDER.findIndex((s) => s.toLowerCase() === n.toLowerCase());
+  return names.slice().sort((a, b) => {
+    if (a === "No Section") return 1;
+    if (b === "No Section") return -1;
+    const ia = idx(a), ib = idx(b);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.localeCompare(b);
+  });
+}
+function winterShortDate(iso, opts) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(void 0, opts || { month: "short", day: "numeric" }) : "";
+}
+function winterAddDays(iso, n) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function winterStatus(r, today) {
+  const planned = winterPlannedDate(r);
+  if (r.completed) return { key: "done", label: "Winterized", cls: "bg-[#DDF1E1] text-[#28633C]" };
+  if (planned && planned === today) return { key: "today", label: "Today", cls: "bg-[#FBEEDA] text-[#9A6B1F]" };
+  if (planned && planned < today) return { key: "overdue", label: "Overdue", cls: "bg-[#F5E3D9] text-[#a8532a]" };
+  if (planned) return { key: "planned", label: "Planned", cls: "bg-[#E4EEF2] text-[#2E6E8E]" };
+  return { key: "none", label: "No date", cls: "bg-[#F1EEE9] text-[#75716A]" };
+}
+const WINTER_SHORT = { dishwasher: ["dishwasher", "dishwashers"], washingMachine: ["washing machine", "washing machines"], fridgeWater: ["fridge line", "fridge lines"], outsideTap: ["outside tap", "outside taps"], anodeRod: ["anode rod", "anode rods"], keyAtReception: ["key at reception", "keys at reception"] };
+function winterExtrasSummary(list) {
+  const counts = {};
+  list.forEach((r) => WINTERIZING_OPTIONS.forEach((o) => {
+    if (r.options && r.options[o.key]) counts[o.key] = (counts[o.key] || 0) + 1;
+  }));
+  return Object.entries(counts).map(([k, n]) => `${n} ${WINTER_SHORT[k][n === 1 ? 0 : 1]}`).join(" · ");
+}
+function WinterExtraChip({ opt, small }) {
+  const tone = opt.key === "anodeRod" ? "bg-[#F5E3D9] text-[#a8532a]" : opt.key === "keyAtReception" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
+  return React.createElement("span", { className: `${small ? "text-[10px] px-1.5" : "text-[11px] px-2"} py-0.5 rounded-full font-medium whitespace-nowrap ${tone}` }, opt.label);
+}
+function WinterStatCard({ label, value, sub, tone, onClick }) {
+  return React.createElement(
+    onClick ? "button" : "div",
+    { type: onClick ? "button" : void 0, onClick, className: `text-left rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 ${onClick ? "hover:bg-[#F1EEE9]" : ""}`, "data-stat": label },
+    React.createElement("div", { className: "text-[11px] uppercase tracking-wider font-semibold text-[#75716A]" }, label),
+    React.createElement("div", { className: `font-serif text-3xl font-semibold mt-1 ${tone || "text-[#1E1A13]"}` }, value),
+    sub && React.createElement("div", { className: "text-xs text-[#75716A] mt-1 truncate" }, sub)
+  );
+}
+function WinterizingOverview({ db, all, shown, today, notSignedUp, chip, setChip, onOpen, selectMode, selectedIds, onToggleSelect, emailStatus, onEmail, readOnly, onShowNotSigned }) {
+  const year = Number(today.slice(0, 4));
+  const done = all.filter((r) => r.completed);
+  const todo = all.filter((r) => !r.completed);
+  const todayList = todo.filter((r) => winterPlannedDate(r) === today);
+  const lastSeason = (db.winterizingRequests || []).filter((r) => r.completed && (r.completedDate || "").slice(0, 4) === String(year - 1)).length;
+  const upcoming = todo.map(winterPlannedDate).filter((d) => d && d > today).sort();
+  const nextDay = upcoming[0];
+  const emailed = done.filter((r) => r.completionEmailedAt).length;
+  const pct = all.length ? Math.round(done.length * 100 / all.length) : 0;
+  const nameOf = (r) => (winterInfo(db, r).cottage || {}).name || "cottage";
+  const anode = all.filter((r) => r.options && r.options.anodeRod);
+  const bySection = {};
+  all.forEach((r) => {
+    const s = winterInfo(db, r).section;
+    bySection[s] = bySection[s] || { done: 0, total: 0 };
+    bySection[s].total += 1;
+    if (r.completed) bySection[s].done += 1;
+  });
+  const hasNote = (r) => String(r.notes || "").trim() !== "";
+  const CHIPS = [["all", "All", () => true], ["todo", "To do", (r) => !r.completed], ["today", "Today", (r) => !r.completed && winterPlannedDate(r) === today], ["done", "Winterized", (r) => r.completed], ["note", "Has a note", hasNote], ["anode", "Anode rod", (r) => r.options && r.options.anodeRod], ["key", "Key at reception", (r) => r.options && r.options.keyAtReception]];
+  const active = CHIPS.find((c) => c[0] === chip) || CHIPS[0];
+  const rows = shown.filter(active[2]).slice().sort((a, b) => {
+    if (a.completed !== b.completed) return a.completed ? 1 : -1;
+    if (a.completed) return (b.completedDate || "").localeCompare(a.completedDate || "");
+    const pa = winterPlannedDate(a) || "9999", pb = winterPlannedDate(b) || "9999";
+    if (pa !== pb) return pa.localeCompare(pb);
+    return String((winterInfo(db, a).site || {}).number || "").localeCompare(String((winterInfo(db, b).site || {}).number || ""), void 0, { numeric: true });
+  });
+  const extraCounts = WINTERIZING_OPTIONS.map((o) => [o, all.filter((r) => r.options && r.options[o.key]).length]);
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "div",
+      { className: "grid grid-cols-3 xl:grid-cols-6 gap-3 mb-4" },
+      React.createElement(WinterStatCard, { label: "Signed up", value: all.length, sub: lastSeason ? `vs ${lastSeason} last season` : "this season" }),
+      React.createElement(WinterStatCard, { label: "Winterized", value: done.length, sub: `${pct}% of sign-ups`, tone: "text-[#28633C]" }),
+      React.createElement(WinterStatCard, { label: "Planned today", value: todayList.length, sub: todayList.length ? todayList.slice(0, 3).map(nameOf).join(", ") + (todayList.length > 3 ? "…" : "") : "nothing today", tone: "text-[#9A6B1F]" }),
+      React.createElement(WinterStatCard, { label: "Still to do", value: todo.length, sub: nextDay ? `next: ${winterShortDate(nextDay)} · ${upcoming.filter((d) => d === nextDay).length} cottage${upcoming.filter((d) => d === nextDay).length === 1 ? "" : "s"}` : "nothing booked ahead", tone: "text-[#2E6E8E]" }),
+      React.createElement(WinterStatCard, { label: "Not signed up", value: notSignedUp.length, sub: `${notSignedUp.filter((n) => n.lastYear).length} winterized before · view list`, tone: "text-[#a8532a]", onClick: readOnly ? void 0 : onShowNotSigned }),
+      React.createElement(WinterStatCard, { label: "Completion emails", value: `${emailed} / ${done.length}`, sub: done.length - emailed ? `${done.length - emailed} waiting to send` : "all sent" })
+    ),
+    React.createElement(
+      "div",
+      { className: "grid grid-cols-3 gap-3 mb-5" },
+      React.createElement(
+        "div",
+        { className: "col-span-2 rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" },
+        React.createElement("div", { className: "flex justify-between mb-3" }, React.createElement("span", { className: "text-sm font-semibold" }, "Progress by section"), React.createElement("span", { className: "text-xs text-[#75716A]" }, `${done.length} of ${all.length} done`)),
+        sortWinterSections(Object.keys(bySection)).map((s) => React.createElement(
+          "div",
+          { key: s, className: "flex items-center gap-3 mb-2", "data-section-progress": s },
+          React.createElement("span", { className: "w-44 text-sm text-[#4B4740] truncate" }, s),
+          React.createElement("div", { className: "flex-1 h-2.5 rounded-full bg-[#F1EEE9] overflow-hidden" }, React.createElement("div", { className: "h-full bg-[#377249]", style: { width: `${bySection[s].done * 100 / bySection[s].total}%` } })),
+          React.createElement("span", { className: "text-xs text-[#75716A] w-14 text-right" }, `${bySection[s].done} / ${bySection[s].total}`)
+        ))
+      ),
+      React.createElement(
+        "div",
+        { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4" },
+        React.createElement("div", { className: "text-sm font-semibold mb-2" }, "Extras this season"),
+        React.createElement("div", { className: "space-y-1 text-sm" }, extraCounts.map(([o, n]) => React.createElement("div", { key: o.key, className: "flex justify-between" }, React.createElement("span", { className: "text-[#4B4740]" }, o.key === "anodeRod" ? "Anode rod" : o.label), React.createElement("span", { className: "font-semibold" }, n)))),
+        anode.length > 0 && React.createElement("div", { className: "text-xs text-[#75716A] mt-2" }, `Anode rods: ${anode.filter((r) => r.anodeRodReplacedAt).length} of ${anode.length} replaced & invoiced`)
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex flex-wrap gap-2 mb-2" },
+      CHIPS.map(([key, label, test]) => React.createElement("button", { key, type: "button", onClick: () => setChip(key), "aria-pressed": chip === key, className: `px-3 py-1.5 rounded-full text-xs font-semibold border ${chip === key ? "bg-[#377249] text-white border-[#377249]" : "bg-[#FFFDFA] border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}` }, `${label} ${shown.filter(test).length}`))
+    ),
+    rows.length === 0 ? React.createElement(EmptyState, { text: all.length ? "Nothing matches." : "No winterizing sign-ups yet." }) : React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-x-auto" },
+      React.createElement(
+        "table",
+        { className: "w-full text-sm" },
+        React.createElement("thead", { className: "bg-[#F1EEE9] text-[11px] uppercase tracking-wider text-[#75716A]" }, React.createElement("tr", null, ["", "Site", "Cottage · Owner", "Section", "Planned", "Extras", "Customer note", "Status", "Email"].map((h, i) => React.createElement("th", { key: i, className: "text-left font-semibold px-3 py-2.5 whitespace-nowrap" }, h)))),
+        React.createElement("tbody", null, rows.map((r) => {
+          const info = winterInfo(db, r);
+          const st = winterStatus(r, today);
+          const moved = r.requestedDate && info.planned !== r.requestedDate;
+          const canEmail = r.completed && info.customer && info.customer.email;
+          return React.createElement(
+            "tr",
+            { key: r.id, "data-winter-row": r.id, onClick: () => selectMode ? onToggleSelect(r.id) : onOpen(r.id), className: `border-t border-[#EEEBE5] cursor-pointer hover:bg-[#F1EEE9] ${r.completed ? "bg-[#DDF1E1]/30" : ""}` },
+            React.createElement("td", { className: "px-3 py-2.5 w-8" }, selectMode ? React.createElement("input", { type: "checkbox", checked: selectedIds.has(r.id), onChange: () => onToggleSelect(r.id), onClick: (e) => e.stopPropagation(), className: "accent-[#C1652F] w-4 h-4", "aria-label": "Select" }) : React.createElement("span", { className: `inline-flex w-4 h-4 rounded border-2 items-center justify-center text-[10px] ${r.completed ? "bg-[#377249] border-[#377249] text-white" : "border-[#C7C2B8]"}` }, r.completed ? "✓" : "")),
+            React.createElement("td", { className: "px-3 py-2.5 font-semibold whitespace-nowrap" }, info.site ? info.site.number : "—"),
+            React.createElement("td", { className: "px-3 py-2.5" }, React.createElement("div", { className: "font-medium" }, info.cottage ? info.cottage.name : "Unknown cottage"), React.createElement("div", { className: "text-xs text-[#75716A]" }, info.customer ? info.customer.name : "No owner linked", info.history.length ? React.createElement("span", { className: "text-[#2E6E8E]" }, " · done before") : React.createElement("span", { className: "text-[#9A6B1F]" }, " · new"))),
+            React.createElement("td", { className: "px-3 py-2.5 text-[#4B4740] whitespace-nowrap" }, info.section),
+            React.createElement("td", { className: "px-3 py-2.5 whitespace-nowrap" }, r.completed ? React.createElement("span", { className: "text-[#4B4740]" }, winterShortDate(r.completedDate)) : React.createElement(React.Fragment, null, React.createElement("div", { className: "text-[#4B4740]" }, info.planned ? winterShortDate(info.planned) : "—"), moved && React.createElement("div", { className: "text-[11px] text-[#9A968D]" }, `asked ${winterShortDate(r.requestedDate)}`))),
+            React.createElement("td", { className: "px-3 py-2.5" }, info.extras.length ? React.createElement("div", { className: "flex flex-wrap gap-1" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))) : React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Standard only")),
+            React.createElement("td", { className: "px-3 py-2.5 text-xs text-[#4B4740] max-w-[240px]" }, info.note ? React.createElement("span", { className: "line-clamp-2" }, "📝 ", info.note) : React.createElement("span", { className: "text-[#9A968D]" }, "—")),
+            React.createElement("td", { className: "px-3 py-2.5" }, React.createElement("span", { className: `text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${st.cls}` }, st.label)),
+            React.createElement("td", { className: "px-3 py-2.5 text-xs whitespace-nowrap" }, r.completionEmailedAt ? React.createElement("span", { className: "text-[#28633C] font-semibold" }, "Sent ✓") : emailStatus[r.id] === "sending" ? "Sending…" : canEmail && !readOnly ? React.createElement("button", { type: "button", onClick: (e) => {
+              e.stopPropagation();
+              onEmail(r);
+            }, className: "text-[#377249] font-semibold hover:underline" }, emailStatus[r.id] === "error" ? "Retry" : "Send") : React.createElement("span", { className: "text-[#9A968D]" }, "—"))
+          );
+        }))
+      )
+    )
+  );
+}
+function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSignedUpCount, onOpen, onSchedule, readOnly, onShowNotSigned }) {
+  const [over, setOver] = useState(null);
+  const weekEnd = winterAddDays(weekStart, 6);
+  const inWeek = (d) => d && d >= weekStart && d <= weekEnd;
+  const todo = all.filter((r) => !r.completed);
+  // Seven days from the first one shown; a Saturday or Sunday only when
+  // something is planned on it (or it's today).
+  const isWeekend = (d) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+    const dow = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
+    return dow === 0 || dow === 6;
+  };
+  const days = [0, 1, 2, 3, 4, 5, 6].map((i) => winterAddDays(weekStart, i)).filter((d) => !isWeekend(d) || d === today || todo.some((r) => winterPlannedDate(r) === d));
+  const pool = todo.filter((r) => !inWeek(winterPlannedDate(r))).sort((a, b) => (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999"));
+  const doneWeek = all.filter((r) => r.completed && inWeek(r.completedDate));
+  const done = all.filter((r) => r.completed).length;
+  const todayCount = todo.filter((r) => winterPlannedDate(r) === today).length;
+  const pct = (n) => all.length ? `${n * 100 / all.length}%` : "0%";
+  const card = (r, poolLabel) => {
+    const info = winterInfo(db, r);
+    const moved = r.requestedDate && info.planned !== r.requestedDate;
+    return React.createElement(
+      "div",
+      { key: r.id, "data-plan-card": r.id, draggable: !readOnly && !r.completed, onDragStart: (e) => {
+        e.dataTransfer.setData("text/plain", r.id);
+        e.dataTransfer.effectAllowed = "move";
+      }, onClick: () => onOpen(r.id), className: `rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-2.5 mb-2 shadow-sm cursor-pointer hover:border-[#377249]/50 ${!readOnly && !r.completed ? "active:cursor-grabbing" : ""}` },
+      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner", " · ", info.section)), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
+      poolLabel && React.createElement("div", { className: `text-[11px] mt-1 font-semibold ${poolLabel.tone}` }, poolLabel.text),
+      info.extras.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mt-1.5" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))),
+      info.note && React.createElement("div", { className: "mt-1.5 rounded-md bg-[#FBEEDA]/70 border border-[#E9D3B5] px-2 py-1 text-[11px] text-[#4B4740] line-clamp-3" }, React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, "Note: "), info.note),
+      moved && !r.completed && React.createElement("div", { className: "text-[10px] text-[#9A968D] mt-1" }, `asked for ${winterShortDate(r.requestedDate)}`),
+      r.completed && React.createElement("div", { className: `text-[11px] mt-1.5 ${r.completionEmailedAt ? "text-[#28633C]" : "text-[#9A6B1F]"}` }, r.completionEmailedAt ? "Completion email sent ✓" : "Completion email not sent")
+    );
+  };
+  const column = (key, title, sub, list, opts = {}) => React.createElement(
+    "div",
+    {
+      key,
+      "data-plan-column": key,
+      onDragOver: opts.dropDate === void 0 || readOnly ? void 0 : (e) => {
+        e.preventDefault();
+        if (over !== key) setOver(key);
+      },
+      onDragLeave: () => setOver((o) => o === key ? null : o),
+      onDrop: opts.dropDate === void 0 || readOnly ? void 0 : (e) => {
+        e.preventDefault();
+        setOver(null);
+        onSchedule(e.dataTransfer.getData("text/plain"), opts.dropDate);
+      },
+      className: `rounded-xl p-2.5 border-t-4 w-[210px] flex-none ${opts.accent || "border-[#E2DED5]"} ${over === key ? "bg-[#DDF1E1] ring-2 ring-[#377249]/30" : "bg-[#F1EEE9]"}`
+    },
+    React.createElement("div", { className: "px-1 mb-2" }, React.createElement("div", { className: "flex justify-between items-baseline gap-2" }, React.createElement("span", { className: "text-sm font-semibold" }, title), React.createElement("span", { className: "text-xs text-[#75716A]" }, list.length)), React.createElement("div", { className: "text-[11px] text-[#75716A] mt-0.5 min-h-[16px]" }, sub)),
+    React.createElement("div", { className: "max-h-[62vh] overflow-y-auto pr-0.5" }, list.length ? list.map((r) => card(r, opts.poolLabel && opts.poolLabel(r))) : React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, opts.empty || "Nothing planned"))
+  );
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-4 flex items-center gap-6" },
+      React.createElement(
+        "div",
+        { className: "flex-1" },
+        React.createElement("div", { className: "flex justify-between text-sm mb-1.5" }, React.createElement("span", { className: "font-semibold" }, "Season progress"), React.createElement("span", { className: "text-[#75716A]" }, `${done} of ${all.length} winterized`)),
+        React.createElement("div", { className: "h-3 rounded-full bg-[#F1EEE9] overflow-hidden flex" }, React.createElement("div", { className: "h-full bg-[#377249]", style: { width: pct(done) } }), React.createElement("div", { className: "h-full bg-[#E9C46A]", style: { width: pct(todayCount) } })),
+        React.createElement("div", { className: "flex gap-4 text-xs text-[#75716A] mt-1.5" }, React.createElement("span", null, React.createElement("span", { className: "inline-block w-2.5 h-2.5 rounded-sm bg-[#377249] mr-1 align-middle" }), "Winterized"), React.createElement("span", null, React.createElement("span", { className: "inline-block w-2.5 h-2.5 rounded-sm bg-[#E9C46A] mr-1 align-middle" }), "Today"), React.createElement("span", null, React.createElement("span", { className: "inline-block w-2.5 h-2.5 rounded-sm bg-[#E2DED5] mr-1 align-middle" }), "Still to do"))
+      ),
+      !readOnly && React.createElement("button", { type: "button", onClick: onShowNotSigned, className: "text-center px-4 border-l border-[#E2DED5]" }, React.createElement("div", { className: "font-serif text-2xl font-semibold text-[#a8532a]" }, notSignedUpCount), React.createElement("div", { className: "text-xs text-[#75716A]" }, "not signed up"), React.createElement("div", { className: "text-xs text-[#377249] font-semibold" }, "Send reminders"))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2 mb-3" },
+      React.createElement("button", { type: "button", onClick: () => setWeekStart(winterAddDays(weekStart, -7)), "aria-label": "Previous week", className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9]" }, "‹"),
+      React.createElement("span", { className: "text-sm font-semibold min-w-[180px] text-center", "data-plan-week": weekStart }, `${winterShortDate(weekStart)} \u2013 ${winterShortDate(weekEnd)}`),
+      React.createElement("button", { type: "button", onClick: () => setWeekStart(winterAddDays(weekStart, 7)), "aria-label": "Next week", className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9]" }, "›"),
+      weekStart !== today && React.createElement("button", { type: "button", onClick: () => setWeekStart(today), className: "text-xs text-[#377249] font-semibold hover:underline ml-1" }, "Back to today"),
+      !readOnly && React.createElement("span", { className: "text-xs text-[#9A968D] ml-auto" }, "Drag a cottage onto a day to plan it · back to “To plan” to take it off the schedule")
+    ),
+    React.createElement(
+      "div",
+      { className: "flex gap-3 items-start overflow-x-auto pb-2" },
+      column("pool", "To plan", pool.length ? winterExtrasSummary(pool) : "", pool, { dropDate: "", empty: "Everything is planned this week", poolLabel: (r) => {
+        const d = winterPlannedDate(r);
+        if (!d) return { text: "No date", tone: "text-[#75716A]" };
+        if (d < today) return { text: `Overdue · was ${winterShortDate(d)}`, tone: "text-[#a8532a]" };
+        return { text: winterShortDate(d, { weekday: "short", month: "short", day: "numeric" }), tone: "text-[#2E6E8E]" };
+      } }),
+      days.map((d) => {
+        const list = todo.filter((r) => winterPlannedDate(r) === d);
+        const isToday = d === today;
+        return column(d, `${isToday ? "Today · " : ""}${winterShortDate(d, { weekday: "short", month: "short", day: "numeric" })}`, winterExtrasSummary(list), list, { dropDate: d, accent: isToday ? "border-[#E9C46A]" : d < today ? "border-[#E2DED5] opacity-80" : "border-[#E2DED5]" });
+      }),
+      column("done", "Winterized these days", winterExtrasSummary(doneWeek), doneWeek, { accent: "border-[#377249]/40", empty: "None yet" })
+    )
+  );
+}
+function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, onComplete, onReopen, onEmail, onAnodeRod, onSchedule, onEdit, onDelete, onPrint, onProblem }) {
+  const info = winterInfo(db, request);
+  const today = todayISO();
+  const gateItems = info.extras.filter((o) => !o.gateExempt);
+  const anodeRequested = info.extras.some((o) => o.key === "anodeRod");
+  const keyAtReception = info.extras.some((o) => o.key === "keyAtReception");
+  const [ticked, setTicked] = useState(() => /* @__PURE__ */ new Set());
+  const tick = (k) => setTicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k);
+    else next.add(k);
+    return next;
+  });
+  const checklist = [["__standard", "Standard winterization (water off, lines drained, antifreeze in)"], ...gateItems.map((o) => [o.key, o.label])];
+  const allTicked = checklist.every(([k]) => ticked.has(k));
+  const st = winterStatus(request, today);
+  const lastWO = info.site ? (db.workOrders || []).filter((w) => w.siteId === info.site.id).sort((a, b) => (b.date || "").localeCompare(a.date || ""))[0] : null;
+  const label = (t) => React.createElement("div", { className: "text-[11px] uppercase tracking-wider font-semibold text-[#75716A] mb-1.5" }, t);
+  const btn = "px-3 py-2 rounded-md border border-[#E2DED5] text-sm hover:bg-[#F1EEE9]";
+  return React.createElement(
+    DrawerShell,
+    {
+      title: info.cottage ? info.cottage.name : "Cottage",
+      eyebrow: `${info.site ? `Site ${info.site.number} · ` : ""}${info.section}`,
+      badges: [React.createElement("span", { key: "s", className: `text-[11px] font-semibold px-2 py-0.5 rounded-full ${st.cls}` }, st.label)],
+      onClose,
+      width: "460px"
+    },
+    React.createElement(
+      "div",
+      { className: "space-y-5 text-sm", "data-winter-panel": request.id },
+      React.createElement(
+        "div",
+        null,
+        label(request.completed ? "Winterized" : "Planned for"),
+        request.completed ? React.createElement("div", { className: "text-[#28633C] font-medium" }, winterShortDate(request.completedDate, { weekday: "long", month: "long", day: "numeric" })) : React.createElement("input", { type: "date", value: info.planned || "", disabled: readOnly, onChange: (e) => onSchedule(request.id, e.target.value), className: inputCls + " w-48", "aria-label": "Planned for" }),
+        request.requestedDate && React.createElement("div", { className: "text-xs text-[#75716A] mt-1" }, `Customer asked for ${winterShortDate(request.requestedDate, { weekday: "short", month: "short", day: "numeric" })}`)
+      ),
+      React.createElement("div", null, label("Owner"), info.customer ? React.createElement(React.Fragment, null, React.createElement("div", { className: "font-medium" }, info.customer.name), React.createElement("div", { className: "text-[#4B4740]" }, [info.customer.email, info.customer.phone].filter(Boolean).join(" · ") || React.createElement("span", { className: "text-[#a8532a]" }, "No email or phone on file"))) : React.createElement("div", { className: "text-[#9A968D]" }, "No owner linked to this sign-up")),
+      info.note && React.createElement(WinterizingNote, { text: info.note }),
+      !request.completed && React.createElement(
+        "div",
+        null,
+        label("Checklist"),
+        React.createElement("div", { className: "space-y-1.5" }, checklist.map(([k, t]) => React.createElement("label", { key: k, className: `flex items-start gap-2 ${readOnly ? "" : "cursor-pointer"}` }, React.createElement("input", { type: "checkbox", disabled: readOnly, checked: ticked.has(k), onChange: () => tick(k), className: "accent-[#377249] w-4 h-4 mt-0.5 flex-shrink-0" }), React.createElement("span", { className: ticked.has(k) ? "text-[#28633C] line-through" : "" }, t)))),
+        anodeRequested && React.createElement("button", { type: "button", disabled: readOnly || !!request.anodeRodReplacedAt, onClick: () => onAnodeRod(request), className: `mt-2 w-full text-left rounded-md px-3 py-2 border ${request.anodeRodReplacedAt ? "bg-[#DDF1E1] border-[#377249]/30 text-[#28633C]" : "bg-[#F5E3D9]/60 border-[#e0bfa6] text-[#a8532a]"}` }, request.anodeRodReplacedAt ? "✓ Anode rod replaced — invoiced" : "Replace the anode rod — tap when done (creates the invoice)"),
+        keyAtReception && React.createElement("div", { className: "mt-2 text-[#9A6B1F]" }, "🔑 Key left with reception")
+      ),
+      request.completed && React.createElement(
+        "div",
+        { className: "space-y-1" },
+        info.extras.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o }))),
+        React.createElement("div", { className: request.completionEmailedAt ? "text-[#28633C]" : "text-[#9A6B1F]" }, request.completionEmailedAt ? "Completion email sent ✓" : emailStatus === "sending" ? "Sending the completion email…" : emailStatus === "error" ? "The completion email failed — try again" : "Completion email not sent yet")
+      ),
+      React.createElement(
+        "div",
+        null,
+        label("History"),
+        info.history.length === 0 && !lastWO ? React.createElement("div", { className: "text-[#9A968D]" }, "Nothing recorded yet.") : React.createElement(
+          "div",
+          { className: "space-y-1 text-[#4B4740]" },
+          info.history.map((h) => React.createElement("div", { key: h.id, className: "flex justify-between gap-3" }, React.createElement("span", null, `${(h.completedDate || "").slice(0, 4)} · winterized ${winterShortDate(h.completedDate)}`), React.createElement("span", { className: "text-xs text-[#75716A] text-right" }, WINTERIZING_OPTIONS.filter((o) => h.options && h.options[o.key] && o.key !== "keyAtReception").map((o) => WINTER_SHORT[o.key][0]).join(" · ")))),
+          lastWO && React.createElement("div", { className: "flex justify-between gap-3" }, React.createElement("span", null, "Last work order"), React.createElement("span", { className: "text-xs text-[#75716A] text-right" }, [lastWO.workOrderNumber, lastWO.title, winterShortDate(lastWO.date)].filter(Boolean).join(" · ")))
+        )
+      ),
+      !readOnly && React.createElement(
+        "div",
+        { className: "flex flex-wrap gap-2 pt-1" },
+        request.completed ? React.createElement(React.Fragment, null, !request.completionEmailedAt && info.customer && info.customer.email && React.createElement("button", { type: "button", disabled: emailStatus === "sending", onClick: () => onEmail(request), className: "flex-1 py-2 rounded-md bg-[#377249] text-white font-semibold disabled:opacity-50" }, "Email customer"), React.createElement("button", { type: "button", onClick: () => onReopen(request), className: btn }, "Reopen")) : React.createElement("button", { type: "button", disabled: !allTicked, onClick: () => onComplete(request), className: "flex-1 py-2 rounded-md bg-[#377249] text-white font-semibold disabled:bg-[#E2DED5] disabled:text-[#9A968D]" }, allTicked ? "Mark winterized" : `Mark winterized (${ticked.size}/${checklist.length} checked)`),
+        React.createElement("button", { type: "button", onClick: () => onPrint(request), className: btn }, "Print"),
+        onProblem && React.createElement("button", { type: "button", onClick: () => onProblem(request), className: "px-3 py-2 rounded-md border border-[#a8532a]/40 text-[#a8532a] text-sm hover:bg-[#a8532a]/10" }, "Found a problem")
+      ),
+      !readOnly && React.createElement("div", { className: "flex gap-4 text-xs pt-1 border-t border-[#F1EEE9]" }, React.createElement("button", { type: "button", onClick: () => onEdit(request), className: "text-[#377249] hover:underline pt-2" }, "Edit sign-up"), React.createElement("button", { type: "button", onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline pt-2" }, "Delete"))
+    )
+  );
+}
+function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, saveWorkOrder }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
@@ -13204,6 +13550,28 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const [reviewingEntry, setReviewingEntry] = useState(null);
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [batchEmail, setBatchEmail] = useState(null);
+  // Computer layout: which view, the overview filter, the open cottage,
+  // the week on the Plan board, and a "found a problem" work order.
+  const isMobile = useIsMobile();
+  const [view, setViewState] = useState(() => {
+    try {
+      const v = localStorage.getItem("qic-winter-view");
+      return ["overview", "plan", "notsigned"].includes(v) ? v : "overview";
+    } catch (e) {
+      return "overview";
+    }
+  });
+  const setView = (v) => {
+    setViewState(v);
+    try {
+      localStorage.setItem("qic-winter-view", v);
+    } catch (e) {
+    }
+  };
+  const [chip, setChip] = useState("all");
+  const [panelId, setPanelId] = useState(null);
+  const [weekStart, setWeekStart] = useState(() => todayISO());
+  const [problemFor, setProblemFor] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
@@ -13332,6 +13700,13 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     persist({ ...db, activityLog });
     saveWinterizingRequest({ ...request, anodeRodReplacedAt: replacedAt });
   };
+  // Plan a cottage for a day (or "" to take it off the schedule).
+  const schedule = (id, date) => {
+    const request = requests.find((r) => r.id === id);
+    if (!request || request.completed || winterPlannedDate(request) === (date || "")) return;
+    saveWinterizingRequest({ ...request, plannedDate: date || "" });
+    persist({ ...db, activityLog: addLog(db, actor, date ? `Planned winterizing for ${cottageName(request.cottageId)} on ${date}` : `Took winterizing for ${cottageName(request.cottageId)} off the schedule`) });
+  };
   const resetSeason = () => {
     const seasonEndDate = todayISO();
     const toArchive = (db.winterizingRequests || []).filter((r) => !r.archived && r.completed);
@@ -13374,9 +13749,9 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   };
   const printByDate = () => {
     if (!printDate) return;
-    const items = requests.filter((r) => r.requestedDate === printDate);
+    const items = requests.filter((r) => !r.completed && winterPlannedDate(r) === printDate);
     if (!items.length) {
-      alert("No sign-ups requested for that date.");
+      alert("Nothing planned for that day.");
       return;
     }
     downloadPrintableItems(items, (r) => buildWinterizingHtml(r, db), `winterizing-${printDate}`);
@@ -13389,7 +13764,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     const hay = `${cottageName(r.cottageId)} ${(site == null ? void 0 : site.number) || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   });
-  const pending = filtered.filter((r) => !r.completed).sort((a, b) => (a.requestedDate || "").localeCompare(b.requestedDate || ""));
+  const pending = filtered.filter((r) => !r.completed).sort((a, b) => (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999"));
   const completed = filtered.filter((r) => r.completed).sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || ""));
   const requestToggle = (request) => {
     if (request.completed) {
@@ -13446,7 +13821,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     onClick: printSelected,
     disabled: selectedIds.size === 0,
     className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] disabled:opacity-40 whitespace-nowrap"
-  }, "Print Selected (", selectedIds.size, ")")), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex items-center gap-2 bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Print by requested date:"), /* @__PURE__ */ React.createElement("input", {
+  }, "Print Selected (", selectedIds.size, ")")), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:flex items-center gap-2 bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Print a day\u2019s plan:"), /* @__PURE__ */ React.createElement("input", {
     type: "date",
     value: printDate,
     onChange: (e) => setPrintDate(e.target.value),
@@ -13539,7 +13914,52 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       batchEmail.confirm && React.createElement("button", { type: "button", onClick: () => emailFinishedToday(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, `Send ${finishedTodayToEmail.length} email${finishedTodayToEmail.length === 1 ? "" : "s"}`)
     )
   );
-  return /* @__PURE__ */ React.createElement("div", null, header, notSignedUpBanner, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, remindersEl, batchEl);
+  if (isMobile) {
+    return /* @__PURE__ */ React.createElement("div", null, header, notSignedUpBanner, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, remindersEl, batchEl);
+  }
+  const today = todayISO();
+  const views = [["overview", "Overview"], ["plan", "Plan"], ...readOnly ? [] : [["notsigned", `Not signed up \u00B7 ${notSignedUp.length}`]]];
+  const activeView = views.some((v) => v[0] === view) ? view : "overview";
+  const switcher = React.createElement(
+    "div",
+    { className: "inline-flex rounded-full border border-[#E2DED5] bg-[#FFFDFA] p-1 mb-5", role: "tablist" },
+    views.map(([key, label]) => React.createElement("button", { key, type: "button", role: "tab", "aria-selected": activeView === key, onClick: () => setView(key), className: `px-4 py-1.5 rounded-full text-sm font-semibold ${activeView === key ? "bg-[#1E1A13] text-[#F9F5EC]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}` }, label))
+  );
+  const panelRequest = panelId ? requests.find((r) => r.id === panelId) : null;
+  const panelEl = panelRequest && React.createElement(WinterizingCottagePanel, {
+    key: panelRequest.id,
+    request: panelRequest,
+    db,
+    readOnly,
+    emailStatus: emailStatus[panelRequest.id],
+    onClose: () => setPanelId(null),
+    onComplete: toggleComplete,
+    onReopen: toggleComplete,
+    onEmail: sendCompletionEmail,
+    onAnodeRod: markAnodeRodReplaced,
+    onSchedule: schedule,
+    onEdit: (r) => setModal({ mode: "edit", data: r }),
+    onDelete: (r) => {
+      setPanelId(null);
+      confirm.ask(r.id);
+    },
+    onPrint: printOne,
+    onProblem: saveWorkOrder ? (r) => setProblemFor(r) : null
+  });
+  const problemEl = problemFor && saveWorkOrder && (() => {
+    const info = winterInfo(db, problemFor);
+    return React.createElement(QuickWorkOrderModal, {
+      db,
+      saveWorkOrder: (wo) => {
+        saveWorkOrder(wo);
+        persist({ ...db, activityLog: addLog(db, actor, `Logged a problem found while winterizing ${cottageName(problemFor.cottageId)}: ${wo.title}`) });
+      },
+      onClose: () => setProblemFor(null),
+      initial: { siteId: info.site ? info.site.id : null, cottageId: problemFor.cottageId || null, customerId: problemFor.customerId || null, title: `Found while winterizing \u2014 ${info.cottage ? info.cottage.name : "cottage"}`, description: "" }
+    });
+  })();
+  const content = activeView === "plan" ? React.createElement(WinterizingPlanBoard, { db, all: requests, today, weekStart, setWeekStart, notSignedUpCount: notSignedUp.length, onOpen: setPanelId, onSchedule: schedule, readOnly, onShowNotSigned: () => setView("notsigned") }) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
+  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl);
 }
 function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpired, onMoveRun, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
@@ -18065,7 +18485,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     persist({ ...db, activityLog });
     saveWinterizingRequest({ ...request, anodeRodReplacedAt: replacedAt });
   };
-  const pending = requests.filter((r) => !r.completed).sort((a, b) => (a.requestedDate || "").localeCompare(b.requestedDate || ""));
+  const pending = requests.filter((r) => !r.completed).sort((a, b) => (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999"));
   const doneCount = requests.length - pending.length;
   const pct = requests.length > 0 ? Math.round(doneCount / requests.length * 100) : 0;
   const toggleComplete = (request) => {
@@ -18112,7 +18532,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
       ),
       React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, React.createElement("div", { className: "h-full bg-[#377249]", style: { width: `${pct}%` } }))
     ),
-    requests.length === 0 ? React.createElement(EmptyState, { text: "No winterizing sign-ups yet." }) : requests.slice().sort((a, b) => Number(a.completed) - Number(b.completed) || (a.requestedDate || "").localeCompare(b.requestedDate || "")).map((r) => React.createElement(WinterizingRequestRow, {
+    requests.length === 0 ? React.createElement(EmptyState, { text: "No winterizing sign-ups yet." }) : requests.slice().sort((a, b) => Number(a.completed) - Number(b.completed) || (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999")).map((r) => React.createElement(WinterizingRequestRow, {
       key: r.id,
       request: r,
       db,
@@ -20108,7 +20528,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),

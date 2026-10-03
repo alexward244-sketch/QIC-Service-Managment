@@ -433,8 +433,8 @@ test("winterizing: seasonal cottages not signed up yet - list, reminders, and em
   // Seasonal cottages only (not transient or 4 Season), none signed up or waiting for review;
   // an old reminder from before this season doesn't count.
   assert.deepEqual(await page.evaluate(() => window.__rows), [["101", "Anne Lee", true, null], ["105", "Cy Fox", false, null]]);
-  await page.locator("[data-not-signed-up-banner]").getByText("2 seasonal cottages").waitFor();
-  await page.getByRole("button", { name: "View list" }).click();
+  // On a computer the list is its own view, counted on its tab.
+  await page.getByRole("tab", { name: "Not signed up \u00B7 2" }).click();
   // Owners with an email start ticked; one with no email can't be.
   assert.equal(await page.locator('[data-not-signed-up="101"] input').isChecked(), true);
   assert.equal(await page.locator('[data-not-signed-up="105"] input').isDisabled(), true);
@@ -449,15 +449,125 @@ test("winterizing: seasonal cottages not signed up yet - list, reminders, and em
   const last = await page.evaluate(() => window.__persisted[window.__persisted.length - 1]);
   assert.ok(last.winterReminders.k1, "the reminder is recorded");
   await page.locator('[data-not-signed-up="101"]').getByText(/^Reminded /).waitFor();
-  await page.getByRole("button", { name: "Close", exact: true }).last().click();
   // Everyone finished today gets the completion email in one go.
   await page.getByRole("button", { name: "Email 1 finished today" }).click();
   await page.getByRole("button", { name: "Send 1 email" }).click();
-  await page.getByText("Sent to 1.").waitFor();
+  await page.getByText("Sent to 1.", { exact: true }).waitFor();
   const done = await page.evaluate(() => ({ sent: window.__sent[1], saved: window.__saved[0] }));
   assert.equal(done.sent.toEmail, "bo@x.com");
   assert.match(done.sent.subject, /^Your Cottage Has Been Winterized/);
   assert.ok(done.saved.completionEmailedAt);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+// A winterizing season in the stub app: two sections, one cottage done
+// before, notes, extras; saves re-render like the real app.
+async function openWinterizing(page) {
+  await page.evaluate(() => {
+    window.__saved = [];
+    window.__workOrders = [];
+    window.sendEmail = async () => {};
+    const today = todayISO();
+    const add = (n) => winterAddDays(today, n);
+    let db = {
+      settings: { winterizingSeasonStart: "01-01" }, activityLog: [], parts: [], trash: [], staff: [], workOrderTemplates: [], quotes: [], invoices: [], correspondence: [],
+      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
+      customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", phone: "613-555-0177", siteIds: ["s1"] }, { id: "c2", name: "Gary C", email: "gary@x.com", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", email: "anne@x.com", siteIds: ["s3"] }],
+      workOrders: [{ id: "w1", workOrderNumber: "WO-0388", title: "Deck boards", siteId: "s1", date: "2026-08-12", status: "Completed", partsUsed: [], notes: [] }],
+      winterizingRequests: [
+        { id: "r1", cottageId: "k1", customerId: "c1", requestedDate: today, notes: "Dog in the yard \u2014 close the gate.", options: { outsideTap: true, keyAtReception: true } },
+        { id: "r2", cottageId: "k2", customerId: "c2", requestedDate: add(2), notes: "", options: { anodeRod: true } },
+        { id: "r3", cottageId: "k3", customerId: "c3", requestedDate: add(-1), completed: true, completedDate: add(-1), options: {} },
+        { id: "h1", cottageId: "k1", archived: true, completed: true, completedDate: "2025-10-18", options: { outsideTap: true } }
+      ]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
+    render();
+  });
+}
+
+test("winterizing on a computer: overview cards, filters, and the cottage panel's checklist", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => { try { localStorage.removeItem("qic-winter-view"); } catch (e) {} });
+  await openWinterizing(page);
+  const stat = (label) => page.locator(`[data-stat="${label}"] .font-serif`).textContent();
+  assert.equal(await stat("Signed up"), "3");
+  assert.equal(await stat("Winterized"), "1");
+  assert.equal(await stat("Planned today"), "1");
+  assert.equal(await stat("Still to do"), "2");
+  assert.equal(await stat("Completion emails"), "0 / 1");
+  await page.locator('[data-section-progress="Pebble Beach Seasonal"]').getByText("1 / 2").waitFor();
+  // Filters.
+  await page.getByRole("button", { name: "Has a note 1" }).click();
+  assert.equal(await page.locator("[data-winter-row]").count(), 1);
+  await page.getByRole("button", { name: "All 3" }).click();
+  assert.equal(await page.locator("[data-winter-row]").count(), 3);
+  // The cottage panel: owner, note, history, and the checklist gate.
+  await page.locator('[data-winter-row="r1"]').click();
+  const panel = page.locator('[data-winter-panel="r1"]');
+  await panel.getByText("bo@x.com \u00B7 613-555-0177").waitFor();
+  await panel.getByText("Customer note:").waitFor();
+  await panel.getByText("2025 \u00B7 winterized Oct 18").waitFor();
+  await panel.getByText("WO-0388 \u00B7 Deck boards", { exact: false }).waitFor();
+  await panel.getByText("Key left with reception").waitFor();
+  const mark = panel.getByRole("button", { name: /^Mark winterized/ });
+  assert.equal(await mark.isDisabled(), true);
+  await panel.getByText(/^Standard winterization/).click();
+  await panel.getByText("Outside tap or shower").click();
+  assert.equal(await mark.isDisabled(), false);
+  await mark.click();
+  const saved = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+  assert.equal(saved.id, "r1");
+  assert.equal(saved.completed, true);
+  await panel.getByText("Completion email not sent yet").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing on a computer: plan by dragging cottages onto days, and log a problem found", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.getByRole("tab", { name: "Plan" }).click();
+  const today = await page.evaluate(() => todayISO());
+  const inTwo = await page.evaluate(() => winterAddDays(todayISO(), 2));
+  const inOne = await page.evaluate(() => winterAddDays(todayISO(), 1));
+  // Cedar is planned for its requested day; Willow for today.
+  await page.locator(`[data-plan-column="${today}"] [data-plan-card="r1"]`).waitFor();
+  // Drag Willow to tomorrow (a weekday or not, a dropped-on day shows).
+  const target = page.locator(`[data-plan-column="${inOne}"]`);
+  if (await target.count()) {
+    await page.locator('[data-plan-card="r1"]').dragTo(target);
+    const moved = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+    assert.deepEqual([moved.id, moved.plannedDate, moved.requestedDate], ["r1", inOne, today]);
+    await target.locator('[data-plan-card="r1"]').getByText(/^asked for /).waitFor();
+  }
+  // Back to "To plan" takes it off the schedule.
+  await page.locator('[data-plan-card="r2"]').dragTo(page.locator('[data-plan-column="pool"]'));
+  const off = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+  assert.deepEqual([off.id, off.plannedDate], ["r2", ""]);
+  await page.locator('[data-plan-column="pool"] [data-plan-card="r2"]').getByText("No date").waitFor();
+  assert.ok(inTwo);
+  // Found a problem: a work order for that site, prefilled.
+  await page.locator('[data-plan-card="r2"]').click();
+  await page.getByRole("button", { name: "Found a problem" }).click();
+  await page.getByText("New Work Order").first().waitFor();
+  assert.equal(await page.getByPlaceholder("e.g. Fix leaking faucet").inputValue(), "Found while winterizing \u2014 Cedar");
+  await page.getByRole("button", { name: "Save Work Order" }).click();
+  const wo = await page.evaluate(() => window.__workOrders[0]);
+  assert.equal(wo.siteId, "s2");
+  assert.equal(wo.cottageId, "k2");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing on a phone keeps the simple list", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
+  await openWinterizing(page);
+  await page.getByText(/^Pending \(/).first().waitFor();
+  assert.equal(await page.getByRole("tab", { name: "Plan" }).count(), 0);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
