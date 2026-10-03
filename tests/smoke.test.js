@@ -329,6 +329,54 @@ test("correspondence: a customer's work orders and invoices appear in their conv
   await page.close();
 });
 
+test("correspondence: years before last year fold into a bar that opens on a click", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const y = new Date().getFullYear();
+    const c = { id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] };
+    const mail = (id, year, subject) => ({ id, customerId: "c1", direction: "in", status: "handled", fromEmail: "anne@x.com", subject, body: `Body ${id}`, receivedAt: `${year}-06-15T12:00:00Z` });
+    const db = { settings: { taxRate: 13 }, sites: [], cottages: [], customers: [c], quotes: [], parts: [], staff: [], activityLog: [], cannedReplies: [], invoices: [],
+      workOrders: [{ id: "w1", workOrderNumber: "WO-0001", title: "Old job", status: "Completed", customerId: "c1", createdAt: `${y - 3}-06-16T12:00:00Z`, date: `${y - 3}-06-16`, partsUsed: [], notes: [] }],
+      correspondence: [mail("a", y - 3, "Three years ago"), mail("b", y - 2, "Two years ago"), mail("b2", y - 2, "Also two years ago"), mail("c", y - 1, "Last year"), mail("d", y, "This year")] };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    window.__thread = (focusId) => root.render(React.createElement(CorrespondenceThread, { customer: c, db, persist() {}, saveCorrespondence() {}, saveWorkOrder() {}, onReply() {}, focusId }));
+    window.__thread(null);
+  });
+  const y = await page.evaluate(() => new Date().getFullYear());
+  await page.getByText("Body d", { exact: true }).waitFor();
+  await page.getByText("Body c", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Body b", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("Body a", { exact: true }).count(), 0);
+  const bars = page.locator("[data-year]");
+  assert.deepEqual(await bars.evaluateAll((els) => els.map((e) => e.textContent)), [`\u25B6${y - 3}1 email \u00B7 1 work orderShow`, `\u25B6${y - 2}2 emailsShow`]);
+  await page.locator(`[data-year="${y - 2}"]`).click();
+  await page.getByText("Body b", { exact: true }).waitFor();
+  await page.getByText("Body b2", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Body a", { exact: true }).count(), 0);
+  await page.locator(`[data-year="${y - 2}"]`).getByText("Hide").click();
+  assert.equal(await page.getByText("Body b", { exact: true }).count(), 0);
+  // An old email picked in the inbox opens its own year, and only that one.
+  await page.evaluate(() => window.__thread("a"));
+  await page.getByText("Body a", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Body b", { exact: true }).count(), 0);
+  await page.locator(`[data-year="${y - 3}"]`).getByText("Hide").click();
+  assert.equal(await page.getByText("Body a", { exact: true }).count(), 0, "it can still be folded");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("correspondence: with nothing from the last two years, the newest year is open", async () => {
+  const page = await openApp(browser, "stub");
+  const result = await page.evaluate(() => {
+    const now = new Date(2026, 5, 1);
+    const tl = [2021, 2023, 2023].map((yr, i) => ({ type: "email", at: `${yr}-03-0${i + 1}T12:00:00Z`, item: { id: String(i) } }));
+    const g = correspondenceYearGroups(tl, now);
+    return { first: g.firstShownYear, years: g.olderYears.map((o) => [o.year, o.emails]) };
+  });
+  assert.deepEqual(result, { first: 2025, years: [[2021, 1], [2023, 2]] });
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
