@@ -612,6 +612,37 @@ test("correspondence: voicemails show who called, are never linked or grouped, a
   await page.close();
 });
 
+test("correspondence: every message in a customer's conversation can be deleted (to Trash)", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__deleted = [];
+    window.__persisted = [];
+    let db = { settings: {}, activityLog: [], trash: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
+      correspondence: [
+        { id: "a", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "First", body: "Older message", receivedAt: "2026-10-01T12:00:00Z" },
+        { id: "b", direction: "out", status: "handled", sentVia: "zoho", customerId: "c1", toEmail: "anne@x.com", subject: "Re: First", body: "Duplicate copy", receivedAt: "2026-10-01T13:00:00Z" },
+        { id: "c", direction: "in", status: "new", customerId: "c1", fromEmail: "anne@x.com", subject: "Second", body: "Newest message", receivedAt: "2026-10-02T12:00:00Z" }
+      ] };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const render = () => root.render(React.createElement(CorrespondenceInboxView, { db, persist: (n) => { window.__persisted.push(n); db = n; render(); }, saveCorrespondence() {}, deleteCorrespondence: (id) => { window.__deleted.push(id); db = { ...db, correspondence: db.correspondence.filter((c) => c.id !== id) }; render(); }, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+    render();
+  });
+  await page.getByText("Anne Lee").first().click();
+  const card = (text) => page.locator("div.rounded-lg.border.p-3", { hasText: text });
+  await card("Duplicate copy").waitFor();
+  assert.equal(await page.getByRole("button", { name: "Delete this message" }).count(), 3, "one on each message");
+  // Delete the duplicate (not the one that was clicked): it goes to Trash and the conversation stays open.
+  await card("Duplicate copy").getByRole("button", { name: "Delete this message" }).click();
+  await page.getByRole("button", { name: /^(Delete|Yes, delete)/ }).last().click();
+  assert.deepEqual(await page.evaluate(() => window.__deleted), ["b"]);
+  const trash = await page.evaluate(() => window.__persisted[window.__persisted.length - 1].trash);
+  assert.equal(trash[0].data.id, "b");
+  await card("Older message").waitFor();
+  assert.equal(await card("Duplicate copy").count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
