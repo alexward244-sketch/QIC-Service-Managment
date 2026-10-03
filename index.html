@@ -13056,6 +13056,142 @@ function WinterizingRequestRow({ request, db, readOnly, emailStatus, selectMode,
     }, emailStatus === "sending" ? "Sending\u2026" : "Email Customer"), /* @__PURE__ */ React.createElement("span", { className: "text-sm sm:text-xs text-[#75716A]" }, isDone ? `Winterized ${request.completedDate}` : `Requested ${request.requestedDate}`), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 sm:gap-2 text-sm sm:text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#75716A] hover:underline py-1.5 sm:py-0", onClick: () => onPrint(request) }, "Print"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1.5 sm:py-0", onClick: () => onEdit(request) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1.5 sm:py-0", onClick: () => onDelete(request) }, "Delete")))
   ), confirmModal);
 }
+// ---------------------------------------------------------------------------
+// Winterizing: seasonal cottages that haven't signed up yet
+// ---------------------------------------------------------------------------
+const WINTERIZING_SIGNUP_URL = "https://www.qicampark.com/winterization-sign-up";
+const DEFAULT_WINTER_REMINDER_TEXT = "Hi {name},\n\nWinterizing starts in early to mid October, and we don't have a winterizing sign-up for {cottage} (site {site}) yet.\n\nYou can sign up here: {link}\n\nIf you've already arranged it or don't need it this year, just reply to let us know.\n\nThank you,\nQIC Service";
+// When sign-ups open each year (MM-DD in Admin-editable settings); the
+// "not signed up" list shows from then to the end of the year.
+function winterSeasonStartIso(db, today = todayISO()) {
+  const mmdd = /^\d{2}-\d{2}$/.test(((db.settings || {}).winterizingSeasonStart) || "") ? db.settings.winterizingSeasonStart : "09-01";
+  return `${today.slice(0, 4)}-${mmdd}`;
+}
+// Seasonal-site cottages with no winterizing sign-up this season (none on
+// the list, none waiting for review), with their owner, whether they were
+// winterized in an earlier season, and when they were last reminded.
+function cottagesNotSignedUpForWinter(db, pendingSignups, today = todayISO()) {
+  const seasonStart = winterSeasonStartIso(db, today);
+  const active = (db.winterizingRequests || []).filter((r) => !r.archived);
+  const pendingSites = new Set((pendingSignups || []).filter((p) => p.type === "winterizing").map((p) => String(p.submittedSiteNumber || "").trim()).filter(Boolean));
+  const reminders = db.winterReminders || {};
+  return (db.cottages || []).map((cottage) => {
+    const site = (db.sites || []).find((x) => x.id === cottage.siteId);
+    if (!site || siteTypeOf(site) !== "Seasonal") return null;
+    if (active.some((r) => r.cottageId === cottage.id)) return null;
+    if (pendingSites.has(String(site.number || "").trim())) return null;
+    const owners = (db.customers || []).filter((c) => customerSiteIds(c).includes(site.id));
+    const owner = owners.find((c) => c.email) || owners[0] || null;
+    const lastYear = (db.winterizingRequests || []).some((r) => r.archived && r.completed && r.cottageId === cottage.id);
+    const remindedAt = reminders[cottage.id] && reminders[cottage.id] >= seasonStart ? reminders[cottage.id] : null;
+    return { cottage, site, owner, lastYear, remindedAt };
+  }).filter(Boolean).sort((a, b) => String(a.site.number).localeCompare(String(b.site.number), void 0, { numeric: true }));
+}
+function fillWinterReminder(template, row) {
+  const name = row.owner ? row.owner.name : "there";
+  return String(template).replace(/\{name\}/g, name).replace(/\{cottage\}/g, row.cottage.name || "your cottage").replace(/\{site\}/g, row.site.number || "").replace(/\{link\}/g, WINTERIZING_SIGNUP_URL);
+}
+function WinterizingReminderModal({ db, persist, rows, actor, onClose }) {
+  const dbRef = useRef(db);
+  dbRef.current = db;
+  const canEmail = (r) => r.owner && r.owner.email;
+  const [selected, setSelected] = useState(() => new Set(rows.filter((r) => canEmail(r) && !r.remindedAt).map((r) => r.cottage.id)));
+  const [template, setTemplate] = useState(((db.settings || {}).winterizingReminderText) || DEFAULT_WINTER_REMINDER_TEXT);
+  const [editing, setEditing] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const seasonStart = winterSeasonStartIso(db);
+  const toggle = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const saveSetting = (key, value) => {
+    const cur = dbRef.current;
+    persist({ ...cur, settings: { ...cur.settings || {}, [key]: value } });
+  };
+  const send = async () => {
+    const chosen = rows.filter((r) => selected.has(r.cottage.id) && canEmail(r));
+    if (!chosen.length) return;
+    if (template !== (((db.settings || {}).winterizingReminderText) || DEFAULT_WINTER_REMINDER_TEXT)) saveSetting("winterizingReminderText", template);
+    const sentIds = [];
+    let failed = 0;
+    for (let i = 0; i < chosen.length; i++) {
+      const r = chosen[i];
+      setProgress({ done: i, total: chosen.length });
+      try {
+        await sendEmail({ toEmail: r.owner.email, toName: r.owner.name, subject: `Winterizing sign-up — ${r.cottage.name || `site ${r.site.number}`}`, message: fillWinterReminder(template, r), department: "service", source: "Winterizing reminder" });
+        sentIds.push(r.cottage.id);
+      } catch (e) {
+        failed += 1;
+      }
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const cur = dbRef.current;
+    const winterReminders = { ...cur.winterReminders || {} };
+    sentIds.forEach((id) => {
+      winterReminders[id] = now;
+    });
+    persist({ ...cur, winterReminders, activityLog: addLog(cur, actor, `Emailed a winterizing sign-up reminder to ${sentIds.length} cottage owner${sentIds.length === 1 ? "" : "s"}`) });
+    setProgress({ done: chosen.length, total: chosen.length, sent: sentIds.length, failed });
+    setSelected(new Set());
+  };
+  const sending = progress && progress.sent == null;
+  const emailable = rows.filter(canEmail);
+  return React.createElement(
+    Modal,
+    { title: "Not signed up for winterizing yet", onClose, wide: true },
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between gap-3 flex-wrap mb-3" },
+      React.createElement("p", { className: "text-sm text-[#4B4740]" }, `${rows.length} seasonal cottage${rows.length === 1 ? "" : "s"} with no sign-up this season.`),
+      React.createElement(
+        "label",
+        { className: "text-xs text-[#75716A] flex items-center gap-1.5" },
+        "Sign-ups open",
+        React.createElement("input", { type: "date", value: seasonStart, onChange: (e) => e.target.value && saveSetting("winterizingSeasonStart", e.target.value.slice(5)), className: inputCls + " w-40 py-1 text-xs", "aria-label": "Sign-ups open" })
+      )
+    ),
+    progress && progress.sent != null && React.createElement("div", { className: `rounded-md px-3 py-2 mb-3 text-sm ${progress.failed ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#DDF1E1] text-[#28633C]"}`, role: "status" }, `Reminder sent to ${progress.sent}.`, progress.failed ? ` ${progress.failed} couldn't be sent — see System Health.` : ""),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-3 mb-2 text-xs" },
+      React.createElement("button", { type: "button", onClick: () => setSelected(new Set(emailable.map((r) => r.cottage.id))), className: "text-[#377249] font-semibold hover:underline" }, "Select all"),
+      React.createElement("button", { type: "button", onClick: () => setSelected(new Set()), className: "text-[#75716A] hover:underline" }, "Clear"),
+      React.createElement("span", { className: "text-[#9A968D]" }, `${selected.size} selected`)
+    ),
+    React.createElement(
+      "div",
+      { className: "max-h-[45vh] overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-3" },
+      rows.map((r) => React.createElement(
+        "label",
+        { key: r.cottage.id, "data-not-signed-up": r.site.number, className: `flex items-center gap-3 px-3 py-2 text-sm ${canEmail(r) ? "cursor-pointer hover:bg-[#F1EEE9]" : "opacity-70"}` },
+        React.createElement("input", { type: "checkbox", disabled: !canEmail(r) || sending, checked: selected.has(r.cottage.id), onChange: () => toggle(r.cottage.id), className: "accent-[#377249] w-4 h-4 flex-shrink-0" }),
+        React.createElement(
+          "span",
+          { className: "flex-1 min-w-0" },
+          React.createElement("span", { className: "font-medium text-[#1E1A13]" }, `Site ${r.site.number}`, r.cottage.name ? ` · ${r.cottage.name}` : ""),
+          React.createElement("span", { className: "block text-xs text-[#75716A] truncate" }, r.owner ? `${r.owner.name}${r.owner.email ? ` · ${r.owner.email}` : ""}` : "No owner on file", r.owner && !r.owner.email ? React.createElement("span", { className: "text-[#a8532a]" }, " · No email on file") : null)
+        ),
+        r.lastYear && React.createElement("span", { className: "text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E] whitespace-nowrap" }, "Winterized before"),
+        r.remindedAt && React.createElement("span", { className: "text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A] whitespace-nowrap" }, `Reminded ${new Date(r.remindedAt).toLocaleDateString(void 0, { month: "short", day: "numeric" })}`)
+      ))
+    ),
+    React.createElement("button", { type: "button", onClick: () => setEditing((v) => !v), className: "text-xs text-[#377249] font-semibold hover:underline mb-2" }, editing ? "Hide the email" : "See / edit the email"),
+    editing && React.createElement(
+      "div",
+      { className: "mb-3" },
+      React.createElement("textarea", { className: inputCls + " text-sm", rows: 9, value: template, onChange: (e) => setTemplate(e.target.value), "aria-label": "Reminder email" }),
+      React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "{name}, {cottage}, {site} and {link} are filled in for each owner. {link} is ", WINTERIZING_SIGNUP_URL, ". Changes are kept for next time.")
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"),
+      React.createElement("button", { type: "button", disabled: !selected.size || sending, onClick: send, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, sending ? `Sending ${progress.done + 1} of ${progress.total}…` : `Email reminder to ${selected.size}`)
+    )
+  );
+}
 function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
@@ -13066,6 +13202,8 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const [selectedIds, setSelectedIds] = useState(() => /* @__PURE__ */ new Set());
   const [printDate, setPrintDate] = useState("");
   const [reviewingEntry, setReviewingEntry] = useState(null);
+  const [remindersOpen, setRemindersOpen] = useState(false);
+  const [batchEmail, setBatchEmail] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
@@ -13117,6 +13255,29 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     }).catch(() => {
       setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
     });
+  };
+  // Everyone marked winterized today who hasn't had the completion email:
+  // sent one after another, then logged once.
+  const finishedTodayToEmail = requests.filter((r) => r.completed && r.completedDate === todayISO() && !r.completionEmailedAt && (customerFor(r.customerId) || {}).email);
+  const emailFinishedToday = async () => {
+    const list = finishedTodayToEmail.slice();
+    let sent = 0;
+    for (let i = 0; i < list.length; i++) {
+      const request = list[i];
+      const customer = customerFor(request.customerId);
+      setBatchEmail({ done: i, total: list.length });
+      setEmailStatus((s) => ({ ...s, [request.id]: "sending" }));
+      try {
+        await sendEmail({ toEmail: customer.email, toName: customer.name, subject: `Your Cottage Has Been Winterized \u2014 ${cottageName(request.cottageId)}`, message: buildWinterizingEmailText(request, db), department: "service", source: "Winterizing completion email" });
+        saveWinterizingRequest({ ...request, completionEmailedAt: (/* @__PURE__ */ new Date()).toISOString() });
+        setEmailStatus((s) => ({ ...s, [request.id]: "sent" }));
+        sent += 1;
+      } catch (e) {
+        setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
+      }
+    }
+    if (sent) persist({ ...db, activityLog: addLog(db, actor, `Emailed winterizing completion to ${sent} customer${sent === 1 ? "" : "s"} finished today`) });
+    setBatchEmail({ done: list.length, total: list.length, sent, failed: list.length - sent });
   };
   // Marking the anode rod replaced is one-way (matches the "can't double-invoice"
   // requirement): once set, this can't be un-checked from here. It records the
@@ -13265,7 +13426,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       setSelectedIds(/* @__PURE__ */ new Set());
     },
     className: `hidden sm:inline-flex px-3 py-2 rounded-md border text-sm font-medium transition whitespace-nowrap ${selectMode ? "bg-[#C1652F] text-white border-[#C1652F]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
-  }, selectMode ? "Done Selecting" : "Select to Print"), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
+  }, selectMode ? "Done Selecting" : "Select to Print"), !readOnly && (finishedTodayToEmail.length > 0 || batchEmail && batchEmail.sent == null) && React.createElement("button", {
+    onClick: () => setBatchEmail({ confirm: true }),
+    disabled: Boolean(batchEmail && batchEmail.sent == null && !batchEmail.confirm),
+    className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap disabled:opacity-50"
+  }, batchEmail && batchEmail.total && batchEmail.sent == null ? `Emailing ${batchEmail.done + 1} of ${batchEmail.total}\u2026` : `Email ${finishedTodayToEmail.length} finished today`), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setResetOpen(true),
     className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
   }, "Reset for New Season"), !readOnly && /* @__PURE__ */ React.createElement("button", {
@@ -13353,7 +13518,28 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     onDiscard: () => discardSignup(reviewingEntry),
     onCancel: () => setReviewingEntry(null)
   })) : null;
-  return /* @__PURE__ */ React.createElement("div", null, header, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl);
+  const notSignedUp = readOnly ? [] : cottagesNotSignedUpForWinter(db, pendingSignups);
+  const inSignupSeason = todayISO() >= winterSeasonStartIso(db);
+  const notSignedUpBanner = inSignupSeason && notSignedUp.length > 0 && React.createElement(
+    "div",
+    { className: "flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#E9D3B5] bg-[#FBEEDA]/60 px-4 py-3 mb-4", "data-not-signed-up-banner": "" },
+    React.createElement("span", { className: "text-sm text-[#4B4740]" }, React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, `${notSignedUp.length} seasonal cottage${notSignedUp.length === 1 ? "" : "s"}`), ` ${notSignedUp.length === 1 ? "hasn't" : "haven't"} signed up yet`),
+    React.createElement("button", { type: "button", onClick: () => setRemindersOpen(true), className: "text-sm font-semibold text-[#377249] hover:underline" }, "View list")
+  );
+  const remindersEl = remindersOpen && React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, onClose: () => setRemindersOpen(false) });
+  const batchEl = batchEmail && (batchEmail.confirm || batchEmail.sent != null) && React.createElement(
+    Modal,
+    { title: batchEmail.confirm ? "Email everyone finished today?" : "Completion emails sent", onClose: () => setBatchEmail(null) },
+    batchEmail.confirm ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `Send the winterizing completion email to the ${finishedTodayToEmail.length} customer${finishedTodayToEmail.length === 1 ? "" : "s"} whose cottage was marked winterized today and who haven't had it yet:`) : React.createElement("p", { className: "text-sm text-[#4B4740] mb-3", role: "status" }, `Sent to ${batchEmail.sent}.`, batchEmail.failed ? ` ${batchEmail.failed} couldn't be sent \u2014 they're marked "Email failed" on the list.` : ""),
+    batchEmail.confirm && React.createElement("ul", { className: "text-sm text-[#4B4740] list-disc pl-5 mb-4 max-h-60 overflow-y-auto" }, finishedTodayToEmail.map((r) => React.createElement("li", { key: r.id }, cottageName(r.cottageId), " \u2014 ", customerFor(r.customerId).name))),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: () => setBatchEmail(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, batchEmail.confirm ? "Cancel" : "Close"),
+      batchEmail.confirm && React.createElement("button", { type: "button", onClick: () => emailFinishedToday(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, `Send ${finishedTodayToEmail.length} email${finishedTodayToEmail.length === 1 ? "" : "s"}`)
+    )
+  );
+  return /* @__PURE__ */ React.createElement("div", null, header, notSignedUpBanner, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, remindersEl, batchEl);
 }
 function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpired, onMoveRun, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);

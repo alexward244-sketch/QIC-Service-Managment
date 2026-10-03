@@ -398,6 +398,70 @@ test("winterizing: the customer's note from the sign-up form shows on the card a
   await page.close();
 });
 
+test("winterizing: seasonal cottages not signed up yet - list, reminders, and emailing everyone finished today", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__sent = [];
+    window.__saved = [];
+    window.__persisted = [];
+    window.sendEmail = async (o) => { window.__sent.push(o); };
+    const today = todayISO();
+    const db = {
+      settings: { winterizingSeasonStart: "01-01" }, activityLog: [], parts: [], pendingSignups: [],
+      winterReminders: { k5: "2000-01-01T00:00:00Z" },
+      sites: [
+        { id: "s1", number: "101", siteType: "Seasonal" }, { id: "s2", number: "102", siteType: "Seasonal" }, { id: "s3", number: "103", siteType: "Seasonal" },
+        { id: "s4", number: "104", siteType: "Transient" }, { id: "s5", number: "105", siteType: "Seasonal" }, { id: "s6", number: "106", siteType: "4 Season" }
+      ],
+      cottages: ["1", "2", "3", "4", "5", "6"].map((n) => ({ id: "k" + n, name: "Cottage " + n, siteId: "s" + n })),
+      customers: [
+        { id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: ["s1"] },
+        { id: "c2", name: "Bo Day", email: "bo@x.com", siteIds: ["s2"] },
+        { id: "c5", name: "Cy Fox", siteIds: ["s5"] }
+      ],
+      winterizingRequests: [
+        { id: "old1", cottageId: "k1", archived: true, completed: true, completedDate: "2025-10-20" },
+        { id: "r2", cottageId: "k2", customerId: "c2", requestedDate: today, completed: true, completedDate: today, options: {} }
+      ]
+    };
+    const pending = [{ id: "p3", type: "winterizing", submittedSiteNumber: "103" }];
+    window.__rows = cottagesNotSignedUpForWinter(db, pending).map((r) => [r.site.number, r.owner ? r.owner.name : null, r.lastYear, r.remindedAt]);
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const render = (d) => root.render(React.createElement(WinterizingView, { db: d, persist: (next) => { window.__persisted.push(next); render(next); }, saveWinterizingRequest: (r) => window.__saved.push(r), deleteWinterizingRequest() {}, saveInvoice() {}, readOnly: false, pendingSignups: pending, removePendingSignup() {}, confirmPendingSignup() {} }));
+    render(db);
+  });
+  // Seasonal cottages only (not transient or 4 Season), none signed up or waiting for review;
+  // an old reminder from before this season doesn't count.
+  assert.deepEqual(await page.evaluate(() => window.__rows), [["101", "Anne Lee", true, null], ["105", "Cy Fox", false, null]]);
+  await page.locator("[data-not-signed-up-banner]").getByText("2 seasonal cottages").waitFor();
+  await page.getByRole("button", { name: "View list" }).click();
+  // Owners with an email start ticked; one with no email can't be.
+  assert.equal(await page.locator('[data-not-signed-up="101"] input').isChecked(), true);
+  assert.equal(await page.locator('[data-not-signed-up="105"] input').isDisabled(), true);
+  await page.locator('[data-not-signed-up="101"]').getByText("Winterized before").waitFor();
+  await page.getByRole("button", { name: "Email reminder to 1" }).click();
+  await page.getByText("Reminder sent to 1.").waitFor();
+  const reminder = await page.evaluate(() => window.__sent[0]);
+  assert.equal(reminder.toEmail, "anne@x.com");
+  assert.match(reminder.message, /^Hi Anne Lee,/);
+  assert.match(reminder.message, /Cottage 1 \(site 101\)/);
+  assert.match(reminder.message, /https:\/\/www\.qicampark\.com\/winterization-sign-up/);
+  const last = await page.evaluate(() => window.__persisted[window.__persisted.length - 1]);
+  assert.ok(last.winterReminders.k1, "the reminder is recorded");
+  await page.locator('[data-not-signed-up="101"]').getByText(/^Reminded /).waitFor();
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
+  // Everyone finished today gets the completion email in one go.
+  await page.getByRole("button", { name: "Email 1 finished today" }).click();
+  await page.getByRole("button", { name: "Send 1 email" }).click();
+  await page.getByText("Sent to 1.").waitFor();
+  const done = await page.evaluate(() => ({ sent: window.__sent[1], saved: window.__saved[0] }));
+  assert.equal(done.sent.toEmail, "bo@x.com");
+  assert.match(done.sent.subject, /^Your Cottage Has Been Winterized/);
+  assert.ok(done.saved.completionEmailedAt);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
