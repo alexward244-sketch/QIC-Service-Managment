@@ -338,8 +338,9 @@ test("correspondence: years before last year fold into a bar that opens on a cli
     const db = { settings: { taxRate: 13 }, sites: [], cottages: [], customers: [c], quotes: [], parts: [], staff: [], activityLog: [], cannedReplies: [], invoices: [],
       workOrders: [{ id: "w1", workOrderNumber: "WO-0001", title: "Old job", status: "Completed", customerId: "c1", createdAt: `${y - 3}-06-16T12:00:00Z`, date: `${y - 3}-06-16`, partsUsed: [], notes: [] }],
       correspondence: [mail("a", y - 3, "Three years ago"), mail("b", y - 2, "Two years ago"), mail("b2", y - 2, "Also two years ago"), mail("c", y - 1, "Last year"), mail("d", y, "This year")] };
-    window.__thread = (corr) => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceThread, { customer: c, db: { ...db, correspondence: corr || db.correspondence }, persist() {}, saveCorrespondence() {}, saveWorkOrder() {}, onReply() {} }));
-    window.__thread();
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    window.__thread = (focusId) => root.render(React.createElement(CorrespondenceThread, { customer: c, db, persist() {}, saveCorrespondence() {}, saveWorkOrder() {}, onReply() {}, focusId }));
+    window.__thread(null);
   });
   const y = await page.evaluate(() => new Date().getFullYear());
   await page.getByText("Body d", { exact: true }).waitFor();
@@ -354,6 +355,12 @@ test("correspondence: years before last year fold into a bar that opens on a cli
   assert.equal(await page.getByText("Body a", { exact: true }).count(), 0);
   await page.locator(`[data-year="${y - 2}"]`).getByText("Hide").click();
   assert.equal(await page.getByText("Body b", { exact: true }).count(), 0);
+  // An old email picked in the inbox opens its own year, and only that one.
+  await page.evaluate(() => window.__thread("a"));
+  await page.getByText("Body a", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Body b", { exact: true }).count(), 0);
+  await page.locator(`[data-year="${y - 3}"]`).getByText("Hide").click();
+  assert.equal(await page.getByText("Body a", { exact: true }).count(), 0, "it can still be folded");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
