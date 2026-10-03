@@ -665,6 +665,58 @@ test("customers: tidy names takes the site number off the end, only after review
   await page.close();
 });
 
+test("customers: fix couple names suggests the house style, only after review", async () => {
+  const page = await openApp(browser, "stub");
+  const cases = await page.evaluate(() => [
+    { name: "Rita & Sam Moore" },
+    { name: "Wayne Yolande McKinnon", name2: "Yolande McKinnon" },
+    { name: "Wayne Yolande McKinnon" },
+    { name: "Daniel & Sandra, Wood & Dewling" },
+    { name: "Chris Knox & Debbie Roberston" },
+    { name: "John Smith & Mary Smith" },
+    { name: "Bill and Susan March (0412A)" },
+    { name: "Wayne & Yolande, McKinnon" },
+    { name: "Chris & Debbie Knox & Roberston" },
+    { name: "Gary Callaghan" }
+  ].map((c) => { const s = suggestCoupleName(c); return s && [s.after, s.sure]; }));
+  assert.deepEqual(cases, [
+    ["Rita & Sam, Moore", true],
+    ["Wayne & Yolande, McKinnon", true],
+    ["Wayne & Yolande, McKinnon", false],
+    ["Daniel & Sandra Wood & Dewling", true],
+    ["Chris & Debbie Knox & Roberston", true],
+    ["John & Mary, Smith", true],
+    ["Bill & Susan, March (0412A)", true],
+    null, null, null
+  ]);
+  await page.evaluate(() => {
+    window.__saved = [];
+    window.__persisted = [];
+    const db = { activityLog: [], settings: { coupleNamesReviewed: ["c5"] }, customers: [
+      { id: "c1", name: "Rita & Sam Moore", email: "r@x.com" },
+      { id: "c2", name: "Ann Marie Lee" },
+      { id: "c3", name: "Joe Bloggs Day" },
+      { id: "c4", name: "Gary Callaghan" },
+      { id: "c5", name: "Tom Ann Grant" }
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CoupleNamesModal, { db, persist: (n) => window.__persisted.push(n), saveCustomer: async (c) => window.__saved.push(c), onClose() {} }));
+  });
+  assert.equal(await page.locator("[data-couple-name]").count(), 3, "already-reviewed and correct names are left out");
+  assert.equal(await page.locator('[data-couple-name="c1"] input[type=checkbox]').isChecked(), true);
+  assert.equal(await page.locator('[data-couple-name="c2"] input[type=checkbox]').isChecked(), false, "unsure ones start unticked");
+  await page.locator('[data-couple-name="c3"] input[type=text]').fill("Joe & Bloggs, Day-Smith");
+  assert.equal(await page.evaluate(() => window.__saved.length), 0, "nothing saved before confirming");
+  await page.getByRole("button", { name: "Confirm 2 changes" }).click();
+  await page.waitForFunction(() => window.__persisted.length === 1);
+  const saved = await page.evaluate(() => window.__saved.map((c) => [c.id, c.name, c.email || ""]).sort());
+  assert.deepEqual(saved, [["c1", "Rita & Sam, Moore", "r@x.com"], ["c3", "Joe & Bloggs, Day-Smith", ""]]);
+  const settings = await page.evaluate(() => window.__persisted[0].settings);
+  assert.deepEqual(settings.coupleNamesReviewed.sort(), ["c1", "c2", "c3", "c5"]);
+  assert.match(await page.evaluate(() => window.__persisted[0].activityLog[0].summary), /Fixed 2 couple names/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([

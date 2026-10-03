@@ -4639,6 +4639,129 @@ function CustomerNameTidyModal({ db, persist, saveCustomer, onClose }) {
     )
   );
 }
+// Couples' names in the house style:
+//   same last name  -> "Wayne & Yolande, McKinnon"
+//   two last names  -> "Chris & Debbie Knox & Roberston"
+// Returns { after, reason, sure } or null. "sure" ones start ticked; the
+// rest (e.g. "A B C", where B could be a middle name) start unticked.
+// A site on the end ("(0412A)") is kept as it is.
+function suggestCoupleName(customer) {
+  const full = String(customer && customer.name || "").replace(/\s+/g, " ").trim();
+  const site = (full.match(/\s*\([^()]*\d[^()]*\)\s*$/) || [""])[0];
+  let base = site ? full.slice(0, full.length - site.length).trim() : full;
+  if (!base) return null;
+  const word = /^[A-Za-z][A-Za-z'.\-]*$/;
+  const isWords = (arr) => arr.length > 0 && arr.every((w) => word.test(w));
+  const second = String(customer && customer.name2 || "").trim().split(/\s+/)[0] || "";
+  const sameWord = (a, b) => Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+  const out = (after, reason, sure) => {
+    const result = after + site;
+    return result !== full ? { after: result, reason, sure } : null;
+  };
+  let andFixed = false;
+  if (/\s+and\s+/i.test(base)) {
+    base = base.replace(/\s+and\s+/i, " & ");
+    andFixed = true;
+  }
+  const amp = /^([^&,]+?)\s*&\s*(.+)$/.exec(base);
+  if (amp) {
+    const left = amp[1].trim().split(" ");
+    const right = amp[2].trim();
+    // "A & B, Last" / "A & B Last" / "A & B, X & Y" / "A & B X & Y"
+    if (left.length === 1 && isWords(left)) {
+      const r2 = /^([^,&\s]+)\s*,?\s*([^,&]+?)\s*&\s*([^,&]+)$/.exec(right);
+      if (r2 && isWords([r2[1]]) && isWords(r2[2].split(" ")) && isWords(r2[3].split(" "))) return out(`${left[0]} & ${r2[1]} ${r2[2]} & ${r2[3]}`, "Two last names", true);
+      const parts = right.replace(/\s*,\s*/, " ").split(" ");
+      if (parts.length === 2 && isWords(parts)) return out(`${left[0]} & ${parts[0]}, ${parts[1]}`, andFixed ? "“and” → “&”" : "Comma before the shared last name", true);
+      return andFixed ? out(`${left[0]} & ${right}`, "“and” → “&”", true) : null;
+    }
+    // "John Smith & Mary Jones" -> "John & Mary Smith & Jones" (or ", Smith" when the same)
+    const rightWords = right.split(" ");
+    if (left.length === 2 && rightWords.length === 2 && isWords(left) && isWords(rightWords)) {
+      if (sameWord(left[1], rightWords[1])) return out(`${left[0]} & ${rightWords[0]}, ${left[1]}`, "Same last name", true);
+      return out(`${left[0]} & ${rightWords[0]} ${left[1]} & ${rightWords[1]}`, "Two last names", true);
+    }
+    return andFixed ? out(base, "“and” → “&”", true) : null;
+  }
+  // No "&" yet.
+  const comma = /^(\S+)\s+(\S+)\s*,\s*(.+)$/.exec(base);
+  if (comma && isWords([comma[1], comma[2]]) && isWords(comma[3].split(" "))) return out(`${comma[1]} & ${comma[2]}, ${comma[3]}`, "Two first names before the comma", true);
+  const words = base.split(" ");
+  if (!isWords(words)) return null;
+  if (words.length === 3) {
+    const sure = sameWord(second, words[1]);
+    return out(`${words[0]} & ${words[1]}, ${words[2]}`, sure ? `Second contact is ${customer.name2}` : "Two first names? (could be a middle name — check)", sure);
+  }
+  if (words.length === 4) {
+    const sure = sameWord(second, words[1]);
+    return out(`${words[0]} & ${words[1]} ${words[2]} & ${words[3]}`, sure ? `Second contact is ${customer.name2}` : "Two first names and two last names? (check)", sure);
+  }
+  return null;
+}
+function coupleNameSuggestions(db) {
+  const reviewed = new Set((db.settings || {}).coupleNamesReviewed || []);
+  return (db.customers || []).filter((c) => !reviewed.has(c.id)).map((c) => ({ c, s: suggestCoupleName(c) })).filter((x) => x.s).sort((a, b) => Number(b.s.sure) - Number(a.s.sure) || String(a.c.name).localeCompare(String(b.c.name)));
+}
+function CoupleNamesModal({ db, persist, saveCustomer, onClose }) {
+  const actor = useCurrentActor();
+  const [rows] = useState(() => coupleNameSuggestions(db));
+  const [chosen, setChosen] = useState(() => new Set(rows.filter((x) => x.s.sure).map((x) => x.c.id)));
+  const [edits, setEdits] = useState({});
+  const [saving, setSaving] = useState(false);
+  const valueOf = (x) => edits[x.c.id] != null ? edits[x.c.id] : x.s.after;
+  const toggle = (id) => setChosen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const apply = async () => {
+    const list = rows.filter((x) => chosen.has(x.c.id) && valueOf(x).trim() && valueOf(x).trim() !== x.c.name);
+    setSaving(true);
+    await Promise.all(list.map((x) => saveCustomer({ ...x.c, name: valueOf(x).trim() })));
+    // Everything shown has now been looked at - don't suggest it again.
+    const reviewed = Array.from(new Set([...(db.settings || {}).coupleNamesReviewed || [], ...rows.map((x) => x.c.id)]));
+    persist({ ...db, settings: { ...db.settings || {}, coupleNamesReviewed: reviewed }, activityLog: addLog(db, actor, `Fixed ${list.length} couple name${list.length === 1 ? "" : "s"} (& and last-name format)`) });
+    setSaving(false);
+    onClose();
+  };
+  const unsure = rows.filter((x) => !x.s.sure).length;
+  return React.createElement(
+    Modal,
+    { title: "Fix couple names", onClose, wide: true },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-1" }, "Same last name: ", React.createElement("b", null, "Wayne & Yolande, McKinnon"), " · two last names: ", React.createElement("b", null, "Chris & Debbie Knox & Roberston")),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, `${rows.length} suggestion${rows.length === 1 ? "" : "s"}. The clear ones start ticked${unsure ? `; the ${unsure} that need a look (marked “check”) don't` : ""}. Edit any suggestion before confirming. Whatever you leave unticked won't be suggested again.`),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-3 mb-2 text-xs" },
+      React.createElement("button", { type: "button", onClick: () => setChosen(new Set(rows.map((x) => x.c.id))), className: "text-[#377249] font-semibold hover:underline" }, "Select all"),
+      React.createElement("button", { type: "button", onClick: () => setChosen(new Set()), className: "text-[#75716A] hover:underline" }, "Clear"),
+      React.createElement("span", { className: "text-[#9A968D]" }, `${chosen.size} selected`)
+    ),
+    React.createElement(
+      "div",
+      { className: "max-h-[55vh] overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-4" },
+      rows.map((x) => React.createElement(
+        "div",
+        { key: x.c.id, "data-couple-name": x.c.id, className: `flex items-center gap-3 px-3 py-2 text-sm ${x.s.sure ? "" : "bg-[#FBEEDA]/30"}` },
+        React.createElement("input", { type: "checkbox", checked: chosen.has(x.c.id), onChange: () => toggle(x.c.id), className: "accent-[#377249] w-4 h-4 flex-shrink-0", "aria-label": `Change ${x.c.name}` }),
+        React.createElement("div", { className: "w-[38%] min-w-0" }, React.createElement("div", { className: "text-[#4B4740] truncate" }, x.c.name), React.createElement("div", { className: `text-[11px] truncate ${x.s.sure ? "text-[#75716A]" : "text-[#9A6B1F]"}` }, x.s.reason)),
+        React.createElement("span", { className: "text-[#9A968D]" }, "→"),
+        React.createElement("input", { type: "text", value: valueOf(x), onChange: (e) => {
+          const v = e.target.value;
+          setEdits((m) => ({ ...m, [x.c.id]: v }));
+          setChosen((prev) => new Set(prev).add(x.c.id));
+        }, className: inputCls + " flex-1 min-w-0 py-1 text-sm font-medium", "aria-label": `New name for ${x.c.name}` })
+      ))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      React.createElement("button", { type: "button", disabled: saving, onClick: apply, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Confirm ${chosen.size} change${chosen.size === 1 ? "" : "s"}`)
+    )
+  );
+}
 function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -4649,6 +4772,8 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [tidyOpen, setTidyOpen] = useState(false);
+  const [coupleOpen, setCoupleOpen] = useState(false);
+  const coupleCount = coupleNameSuggestions(db).length;
   const namesToTidy = (db.customers || []).filter((c) => {
     const after = nameWithoutSite(c.name);
     return after && after !== String(c.name || "").trim();
@@ -4723,7 +4848,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Bulk Add"
-  ), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
+  ), coupleCount > 0 && React.createElement("button", { type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
@@ -4748,7 +4873,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       return (_a2 = db.sites.find((s) => s.id === id)) == null ? void 0 : _a2.number;
     }).filter(Boolean);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("button", { className: "text-left block font-semibold text-[#1E1A13] hover:underline", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "text-left block font-normal text-xs text-[#75716A] hover:underline mt-0.5", onClick: () => setDetailId(c.id) }, c.name2), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 space-y-0.5" }, c.phone && /* @__PURE__ */ React.createElement("div", null, c.phone), c.email && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.email), c.address && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.address), linkedSiteNumbers.length > 0 && /* @__PURE__ */ React.createElement("div", null, "Site ", linkedSiteNumbers.join(", "))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 mt-3 text-sm" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1", onClick: () => confirm.ask(c.id) }, "Delete")));
-  }))), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  }))), coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === detailId),
