@@ -572,6 +572,46 @@ test("winterizing on a phone keeps the simple list", async () => {
   await page.close();
 });
 
+test("correspondence: voicemails show who called, are never linked or grouped, and stay out of customer threads", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const vm1 = { id: "v1", direction: "in", status: "new", customerId: "c1", fromEmail: "noreply@phones.example", subject: "V-Mail from SUSAN MARCH (613) 438-0648 to Service Department 106", body: "You have a new voicemail from (613) 438-0648", receivedAt: "2026-10-03T14:00:00Z", triage: { summary: "Large branch fell on neighbor's deck between sites 412A and 412B.", siteNumber: "412A" } };
+    const vm2 = { id: "v2", direction: "in", status: "new", fromEmail: "noreply@phones.example", subject: "V-Mail from (647) 469-6932 to Service Department 106", body: "You have a new voicemail from (647) 469-6932", receivedAt: "2026-10-03T13:00:00Z" };
+    const mail = { id: "m1", direction: "in", status: "new", customerId: "c1", fromEmail: "march@x.com", subject: "Deck", body: "Hello", receivedAt: "2026-10-03T12:00:00Z" };
+    return {
+      label: voicemailLabel(correspondenceVoicemail(vm1)),
+      label2: voicemailLabel(correspondenceVoicemail(vm2)),
+      plain: correspondenceVoicemail(mail),
+      groups: groupCorrespondenceByCustomer([vm1, vm2, mail].map((c) => correspondenceVoicemail(c) ? { ...c, customerId: null } : c)).map((r) => r.ids)
+    };
+  });
+  assert.equal(out.label, "Voicemail \u00B7 Susan March (613) 438-0648");
+  assert.equal(out.label2, "Voicemail \u00B7 (647) 469-6932");
+  assert.equal(out.plain, null);
+  assert.deepEqual(out.groups, [["v1"], ["v2"], ["m1"]], "each voicemail is its own row");
+  // In the inbox: labelled, not linked (even one linked before), no Link button.
+  await page.evaluate(() => {
+    const db = { settings: {}, activityLog: [], customers: [{ id: "c1", name: "Bill & Susan March", email: "march@x.com", siteIds: ["s1"] }], sites: [{ id: "s1", number: "412A" }], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
+      correspondence: [
+        { id: "v1", direction: "in", status: "new", customerId: "c1", fromEmail: "noreply@phones.example", subject: "V-Mail from SUSAN MARCH (613) 438-0648 to Service Department 106", body: "You have a new voicemail from (613) 438-0648", receivedAt: "2026-10-03T14:00:00Z", triage: { summary: "Large branch fell on neighbor's deck between sites 412A and 412B.", siteNumber: "412A" } },
+        { id: "m1", direction: "in", status: "new", customerId: "c1", fromEmail: "march@x.com", subject: "Deck", body: "Hello there", receivedAt: "2026-10-03T12:00:00Z" }
+      ] };
+    window.__db = db;
+    const noop = () => {};
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist: noop, saveCorrespondence: noop, deleteCorrespondence: noop, saveCustomer: noop, saveWorkOrder: noop, savePropaneRequest: noop, saveTreeRequest: noop, saveCottage: noop }));
+  });
+  await page.getByText("Voicemail \u00B7 Susan March (613) 438-0648").first().click();
+  await page.getByText("Voicemail \u00B7 not linked to a customer").waitFor();
+  assert.equal(await page.getByRole("button", { name: "Link", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: /^Link to / }).count(), 0, "no 'Link to the site owner' suggestion either");
+  // The customer's own conversation leaves the voicemail out.
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
+  await page.locator("#test").getByText("Hello there").waitFor();
+  assert.equal(await page.locator("#test").getByText(/V-Mail/).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
