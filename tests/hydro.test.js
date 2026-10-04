@@ -226,3 +226,57 @@ test("The hydro bill email shows the previous and current readings with their da
   assert.match(text, /Usage 250 kWh/);
   await page.close();
 });
+
+test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can be resent from Sent bills", async () => {
+  await resetData({
+    ...base("accounting"),
+    "sites/s43": { id: "s43", number: "43", tags: ["Seasonal"] },
+    "customers/c3": { id: "c3", name: "Nora North", email: "nora@x.com", siteIds: ["s43"] },
+    "hydroReadings/old": { id: "old", siteId: "s42", date: "2026-05-01", reading: 900, status: "invoiced", invoiceNumber: "HYD-0007", confirmedUsage: 10, rate: 18.5, taxAmount: 0.24, amount: 2.09 },
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-06-01", reading: 1000, status: "confirmed", isBaseline: true },
+    "hydroReadings/c": { id: "c", siteId: "s42", date: "2026-09-20", reading: 1250, previousReading: 1000, usage: 250, status: "pending", ownerAtReading: "c1" },
+    "hydroReadings/d": { id: "d", siteId: "s43", date: "2026-09-21", reading: 2100, previousReading: 2000, usage: 100, status: "pending", ownerAtReading: "c3" }
+  });
+  const page = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  // Nora's email fails the first time.
+  await page.evaluate(() => {
+    window.__sent = [];
+    window.__fail = new Set(["nora@x.com"]);
+    window.sendEmail = async (o) => {
+      if (window.__fail.has(o.toEmail)) throw new Error("Mailbox unavailable");
+      window.__sent.push(o);
+    };
+  });
+  await mountWithDb(page, `(api) => React.createElement(CurrentUserContext.Provider, { value: "${EMAIL}" }, React.createElement(HydroReviewView, { db: api.db, persist: api.persist }))`, `(api) => api.db.sites.length === 2 && (api.db.hydroReadings || []).length === 4`);
+  for (let i = 0; i < 2; i++) {
+    await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
+    await page.getByRole("button", { name: "Yes, send" }).click();
+    await page.waitForTimeout(300);
+  }
+  const done = await waitFor(async () => {
+    const list = await readings();
+    const c = list.find((x) => x.id === "c"), d = list.find((x) => x.id === "d");
+    return c.emailStatus && c.emailStatus !== "sending" && d.emailStatus && d.emailStatus !== "sending" ? { c, d } : null;
+  }, "both bills");
+  assert.deepEqual([done.c.invoiceNumber, done.d.invoiceNumber].sort(), ["HYD-0008", "HYD-0009"]);
+  assert.equal(done.c.emailStatus, "sent");
+  assert.equal(done.c.emailedTo, "rsmith@x.com");
+  assert.equal(done.d.emailStatus, "failed");
+  assert.match(done.d.emailError, /Mailbox unavailable/);
+  const mail = await page.evaluate(() => window.__sent.find((m) => m.toEmail === "rsmith@x.com"));
+  assert.equal(mail.subject, `Hydro Invoice ${done.c.invoiceNumber} — Site 42`);
+  assert.match(mail.message.replace(/<[^>]+>/g, " "), new RegExp(`Please include\\s+${done.c.invoiceNumber}\\s+with your payment`));
+
+  // Flagged on the review page; resend from Sent bills once the mailbox works.
+  await page.getByRole("button", { name: /1 hydro bill didn't reach the customer/ }).click();
+  const row = page.locator(`[data-hydro-bill="${done.d.invoiceNumber}"]`);
+  await row.getByText("Didn't send").waitFor();
+  await page.evaluate(() => window.__fail.clear());
+  await row.getByRole("button", { name: "Resend" }).click();
+  await row.getByRole("button", { name: "Send", exact: true }).click();
+  const resent = await waitFor(async () => { const d = (await readings()).find((x) => x.id === "d"); return d.emailStatus === "sent" ? d : null; }, "the resend");
+  assert.equal(resent.invoiceNumber, done.d.invoiceNumber, "same number when resent");
+  assert.ok(await page.evaluate(() => window.__sent.some((m) => m.toEmail === "nora@x.com")));
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});

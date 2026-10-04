@@ -15676,10 +15676,57 @@ function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
 }
+// Hydro bills have their own numbers (HYD-0001, HYD-0002, ...) so they're
+// told apart from service invoices (INV-) at a glance and can be quoted as
+// the payment reference.
+function nextHydroInvoiceNumber(db) {
+  let max = 0;
+  (db.hydroReadings || []).forEach((r) => {
+    const m = /HYD-(\d+)/.exec(r.invoiceNumber || "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  });
+  return `HYD-${String(max + 1).padStart(4, "0")}`;
+}
+function hydroInvoiceSubject(site, reading) {
+  return `Hydro Invoice${reading && reading.invoiceNumber ? ` ${reading.invoiceNumber}` : ""} — Site ${site ? site.number : "?"}`;
+}
+// Everything a sent hydro bill shows, rebuilt from the invoiced reading so
+// it can be resent exactly as it went out.
+function hydroBillParts(db, reading) {
+  const site = (db.sites || []).find((x) => x.id === reading.siteId) || { number: "?" };
+  const usage = reading.confirmedUsage != null ? reading.confirmedUsage : reading.usage;
+  const taxRate = reading.billTaxRate != null ? reading.billTaxRate : db.settings && db.settings.taxRate != null ? db.settings.taxRate : 13;
+  const total = Number(reading.amount) || 0;
+  const taxAmount = Number(reading.taxAmount) || 0;
+  const subtotal = Math.round((total - taxAmount) * 100) / 100;
+  const meter = reading.billMeter || { previousReading: reading.previousReading, previousDate: null, currentReading: reading.reading, currentDate: reading.date, rolledOver: reading.rolledOver };
+  return { site, owner: hydroBillTo(db, reading), usage, rate: reading.rate, subtotal, taxAmount, total, taxRate, meter };
+}
+// Sends a hydro bill (customer + accounting copy) and returns what to
+// record on the reading: emailStatus "sent", "failed" or "no-email".
+async function sendHydroBillEmails(db, reading, toEmail) {
+  const p = hydroBillParts(db, reading);
+  const html = buildHydroInvoiceEmailText(p.site, p.owner, p.usage, p.rate, p.subtotal, p.taxAmount, p.total, p.taxRate, db, p.meter, reading.invoiceNumber);
+  const subject = hydroInvoiceSubject(p.site, reading);
+  const to = toEmail || (p.owner && p.owner.email) || "";
+  const copyEmail = getAccountingCopyEmail(db);
+  if (copyEmail) {
+    sendEmail({ toEmail: copyEmail, toName: "Accounting", subject: `Copy: ${subject}${p.owner && p.owner.name ? ` (${p.owner.name})` : ""}`, message: html, department: "service", source: "Hydro invoice copy email" }).catch(() => {
+    });
+  }
+  const at = (/* @__PURE__ */ new Date()).toISOString();
+  if (!p.owner || !to) return { emailStatus: "no-email", emailedTo: "", emailError: "No customer email on file", emailedAt: at };
+  try {
+    await sendEmail({ toEmail: to, toName: p.owner.name, subject, message: html, department: "accounting", source: "Hydro invoice email" });
+    return { emailStatus: "sent", emailedTo: to, emailError: "", emailedAt: at };
+  } catch (e) {
+    return { emailStatus: "failed", emailedTo: to, emailError: (e && (e.text || e.message)) || "Unknown error", emailedAt: at };
+  }
+}
 // meter: { previousReading, previousDate, currentReading, currentDate,
 // rolledOver } - the bill shows both readings and their dates as well as
 // the usage.
-function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmount, total, taxRate, db, meter) {
+function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmount, total, taxRate, db, meter, invoiceNumber) {
   const company = getCompanyProfile(db);
   const m = meter || {};
   const readingRow = (label, value, date) => value == null ? "" : `<tr><td style="padding:4px 0;color:#75716A;">${label}${date ? ` <span style="font-size:12px;">(${escapeHtml(winterShortDate(date, { year: "numeric", month: "short", day: "numeric" }) || date)})</span>` : ""}</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${escapeHtml(String(value))}</td></tr>`;
@@ -15695,11 +15742,13 @@ function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmoun
       ${company.phone || company.website ? `<div style="font-size:12px;color:#75716A !important;margin-top:2px;">${escapeHtml([company.phone, company.website].filter(Boolean).join(" \u00B7 "))}</div>` : ""}
     </div>` : ""}
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
-      <h1 style="margin:0;font-size:20px;font-weight:600;color:#F9F5EC !important;">Hydro Bill \u2014 Site ${escapeHtml(site.number)}</h1>
+      <h1 style="margin:0;font-size:20px;font-weight:600;color:#F9F5EC !important;">Hydro Invoice${invoiceNumber ? ` ${escapeHtml(invoiceNumber)}` : ""}</h1>
+      <p style="margin:6px 0 0;font-size:13px;opacity:0.85;color:#F9F5EC !important;">Site ${escapeHtml(site.number)}${m.currentDate ? ` \u00B7 ${escapeHtml(winterShortDate(m.currentDate, { year: "numeric", month: "short", day: "numeric" }) || m.currentDate)}` : ""}</p>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
       <table style="width:100%;font-size:14px;margin-bottom:14px;">
         <tr><td style="padding:2px 0;color:#75716A;">Customer</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml((owner == null ? void 0 : owner.name) || "\u2014")}</td></tr>
+${invoiceNumber ? `<tr><td style="padding:2px 0;color:#75716A;">Invoice #</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml(invoiceNumber)}</td></tr>` : ""}
         <tr><td style="padding:2px 0;color:#75716A;">Site</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml(site.number)}</td></tr>
       </table>
       <table style="width:100%;font-size:14px;border-top:1px solid #E2DED5;padding-top:4px;">
@@ -15711,6 +15760,7 @@ function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmoun
         <tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Total Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
       </table>
       ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${invoiceNumber ? `<p style="font-size:14px;color:#4B4740;margin:8px 0 0;line-height:1.6;">Please include <strong>${escapeHtml(invoiceNumber)}</strong> with your payment.</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
       <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
@@ -16021,7 +16071,7 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
 }
 function HydroHistoryRow({ r, action }) {
   const usageDisplay = r.isBaseline ? "\u2014 (baseline)" : r.usage == null && r.confirmedUsage == null ? "Unknown" : r.confirmedUsage != null ? r.confirmedUsage : r.usage;
-  const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? "Invoiced" : r.status === "carried" ? "Carried to next bill" : "Confirmed";
+  const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? `Invoiced${r.invoiceNumber ? ` \u00B7 ${r.invoiceNumber}` : ""}` : r.status === "carried" ? "Carried to next bill" : "Confirmed";
   return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.reading), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
 }
 function HydroHistoryTable({ db, siteId, persist }) {
@@ -16243,8 +16293,121 @@ function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, se
     React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => onRemove(r), className: "px-2.5 py-1 rounded-md bg-[#a8532a] text-white font-medium" }, "Yes, remove"), React.createElement("button", { type: "button", onClick: () => setAsking(null), className: "px-2.5 py-1 rounded-md text-[#75716A]" }, "Cancel"))
   ) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 flex-wrap" }, React.createElement("span", { className: "flex gap-1" }, React.createElement("button", { type: "button", onClick: () => setAsking("remove"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#a8532a] hover:bg-[#F5E3D9]" }, "Remove"), !r.closingReading && React.createElement("button", { type: "button", onClick: () => setAsking("carry"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#9A6B1F] hover:bg-[#FBEEDA]" }, "Carry over to next bill")), /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
 }
+// Invoiced hydro bills whose email didn't go out (failed, or no address).
+function hydroBillsNotSent(db) {
+  return (db.hydroReadings || []).filter((r) => r.status === "invoiced" && (r.emailStatus === "failed" || r.emailStatus === "no-email"));
+}
+function hydroCsvCell(v) {
+  const t = v == null ? "" : String(v);
+  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+// Every hydro bill sent, newest first: number, customer, readings, amount
+// and whether the email went through, with Resend and a CSV for accounting.
+function HydroSentBills({ db, setToast }) {
+  const actor = useCurrentActor();
+  const [q, setQ] = useState("");
+  const [onlyUnsent, setOnlyUnsent] = useState(() => hydroBillsNotSent(db).length > 0);
+  const [busy, setBusy] = useState(null);
+  const [resendTo, setResendTo] = useState(null);
+  const all = (db.hydroReadings || []).filter((r) => r.status === "invoiced").slice().sort((a, b) => String(b.invoicedAt || b.date).localeCompare(String(a.invoicedAt || a.date)) || String(b.invoiceNumber || "").localeCompare(String(a.invoiceNumber || "")));
+  const rows = all.map((r) => {
+    const site = (db.sites || []).find((x) => x.id === r.siteId);
+    const owner = hydroBillTo(db, r);
+    return { r, site, owner };
+  }).filter((x) => {
+    if (onlyUnsent && !(x.r.emailStatus === "failed" || x.r.emailStatus === "no-email")) return false;
+    if (!q.trim()) return true;
+    const hay = `${x.r.invoiceNumber || ""} ${x.site ? x.site.number : ""} ${x.owner ? x.owner.name : ""}`.toLowerCase();
+    return hay.includes(q.trim().toLowerCase());
+  });
+  const resend = async (r, toEmail) => {
+    setBusy(r.id);
+    const result = await sendHydroBillEmails(db, r, toEmail);
+    try {
+      await saveHydroReading({ ...r, ...result, resentBy: actor });
+    } catch (e) {
+    }
+    setBusy(null);
+    setResendTo(null);
+    const site = (db.sites || []).find((x) => x.id === r.siteId);
+    setToast(result.emailStatus === "sent" ? `${r.invoiceNumber || "Hydro bill"} sent to ${result.emailedTo}` : `${r.invoiceNumber || "Hydro bill"} for site ${site ? site.number : "?"} still didn't send${result.emailError ? ` — ${result.emailError}` : ""}`);
+  };
+  const exportCsv = () => {
+    const head = ["Invoice #", "Date", "Site", "Customer", "Previous reading", "Current reading", "Usage (kWh)", "Rate (¢/kWh)", "Subtotal", "Tax", "Total", "Emailed to", "Email status"];
+    const lines = all.map((r) => {
+      const p = hydroBillParts(db, r);
+      return [r.invoiceNumber || "", r.invoicedAt || r.date, p.site.number, p.owner ? p.owner.name : "", p.meter.previousReading, p.meter.currentReading, p.usage, p.rate, p.subtotal.toFixed(2), p.taxAmount.toFixed(2), p.total.toFixed(2), r.emailedTo || "", r.emailStatus || "sent"].map(hydroCsvCell).join(",");
+    });
+    const blob = new Blob([[head.join(","), ...lines].join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hydro-bills-${todayISO()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4e3);
+  };
+  const statusCell = (r) => {
+    if (busy === r.id) return React.createElement("span", { className: "text-[#75716A]" }, "Sending…");
+    if (r.emailStatus === "failed") return React.createElement("span", { className: "text-[#a8532a] font-medium", title: r.emailError || "" }, "Didn't send");
+    if (r.emailStatus === "no-email") return React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No email on file");
+    if (r.emailStatus === "sending") return React.createElement("span", { className: "text-[#9A6B1F]", title: "The app closed before it heard back - check with the customer or resend" }, "Not confirmed");
+    return React.createElement("span", { className: "text-[#28633C]" }, r.emailedTo ? `Sent to ${r.emailedTo}` : "Sent");
+  };
+  return React.createElement(
+    "div",
+    null,
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2 flex-wrap mb-3" },
+      React.createElement("input", { type: "text", value: q, onChange: (e) => setQ(e.target.value), placeholder: "Search HYD #, site or customer…", className: inputCls + " max-w-xs" }),
+      React.createElement("label", { className: "flex items-center gap-1.5 text-sm text-[#4B4740]" }, React.createElement("input", { type: "checkbox", checked: onlyUnsent, onChange: (e) => setOnlyUnsent(e.target.checked) }), "Only ones that didn't send"),
+      React.createElement("span", { className: "flex-1" }),
+      all.length > 0 && React.createElement("button", { type: "button", onClick: exportCsv, className: "px-3 py-1.5 text-sm rounded-md border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]" }, "Export CSV")
+    ),
+    rows.length === 0 ? React.createElement("p", { className: "text-sm text-[#9A968D] italic" }, all.length === 0 ? "No hydro bills sent yet." : onlyUnsent && !q ? "Every hydro bill reached the customer." : "Nothing matches.") : React.createElement(
+      "div",
+      { className: "overflow-x-auto rounded-lg border border-[#E2DED5]" },
+      React.createElement(
+        "table",
+        { className: "w-full text-sm" },
+        React.createElement("thead", null, React.createElement("tr", { className: "text-left text-xs text-[#75716A] bg-[#F1EEE9]" }, ["Invoice #", "Date", "Site", "Customer", "kWh", "Total", "Email", ""].map((h, i) => React.createElement("th", { key: i, className: "px-3 py-2 font-semibold" }, h)))),
+        React.createElement("tbody", null, rows.map(({ r, site, owner }) => {
+          const p = hydroBillParts(db, r);
+          const emails = Array.from(new Set(owner ? [owner.email, owner.email2, ...owner.matchEmails || []] : [].filter(Boolean)));
+          return React.createElement(
+            "tr",
+            { key: r.id, "data-hydro-bill": r.invoiceNumber || r.id, className: "border-t border-[#EEEBE5] align-top" },
+            React.createElement("td", { className: "px-3 py-2 font-semibold text-[#1E1A13] whitespace-nowrap" }, r.invoiceNumber || "—"),
+            React.createElement("td", { className: "px-3 py-2 whitespace-nowrap" }, r.invoicedAt || r.date),
+            React.createElement("td", { className: "px-3 py-2" }, site ? site.number : "?"),
+            React.createElement("td", { className: "px-3 py-2" }, owner ? owner.name : "No customer on file"),
+            React.createElement("td", { className: "px-3 py-2 tabular-nums" }, p.usage),
+            React.createElement("td", { className: "px-3 py-2 tabular-nums" }, formatPrice(p.total)),
+            React.createElement("td", { className: "px-3 py-2" }, statusCell(r)),
+            React.createElement("td", { className: "px-3 py-2 text-right whitespace-nowrap" }, resendTo === r.id ? React.createElement(
+              "span",
+              { className: "inline-flex items-center gap-1" },
+              emails.length > 1 ? React.createElement("select", { id: `resend-${r.id}`, defaultValue: r.emailedTo || emails[0], className: "border border-[#E2DED5] rounded px-1 py-1 text-xs" }, emails.map((e) => React.createElement("option", { key: e, value: e }, e))) : React.createElement("span", { className: "text-xs text-[#75716A]" }, emails[0] || "No email on file"),
+              React.createElement("button", { type: "button", disabled: !emails.length || busy === r.id, onClick: () => {
+                const sel = document.getElementById(`resend-${r.id}`);
+                resend(r, sel ? sel.value : emails[0]);
+              }, className: "px-2 py-1 rounded bg-[#377249] text-white text-xs font-medium disabled:opacity-40" }, "Send"),
+              React.createElement("button", { type: "button", onClick: () => setResendTo(null), className: "px-2 py-1 text-xs text-[#75716A]" }, "Cancel")
+            ) : React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, "Resend"))
+          );
+        }))
+      )
+    ),
+    React.createElement("p", { className: "text-xs text-[#9A968D] mt-3" }, "Payments aren't tracked here — use the HYD number to match payments in your accounting software. Export CSV gives accounting the full list.")
+  );
+}
 function HydroReviewView({ db, persist }) {
   const actor = useCurrentActor();
+  const lastIssuedRef = useRef(0);
+  const [view, setView] = useState("review");
+  const unsent = hydroBillsNotSent(db);
   const [toast, setToast] = useState(null);
   const [edits, setEdits] = useState({});
   const [pendingConfirm, setPendingConfirm] = useState(null);
@@ -16309,63 +16472,58 @@ function HydroReviewView({ db, persist }) {
     });
     return out;
   };
-  const confirmAndInvoice = (toEmail) => {
+  const confirmAndInvoice = async (toEmail) => {
     if (!pendingConfirm) return;
     const { reading, final, site } = pendingConfirm;
     const subtotal = Math.round(final.usage * rate) / 100;
     const taxAmount = Math.round(subtotal * taxRate) / 100;
     const total = Math.round((subtotal + taxAmount) * 100) / 100;
     const readingChanged = final.reading !== reading.reading;
-    const hydroReadings = (db.hydroReadings || []).map((r) => r.id === reading.id ? { ...r, reading: final.reading, date: final.date, rolledOver: final.rolledOver, status: "invoiced", confirmedUsage: final.usage, rate, taxAmount, amount: total, confirmedBy: actor, confirmedAt: todayISO(), invoicedAt: todayISO() } : r);
-    saveHydroReading(hydroReadings.find((r) => r.id === reading.id)).catch(() => setToast(`Couldn't save the confirmed reading for site ${site.number}. Try again.`));
-    let activityLog = addLog(db, actor, `Confirmed hydro reading and sent invoice for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`);
-    persist({ ...db, activityLog });
-    const owner = hydroBillTo(db, reading);
     // The last billed (or baseline) reading before this one - carried
     // readings in between weren't billed, so the bill starts from it.
     const earlier = siteReadings(reading.siteId).filter((x) => x.id !== reading.id && x.status !== "carried" && (x.date < final.date || x.date === final.date && x.id < reading.id)).sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1)[0];
-    const meter = { previousReading: reading.previousReading != null ? reading.previousReading : earlier ? earlier.reading : null, previousDate: earlier ? earlier.date : null, currentReading: final.reading, currentDate: final.date, rolledOver: final.rolledOver };
-    const recipientEmail = toEmail || (owner == null ? void 0 : owner.email);
-    const copyEmail = getAccountingCopyEmail(db);
-    if (EMAIL_ENABLED && owner && recipientEmail) {
-      sendEmail({
-        toEmail: recipientEmail,
-        toName: owner.name,
-        subject: `Hydro Bill \u2014 Site ${site.number}`,
-        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db, meter),
-        department: "accounting",
-        source: "Hydro invoice email"
-      }).catch(() => {
-      });
-    } else if (!owner || !recipientEmail) {
-      logSystemError(db, persist, "Hydro invoice email", `No customer email on file for site ${site.number} \u2014 invoice recorded but not emailed`);
-    }
-    if (EMAIL_ENABLED && copyEmail) {
-      sendEmail({
-        toEmail: copyEmail,
-        toName: "Accounting",
-        subject: `Copy: Hydro Bill \u2014 Site ${site.number}${(owner == null ? void 0 : owner.name) ? ` (${owner.name})` : ""}`,
-        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db, meter),
-        // From the service inbox so it lands unread in accounting's Zoho.
-        department: "service",
-        source: "Hydro invoice copy email"
-      }).catch(() => {
-      });
-    }
+    const billMeter = { previousReading: reading.previousReading != null ? reading.previousReading : earlier ? earlier.reading : null, previousDate: earlier ? earlier.date : null, currentReading: final.reading, currentDate: final.date, rolledOver: final.rolledOver };
+    // Two bills confirmed back to back can beat the database update, so
+    // never reuse a number this screen already gave out.
+    const fromDb = nextHydroInvoiceNumber(db);
+    const n = Math.max(parseInt(fromDb.slice(4), 10), lastIssuedRef.current + 1);
+    lastIssuedRef.current = n;
+    const invoiceNumber = `HYD-${String(n).padStart(4, "0")}`;
+    let invoiced = { ...reading, reading: final.reading, date: final.date, rolledOver: final.rolledOver, status: "invoiced", invoiceNumber, confirmedUsage: final.usage, rate, taxAmount, amount: total, billTaxRate: taxRate, billMeter, confirmedBy: actor, confirmedAt: todayISO(), invoicedAt: todayISO(), emailStatus: "sending" };
+    setPendingConfirm(null);
     setEdits((prev) => {
       const next = { ...prev };
       delete next[reading.id];
       return next;
     });
-    setPendingConfirm(null);
-    setToast(`Confirmed and invoiced site ${site.number}`);
+    try {
+      await saveHydroReading(invoiced);
+    } catch (e) {
+      setToast(`Couldn't save the confirmed reading for site ${site.number}. Try again.`);
+      return;
+    }
+    persist({ ...db, activityLog: addLog(db, actor, `Confirmed hydro reading and sent invoice ${invoiceNumber} for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`) });
+    const result = await sendHydroBillEmails(db, invoiced, toEmail);
+    invoiced = { ...invoiced, ...result };
+    saveHydroReading(invoiced).catch(() => {
+    });
+    if (result.emailStatus === "no-email") logSystemError(db, persist, "Hydro invoice email", `No customer email on file for site ${site.number} \u2014 invoice ${invoiceNumber} recorded but not emailed`);
+    setToast(result.emailStatus === "sent" ? `Invoice ${invoiceNumber} sent for site ${site.number}` : `Invoice ${invoiceNumber} for site ${site.number} was saved but the email ${result.emailStatus === "no-email" ? "had no address to go to" : "didn't send"} \u2014 see Sent bills to resend it`);
   };
-  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#B5432E] font-semibold" }, "Hydro Meter Review")), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#B5432E] font-semibold" }, "Hydro Meter Review"), React.createElement(
+    "div",
+    { className: "flex rounded-lg border border-[#E2DED5] overflow-hidden text-sm" },
+    [["review", `To review${pending.length ? ` (${pending.length})` : ""}`], ["sent", `Sent bills${unsent.length ? ` \u00B7 ${unsent.length} not sent` : ""}`]].map(([key, label]) => React.createElement("button", { key, type: "button", onClick: () => setView(key), "aria-pressed": view === key, className: `px-3 py-1.5 font-medium ${view === key ? "bg-[#377249] text-white" : "bg-white text-[#4B4740] hover:bg-[#F1EEE9]"}` }, label))
+  )), view === "sent" ? React.createElement(HydroSentBills, { db, setToast }) : React.createElement(React.Fragment, null, unsent.length > 0 && React.createElement(
+    "button",
+    { type: "button", onClick: () => setView("sent"), className: "w-full text-left mb-3 rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 text-sm text-[#a8532a] font-medium" },
+    `${unsent.length} hydro bill${unsent.length === 1 ? "" : "s"} didn't reach the customer \u2014 open Sent bills to resend`
+  ), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
     const site = db.sites.find((s) => s.id === r.siteId);
     const owner = hydroBillTo(db, r);
     const currentOwner = getSiteOwner(db, r.siteId);
     return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r) });
-  })), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
+  }))), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro invoice \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
 }
 function getConsignmentTransferInfo(db, cottage, site) {
   if (!cottage || !site) return { buyer: null, seller: null };
@@ -20752,7 +20910,7 @@ function AppContent() {
     trees: (db.treeRequests || []).filter((r) => !r.completed).length,
     winterizing: (db.winterizingRequests || []).filter((r) => !r.archived && !r.completed).length,
     hydro: (db.sites || []).filter((s) => isHydroTrackedSite(s) && !getLastHydroReading(db, s.id)).length,
-    hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length,
+    hydroreview: (db.hydroReadings || []).filter((r) => r.status === "pending").length + hydroBillsNotSent(db).length,
     systemhealth: (db.systemErrorLog || []).filter((e) => Date.now() - e.ts < 24 * 60 * 60 * 1e3).length
   };
   const createInvoiceFromSource = (source, sourceType) => {
