@@ -326,3 +326,32 @@ test("An under-read after an over-billed reading is held, not billed as a huge r
   assert.deepEqual(review.pageErrors, []);
   await review.close();
 });
+
+test("A reading typed with a leading 0 keeps it: it counts toward the meter's digits and shows on the bill", async () => {
+  await resetData({
+    ...base("accounting"),
+    "sites/s42": { id: "s42", number: "42", tags: ["Seasonal"] },
+    "sites/s500": { id: "s500", number: "500", siteType: "Seasonal" },
+    "hydroReadings/z": { id: "z", siteId: "s500", date: "2026-05-01", reading: 4213, readingText: "04213", status: "confirmed", isBaseline: true }
+  });
+  const page = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await page.evaluate(() => { window.__sent = []; window.sendEmail = async (o) => { window.__sent.push(o); }; });
+  await mountWithDb(page, asUser("HydroMeterView"), `(api) => api.db.sites.length === 2 && (api.db.hydroReadings || []).length === 1`);
+  // Site 500's 04213 proves a 5-digit meter (no "check").
+  await page.getByRole("button", { name: /Set meter digits/ }).click();
+  const row = page.locator('[data-meter-digits="500"]');
+  await row.getByText("Reading entered as 04213 (5 digits)").waitFor();
+  assert.equal(await row.locator("input[type=checkbox]").isChecked(), true);
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // Typing 0950 on site 42 (Front of Park, no count yet): 4 digits picked, text kept.
+  await page.getByRole("button", { name: /Front of Park/ }).click();
+  await page.getByRole("button", { name: "Enter Reading" }).first().click();
+  await page.getByPlaceholder("e.g. 4213").fill("00950");
+  assert.equal(await page.getByRole("button", { name: "5", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", { name: "Save Reading" }).click();
+  const r = await waitFor(async () => (await readings()).find((x) => x.siteId === "s42"), "the reading");
+  assert.equal(r.reading, 950);
+  assert.equal(r.readingText, "00950");
+  await page.close();
+});

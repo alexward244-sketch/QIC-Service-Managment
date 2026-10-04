@@ -15818,11 +15818,24 @@ function hydroAreaOf(site) {
 // Longest reading on file for a site. Readings are stored as numbers, so a
 // leading zero (04213) is lost - a short reading can't prove a small meter,
 // but a long one does prove a big one.
+// A reading as it was typed, leading zeros and all ("04213"), when that's
+// on file - readings are stored as numbers, which drop them.
+function hydroReadingText(r) {
+  return r && r.readingText && /^\d+$/.test(r.readingText) && Number(r.readingText) === Number(r.reading) ? r.readingText : r && r.reading != null ? String(r.reading) : "";
+}
 function longestHydroReading(db, siteId) {
-  return (db.hydroReadings || []).filter((r) => r.siteId === siteId && r.reading != null).reduce((n, r) => Math.max(n, String(Math.round(Number(r.reading))).length), 0);
+  return (db.hydroReadings || []).filter((r) => r.siteId === siteId && r.reading != null).reduce((n, r) => Math.max(n, hydroReadingText(r).length), 0);
+}
+// A reading typed with a leading 0 shows every wheel, so its length is the
+// meter's digit count for certain.
+function hydroDigitsFromLeadingZero(db, siteId) {
+  const r = (db.hydroReadings || []).find((x) => x.siteId === siteId && /^0\d/.test(hydroReadingText(x)));
+  return r ? { digits: hydroReadingText(r).length, text: hydroReadingText(r) } : null;
 }
 // Suggested digit count for one site: { digits, sure, reason }.
 function suggestMeterDigitsFor(db, site, areaDefault) {
+  const zero = hydroDigitsFromLeadingZero(db, site.id);
+  if (zero && zero.digits >= 4) return { digits: zero.digits, sure: true, reason: `Reading entered as ${zero.text} (${zero.digits} digits)` };
   const len = longestHydroReading(db, site.id);
   if (!len) return areaDefault ? { digits: areaDefault, sure: false, reason: `No reading yet — most of this area is ${areaDefault}` } : null;
   if (!areaDefault || len === areaDefault) return { digits: Math.max(len, 4), sure: len >= 4, reason: len >= 4 ? `Reading has ${len} digits` : `Reading has only ${len} digits — check` };
@@ -15946,7 +15959,7 @@ function HydroReadingForm({ db, siteId, onSave, onCancel }) {
   const willFlag = base && valid && readingNum < base.reading;
   const submit = () => {
     if (!valid) return;
-    onSave(siteId, readingNum, date, { closing, meterDigits: askDigits ? digits : null });
+    onSave(siteId, readingNum, date, { closing, meterDigits: askDigits ? digits : null, readingText: reading });
   };
   return /* @__PURE__ */ React.createElement("div", null, last ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Last reading: ", /* @__PURE__ */ React.createElement("strong", null, last.reading), " on ", last.date) : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "No previous reading on file for this site \u2014 this will be saved as the baseline reading."), /* @__PURE__ */ React.createElement(Field, { label: "Reading Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Current Meter Reading" }, /* @__PURE__ */ React.createElement("input", { type: "text", inputMode: "numeric", pattern: "[0-9]*", className: inputCls + " text-2xl py-3 tracking-wide", value: reading, onChange: (e) => setReading(e.target.value.replace(/[^0-9]/g, "")), placeholder: "e.g. 4213", autoFocus: true })), React.createElement("label", { className: "flex items-start gap-2 text-sm text-[#4B4740] mb-3" }, React.createElement("input", { type: "checkbox", className: "mt-1", checked: closing, onChange: (e) => setClosing(e.target.checked) }), React.createElement("span", null, React.createElement("b", null, "Closing reading"), " \u2014 the cottage is being sold. This bill goes to the current owner", (() => {
     const o = site ? getSiteOwner(db, site.id) : null;
@@ -16082,7 +16095,7 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
 function HydroHistoryRow({ r, action }) {
   const usageDisplay = r.isBaseline ? "\u2014 (baseline)" : r.usage == null && r.confirmedUsage == null ? "Unknown" : r.confirmedUsage != null ? r.confirmedUsage : r.usage;
   const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? `Invoiced${r.invoiceNumber ? ` \u00B7 ${r.invoiceNumber}` : ""}` : r.status === "carried" ? r.heldUnder != null ? `Held \u2014 under last bill (${r.heldUnder})` : "Carried to next bill" : "Confirmed";
-  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.reading), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
+  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, hydroReadingText(r)), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
 }
 function HydroHistoryTable({ db, siteId, persist }) {
   const history = getSiteHydroHistory(db, siteId);
@@ -16210,7 +16223,8 @@ function HydroMeterView({ db, persist }) {
       confirmedAt: null,
       invoicedAt: null,
       ownerAtReading: (getSiteOwner(db, siteId) || {}).id || null,
-      closingReading: Boolean(opts && opts.closing)
+      closingReading: Boolean(opts && opts.closing),
+      readingText: opts && opts.readingText ? String(opts.readingText) : String(readingValue)
     };
     saveHydroReading(record).catch(() => setToast(`Couldn't save the reading for site ${site.number}. Check your connection and enter it again.`));
     const activityLog = addHydroDailyLog(db, actor, flagged ? "flagged" : isBaseline ? "baseline" : "reading");
@@ -16502,7 +16516,9 @@ function HydroReviewView({ db, persist }) {
     // The last billed (or baseline) reading before this one - carried
     // readings in between weren't billed, so the bill starts from it.
     const earlier = siteReadings(reading.siteId).filter((x) => x.id !== reading.id && x.status !== "carried" && (x.date < final.date || x.date === final.date && x.id < reading.id)).sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1)[0];
-    const billMeter = { previousReading: reading.previousReading != null ? reading.previousReading : earlier ? earlier.reading : null, previousDate: earlier ? earlier.date : null, currentReading: final.reading, currentDate: final.date, rolledOver: final.rolledOver };
+    // Readings shown as typed (leading zeros kept) on the customer's bill.
+    const prevNum = reading.previousReading != null ? reading.previousReading : earlier ? earlier.reading : null;
+    const billMeter = { previousReading: prevNum == null ? null : earlier && Number(earlier.reading) === Number(prevNum) ? hydroReadingText(earlier) : prevNum, previousDate: earlier ? earlier.date : null, currentReading: final.reading === reading.reading ? hydroReadingText(reading) : final.reading, currentDate: final.date, rolledOver: final.rolledOver };
     // Two bills confirmed back to back can beat the database update, so
     // never reuse a number this screen already gave out.
     const fromDb = nextHydroInvoiceNumber(db);
@@ -19453,7 +19469,8 @@ function FieldHydroPadScreen({ db, persist, actor, siteId, setToast, onSaved, on
       confirmedAt: null,
       invoicedAt: null,
       ownerAtReading: (getSiteOwner(db, id) || {}).id || null,
-      closingReading: Boolean(opts && opts.closing)
+      closingReading: Boolean(opts && opts.closing),
+      readingText: opts && opts.readingText ? String(opts.readingText) : String(readingValue)
     };
     saveHydroReading(record).catch(() => setToast(`Couldn't save the reading for site ${site.number}. Check your connection and enter it again.`));
     const activityLog = addHydroDailyLog(db, actor, flagged ? "flagged" : isBaseline ? "baseline" : "reading");
