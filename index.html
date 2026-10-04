@@ -16092,10 +16092,16 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
     )
   );
 }
-function HydroHistoryRow({ r, action }) {
+// Who owned the site when the reading was taken (the person it's billed
+// to), so the history reads straight across a sale.
+function hydroReadingCustomerName(db, r) {
+  const c = r.ownerAtReading ? (db.customers || []).find((x) => x.id === r.ownerAtReading) : null;
+  return c ? c.name : "\u2014";
+}
+function HydroHistoryRow({ db, r, action }) {
   const usageDisplay = r.isBaseline ? "\u2014 (baseline)" : r.usage == null && r.confirmedUsage == null ? "Unknown" : r.confirmedUsage != null ? r.confirmedUsage : r.usage;
   const statusDisplay = r.isBaseline ? "Baseline" : r.status === "pending" && r.flagged ? /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "Flagged") : r.status === "pending" ? "Pending review" : r.status === "invoiced" ? `Invoiced${r.invoiceNumber ? ` \u00B7 ${r.invoiceNumber}` : ""}` : r.status === "carried" ? r.heldUnder != null ? `Held \u2014 under last bill (${r.heldUnder})` : "Carried to next bill" : "Confirmed";
-  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, hydroReadingText(r)), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
+  return /* @__PURE__ */ React.createElement("tr", { className: "border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.date), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, hydroReadingText(r)), React.createElement("td", { className: "py-2 pr-3" }, db ? hydroReadingCustomerName(db, r) : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, usageDisplay), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, statusDisplay, r.closingReading && React.createElement("span", { className: "ml-1.5 text-[10px] font-bold uppercase tracking-wider rounded px-1 py-0.5 bg-[#FBEEDA] text-[#9A6B1F] whitespace-nowrap" }, "Closing")), /* @__PURE__ */ React.createElement("td", { className: "py-2 pr-3" }, r.amount != null ? React.createElement(Money, { value: r.amount }) : "\u2014"), action !== void 0 && React.createElement("td", { className: "py-2 text-right whitespace-nowrap" }, action));
 }
 function HydroHistoryTable({ db, siteId, persist }) {
   const history = getSiteHydroHistory(db, siteId);
@@ -16106,20 +16112,20 @@ function HydroHistoryTable({ db, siteId, persist }) {
   if (history.length === 0) {
     return /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "No hydro readings recorded yet for this site.");
   }
-  const headerRow = /* @__PURE__ */ React.createElement("tr", { className: "text-left text-xs text-[#75716A] border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Reading"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Usage (kWh)"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Amount"), canEdit && React.createElement("th", { className: "py-2" }));
+  const headerRow = /* @__PURE__ */ React.createElement("tr", { className: "text-left text-xs text-[#75716A] border-b border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Reading"), React.createElement("th", { className: "py-2 pr-3" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Usage (kWh)"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "py-2 pr-3" }, "Amount"), canEdit && React.createElement("th", { className: "py-2" }));
   const rows = history.map((r) => {
     let action = void 0;
     if (canEdit) {
       const lock = hydroReadingLock(history, r);
       action = lock ? React.createElement("span", { className: "text-[11px] text-[#9A968D]", title: "Can't be changed once billed" }, lock === "Invoiced" ? "" : "Locked") : React.createElement("button", { type: "button", onClick: () => setEditing(r), className: "text-xs text-[#377249] hover:underline font-medium" }, "Edit");
     }
-    return /* @__PURE__ */ React.createElement(HydroHistoryRow, { key: r.id, r, action });
+    return /* @__PURE__ */ React.createElement(HydroHistoryRow, { key: r.id, db, r, action });
   });
   const site = db.sites.find((s) => s.id === siteId);
   // Cottage sales and moves (from Transfer Ownership) shown between the
   // readings, newest first - a reading on the transfer day sits under it,
   // with the seller, since that's usually the closing reading.
-  const colCount = canEdit ? 6 : 5;
+  const colCount = canEdit ? 7 : 6;
   const transferRows = (site && site.transferHistory || []).map((t) => ({ t, date: t.date || "" }));
   const merged = [];
   let ti = 0;
