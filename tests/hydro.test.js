@@ -280,3 +280,49 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("An under-read after an over-billed reading is held, not billed as a huge rollover, and the next bill picks up from the billed reading", async () => {
+  await resetData({
+    ...base("accounting"),
+    "sites/s42": { id: "s42", number: "42", tags: ["Seasonal"], meterDigits: 5 },
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-05-01", reading: 1000, status: "confirmed", isBaseline: true },
+    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-06-01", reading: 1500, previousReading: 1000, status: "invoiced", invoiceNumber: "HYD-0004", confirmedUsage: 500, rate: 18.5, taxAmount: 12.03, amount: 104.53 },
+    "hydroReadings/c": { id: "c", siteId: "s42", date: "2026-07-01", reading: 1400, previousReading: 1500, usage: null, flagged: true, status: "pending", ownerAtReading: "c1" }
+  });
+  const page = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  assert.deepEqual(await page.evaluate(() => [computeHydroUsage(99800, 412, 5), computeHydroUsage(1500, 1400, 5), computeHydroUsage(1500, 1400, null)]), [
+    { usage: 612, rolledOver: true }, { usage: null, rolledOver: false, underRead: true }, { usage: null, rolledOver: true, underRead: true }
+  ]);
+  await page.evaluate(() => { window.__sent = []; window.sendEmail = async (o) => { window.__sent.push(o); }; });
+  await mountWithDb(page, asUser("HydroReviewView"), READY(3));
+  const banner = page.locator("[data-under-read]");
+  await banner.getByText("Lower than the last billed reading (1500 on HYD-0004)").waitFor();
+  assert.equal(await page.getByRole("spinbutton").nth(1).inputValue(), "", "no usage is pre-filled");
+  assert.equal(await page.getByRole("button", { name: "Confirm & Send Invoice" }).isDisabled(), true);
+  await banner.getByRole("button", { name: "Hold until it passes 1500" }).click();
+  const held = await waitFor(async () => { const c = (await readings()).find((x) => x.id === "c"); return c.status === "carried" ? c : null; }, "the hold");
+  assert.equal(held.heldUnder, 1500);
+  assert.equal(held.usage, 0);
+  assert.equal(await page.evaluate(() => window.__sent.length), 0, "nothing sent to the customer");
+  await page.close();
+
+  // Next read is past the billed 1500: billed from 1500, not from the held 1400.
+  const field = await openApp(browser, "emulator", { role: "office", email: EMAIL });
+  await mountWithDb(field, asUser("HydroMeterView"), READY(3));
+  await openSection(field);
+  await field.getByRole("button", { name: "Enter Reading" }).first().click();
+  await field.getByPlaceholder("e.g. 4213").fill("1600");
+  await field.getByRole("button", { name: "Save Reading" }).click();
+  const next = await waitFor(async () => (await readings()).find((x) => x.reading === 1600), "the next reading");
+  assert.equal(next.previousReading, 1500);
+  assert.equal(next.usage, 100);
+  assert.equal(next.flagged, false);
+  await field.close();
+
+  const review = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await mountWithDb(review, asUser("HydroReviewView"), READY(4));
+  await review.getByText(/Held after an over-read: 2026-07-01 \(1400\)/).waitFor();
+  assert.equal(await review.getByText(/Includes usage carried over/).count(), 0);
+  assert.deepEqual(review.pageErrors, []);
+  await review.close();
+});
