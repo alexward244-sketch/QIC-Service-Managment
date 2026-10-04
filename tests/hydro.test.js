@@ -163,26 +163,31 @@ test("Set meter digits suggests a count per site from its area and readings, and
     "sites/s500": { id: "s500", number: "500", siteType: "Seasonal" },
     "sites/s501": { id: "s501", number: "501", siteType: "Seasonal" },
     "sites/s1001": { id: "s1001", number: "1001", siteType: "Seasonal", meterDigits: 5 },
+    "sites/s1002": { id: "s1002", number: "1002", siteType: "Seasonal" },
+    "hydroReadings/e": { id: "e", siteId: "s1002", date: "2026-09-01", reading: 4213, status: "confirmed", isBaseline: true },
     "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-09-01", reading: 4213, status: "confirmed", isBaseline: true },
     "hydroReadings/b": { id: "b", siteId: "s43", date: "2026-09-01", reading: 52130, status: "confirmed", isBaseline: true },
     "hydroReadings/c": { id: "c", siteId: "s500", date: "2026-09-01", reading: 61234, status: "confirmed", isBaseline: true },
     "hydroReadings/d": { id: "d", siteId: "s501", date: "2026-09-01", reading: 4213, status: "confirmed", isBaseline: true }
   });
   const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
-  await mountWithDb(page, asUser("HydroMeterView"), `(api) => api.db.sites.length === 5 && (api.db.hydroReadings || []).length === 4`);
-  await page.getByRole("button", { name: "Set meter digits · 4 sites" }).click();
+  await mountWithDb(page, asUser("HydroMeterView"), `(api) => api.db.sites.length === 6 && (api.db.hydroReadings || []).length === 5`);
+  await page.getByRole("button", { name: "Set meter digits · 5 sites" }).click();
   const row = (n) => page.locator(`[data-meter-digits="${n}"]`);
   // Front of Park is 4 (a 5-digit reading there means a 5-digit meter);
   // Limestone South is 5, so a 4-digit reading there is a "check".
   assert.deepEqual(await Promise.all(["42", "43", "500", "501"].map((n) => row(n).locator("select").inputValue())), ["4", "5", "5", "5"]);
   assert.deepEqual(await Promise.all(["42", "43", "500", "501"].map((n) => row(n).locator("input[type=checkbox]").isChecked())), [true, true, true, false]);
+  // Every Pebble Beach meter is 5 digits, so 4213 there is a dropped 0 - ticked.
+  assert.equal(await row("1002").locator("select").inputValue(), "5");
+  assert.equal(await row("1002").locator("input[type=checkbox]").isChecked(), true);
   await row("501").locator("select").selectOption("4");
-  await page.getByRole("button", { name: "Set 4 sites" }).click();
+  await page.getByRole("button", { name: "Set 5 sites" }).click();
   const sites = await waitFor(async () => {
     const list = await readCollection("sites");
     return list.every((x) => x.meterDigits) ? list : null;
   }, "the digit counts");
-  assert.deepEqual(Object.fromEntries(sites.map((x) => [x.number, x.meterDigits])), { "42": 4, "43": 5, "500": 5, "501": 4, "1001": 5 });
+  assert.deepEqual(Object.fromEntries(sites.map((x) => [x.number, x.meterDigits])), { "42": 4, "43": 5, "500": 5, "501": 4, "1001": 5, "1002": 5 });
   await page.close();
 });
 
