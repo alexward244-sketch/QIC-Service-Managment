@@ -154,3 +154,53 @@ test("Hydro Review can carry a small reading over to the next bill, or remove on
   assert.ok(await review3.getByRole("button", { name: "Remove", exact: true }).isVisible());
   await review3.close();
 });
+
+test("Set meter digits suggests a count per site from its area and readings, and saves only what's ticked", async () => {
+  await resetData({
+    ...base("office"),
+    "sites/s42": { id: "s42", number: "42", siteType: "Seasonal" },
+    "sites/s43": { id: "s43", number: "43", siteType: "Seasonal" },
+    "sites/s500": { id: "s500", number: "500", siteType: "Seasonal" },
+    "sites/s501": { id: "s501", number: "501", siteType: "Seasonal" },
+    "sites/s1001": { id: "s1001", number: "1001", siteType: "Seasonal", meterDigits: 5 },
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-09-01", reading: 4213, status: "confirmed", isBaseline: true },
+    "hydroReadings/b": { id: "b", siteId: "s43", date: "2026-09-01", reading: 52130, status: "confirmed", isBaseline: true },
+    "hydroReadings/c": { id: "c", siteId: "s500", date: "2026-09-01", reading: 61234, status: "confirmed", isBaseline: true },
+    "hydroReadings/d": { id: "d", siteId: "s501", date: "2026-09-01", reading: 4213, status: "confirmed", isBaseline: true }
+  });
+  const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
+  await mountWithDb(page, asUser("HydroMeterView"), `(api) => api.db.sites.length === 5 && (api.db.hydroReadings || []).length === 4`);
+  await page.getByRole("button", { name: "Set meter digits · 4 sites" }).click();
+  const row = (n) => page.locator(`[data-meter-digits="${n}"]`);
+  // Front of Park is 4 (a 5-digit reading there means a 5-digit meter);
+  // Limestone South is 5, so a 4-digit reading there is a "check".
+  assert.deepEqual(await Promise.all(["42", "43", "500", "501"].map((n) => row(n).locator("select").inputValue())), ["4", "5", "5", "5"]);
+  assert.deepEqual(await Promise.all(["42", "43", "500", "501"].map((n) => row(n).locator("input[type=checkbox]").isChecked())), [true, true, true, false]);
+  await row("501").locator("select").selectOption("4");
+  await page.getByRole("button", { name: "Set 4 sites" }).click();
+  const sites = await waitFor(async () => {
+    const list = await readCollection("sites");
+    return list.every((x) => x.meterDigits) ? list : null;
+  }, "the digit counts");
+  assert.deepEqual(Object.fromEntries(sites.map((x) => [x.number, x.meterDigits])), { "42": 4, "43": 5, "500": 5, "501": 4, "1001": 5 });
+  await page.close();
+});
+
+test("The reading screen asks once how many digits the meter has, and works out a rollover with it", async () => {
+  await resetData({ ...base("office"), "sites/s42": { id: "s42", number: "42", siteType: "Seasonal" }, "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-09-01", reading: 9990, status: "confirmed", isBaseline: true } });
+  const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
+  await mountWithDb(page, asUser("HydroMeterView"), READY(1));
+  await openSection(page);
+  await page.getByRole("button", { name: "Enter Reading" }).first().click();
+  await page.getByPlaceholder("e.g. 4213").fill("10");
+  await page.locator("[data-digit-picker]").waitFor();
+  assert.equal(await page.getByRole("button", { name: "4", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.getByText("Estimated usage: 20 kWh").waitFor();
+  await page.getByRole("button", { name: "Save Reading" }).click();
+  const site = await waitFor(async () => { const d = await readDoc("sites/s42"); return d && d.meterDigits ? d : null; }, "the site's digit count");
+  assert.equal(site.meterDigits, 4);
+  const r = await waitFor(async () => (await readings()).find((x) => x.id !== "a"), "the reading");
+  assert.equal(r.usage, 20);
+  assert.equal(r.rolledOver, true);
+  await page.close();
+});
