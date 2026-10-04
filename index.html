@@ -15741,6 +15741,130 @@ function HydroRateControl({ db, persist }) {
     }
   ), /* @__PURE__ */ React.createElement("span", null, "\u00A2/kWh"));
 }
+// How many digits each area's meters usually have. A site whose readings
+// don't fit is marked "check" rather than assumed (most of Limestone South
+// is 5 but a couple are 4; the original park is 4 with a few 5s).
+const HYDRO_AREA_DIGITS = { "Front of Park": 4, "Limestone South": 5, "Pebble Beach": 5 };
+const METER_DIGIT_CHOICES = [4, 5, 6];
+function hydroAreaOf(site) {
+  const group = groupSitesByHydroRange([site])[0];
+  return group ? group.label : "Other";
+}
+// Longest reading on file for a site. Readings are stored as numbers, so a
+// leading zero (04213) is lost - a short reading can't prove a small meter,
+// but a long one does prove a big one.
+function longestHydroReading(db, siteId) {
+  return (db.hydroReadings || []).filter((r) => r.siteId === siteId && r.reading != null).reduce((n, r) => Math.max(n, String(Math.round(Number(r.reading))).length), 0);
+}
+// Suggested digit count for one site: { digits, sure, reason }.
+function suggestMeterDigitsFor(db, site, areaDefault) {
+  const len = longestHydroReading(db, site.id);
+  if (!len) return areaDefault ? { digits: areaDefault, sure: false, reason: `No reading yet — most of this area is ${areaDefault}` } : null;
+  if (!areaDefault || len === areaDefault) return { digits: Math.max(len, 4), sure: len >= 4, reason: len >= 4 ? `Reading has ${len} digits` : `Reading has only ${len} digits — check` };
+  if (len > areaDefault) return { digits: len, sure: true, reason: `Reading has ${len} digits (more than most of this area)` };
+  return { digits: areaDefault, sure: false, reason: `Reading has ${len} digits — a ${len}-digit meter, or a leading 0 on a ${areaDefault}-digit one? Check` };
+}
+// Every hydro site without a digit count, grouped by area, with a suggestion.
+function meterDigitSuggestions(db) {
+  const sites = (db.sites || []).filter((x) => isHydroTrackedSite(x) && !x.meterDigits);
+  return groupSitesByHydroRange(sites).map((g) => {
+    let areaDefault = HYDRO_AREA_DIGITS[g.label];
+    if (!areaDefault) {
+      // Unknown area: go with what most of its readings say.
+      const counts = {};
+      g.sites.forEach((x) => {
+        const len = longestHydroReading(db, x.id);
+        if (len >= 4) counts[len] = (counts[len] || 0) + 1;
+      });
+      const top = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+      areaDefault = top ? Number(top) : null;
+    }
+    return { label: g.label, rows: g.sites.map((site) => ({ site, s: suggestMeterDigitsFor(db, site, areaDefault) })) };
+  });
+}
+function saveSiteMeterDigits(siteId, digits) {
+  return SITES_REF.doc(siteId).set({ meterDigits: digits }, { merge: true });
+}
+function MeterDigitsModal({ db, persist, onClose }) {
+  const actor = useCurrentActor();
+  const [groups] = useState(() => meterDigitSuggestions(db));
+  const rows = groups.flatMap((g) => g.rows);
+  const [choice, setChoice] = useState(() => Object.fromEntries(rows.map((x) => [x.site.id, x.s ? x.s.digits : ""])));
+  const [chosen, setChosen] = useState(() => new Set(rows.filter((x) => x.s && x.s.sure).map((x) => x.site.id)));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const toggle = (id) => setChosen((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const apply = async () => {
+    const list = rows.filter((x) => chosen.has(x.site.id) && Number(choice[x.site.id]) > 0);
+    setSaving(true);
+    try {
+      await Promise.all(list.map((x) => saveSiteMeterDigits(x.site.id, Number(choice[x.site.id]))));
+    } catch (e) {
+      setError("Couldn't save every site. Check your connection and try again.");
+      setSaving(false);
+      return;
+    }
+    persist({ ...db, activityLog: addLog(db, actor, `Set meter digits for ${list.length} hydro site${list.length === 1 ? "" : "s"}`) });
+    setSaving(false);
+    onClose();
+  };
+  const unsure = rows.filter((x) => !x.s || !x.s.sure).length;
+  return React.createElement(
+    Modal,
+    { title: "Set meter digits", onClose, wide: true },
+    rows.length === 0 ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Every hydro site has its meter digits set. Change one from its Edit Site form.") : React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-1" }, "Once a site's digit count is set, a meter rolling over (99999 → 00000) is worked out automatically."),
+      React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, `${rows.length} site${rows.length === 1 ? "" : "s"} to set. The clear ones start ticked${unsure ? `; the ${unsure} marked “check” don't — pick the right count and tick them, or leave them for later` : ""}.`),
+      React.createElement(
+        "div",
+        { className: "max-h-[55vh] overflow-y-auto rounded-lg border border-[#E2DED5] mb-4" },
+        groups.map((g) => React.createElement(
+          "div",
+          { key: g.label },
+          React.createElement("div", { className: "sticky top-0 bg-[#F1EEE9] px-3 py-1.5 text-xs font-semibold text-[#4B4740]" }, g.label, " ", React.createElement("span", { className: "font-normal text-[#9A968D]" }, `(${g.rows.length})`)),
+          React.createElement("div", { className: "divide-y divide-[#EEEBE5]" }, g.rows.map((x) => {
+            const sure = x.s && x.s.sure;
+            const last = getLastHydroReading(db, x.site.id);
+            return React.createElement(
+              "div",
+              { key: x.site.id, "data-meter-digits": x.site.number, className: `flex items-center gap-3 px-3 py-2 text-sm ${sure ? "" : "bg-[#FBEEDA]/30"}` },
+              React.createElement("input", { type: "checkbox", checked: chosen.has(x.site.id), onChange: () => toggle(x.site.id), className: "accent-[#377249] w-4 h-4 flex-shrink-0", "aria-label": `Set site ${x.site.number}` }),
+              React.createElement("span", { className: "w-14 font-semibold text-[#1E1A13]" }, x.site.number),
+              React.createElement("span", { className: "w-20 text-[#75716A] tabular-nums" }, last ? String(last.reading) : "—"),
+              React.createElement("span", { className: `flex-1 min-w-0 text-[11px] truncate ${sure ? "text-[#75716A]" : "text-[#9A6B1F]"}` }, x.s ? x.s.reason : "No reading yet — check"),
+              React.createElement("select", { value: choice[x.site.id], "aria-label": `Digits for site ${x.site.number}`, onChange: (e) => {
+                const v = e.target.value;
+                setChoice((c) => ({ ...c, [x.site.id]: v }));
+                if (v) setChosen((prev) => new Set(prev).add(x.site.id));
+              }, className: "border border-[#E2DED5] rounded px-2 py-1 text-sm bg-white" }, React.createElement("option", { value: "" }, "?"), METER_DIGIT_CHOICES.map((d) => React.createElement("option", { key: d, value: d }, `${d} digits`)))
+            );
+          }))
+        ))
+      ),
+      error && React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, error)
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, rows.length ? "Cancel" : "Close"),
+      rows.length > 0 && React.createElement("button", { type: "button", disabled: saving || chosen.size === 0, onClick: apply, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Set ${chosen.size} site${chosen.size === 1 ? "" : "s"}`)
+    )
+  );
+}
+// Shown on the reading screen when the site has no digit count yet: asked
+// once, at the meter, then saved on the site for good.
+function suggestedDigitsForEntry(db, site, typed) {
+  const area = HYDRO_AREA_DIGITS[hydroAreaOf(site)];
+  const len = Math.max(String(typed || "").length, longestHydroReading(db, site.id));
+  return Math.min(6, Math.max(4, area && len <= area ? area : len));
+}
 function HydroReadingForm({ db, siteId, onSave, onCancel }) {
   const site = db.sites.find((s) => s.id === siteId);
   const last = getLastHydroReading(db, siteId);
@@ -15748,18 +15872,26 @@ function HydroReadingForm({ db, siteId, onSave, onCancel }) {
   const [reading, setReading] = useState("");
   const [date, setDate] = useState(todayISO());
   const [closing, setClosing] = useState(false);
+  const askDigits = Boolean(site && !site.meterDigits);
+  const [digitsPicked, setDigitsPicked] = useState(null);
+  const digits = site && site.meterDigits ? site.meterDigits : askDigits && reading !== "" ? digitsPicked || suggestedDigitsForEntry(db, site, reading) : null;
   const readingNum = Number(reading);
   const valid = reading !== "" && Number.isFinite(readingNum) && readingNum >= 0;
-  const preview = valid ? computeHydroUsage(base ? base.reading : null, readingNum, site == null ? void 0 : site.meterDigits) : null;
+  const preview = valid ? computeHydroUsage(base ? base.reading : null, readingNum, digits) : null;
   const willFlag = base && valid && readingNum < base.reading;
   const submit = () => {
     if (!valid) return;
-    onSave(siteId, readingNum, date, { closing });
+    onSave(siteId, readingNum, date, { closing, meterDigits: askDigits ? digits : null });
   };
   return /* @__PURE__ */ React.createElement("div", null, last ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Last reading: ", /* @__PURE__ */ React.createElement("strong", null, last.reading), " on ", last.date) : /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "No previous reading on file for this site \u2014 this will be saved as the baseline reading."), /* @__PURE__ */ React.createElement(Field, { label: "Reading Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Current Meter Reading" }, /* @__PURE__ */ React.createElement("input", { type: "text", inputMode: "numeric", pattern: "[0-9]*", className: inputCls + " text-2xl py-3 tracking-wide", value: reading, onChange: (e) => setReading(e.target.value.replace(/[^0-9]/g, "")), placeholder: "e.g. 4213", autoFocus: true })), React.createElement("label", { className: "flex items-start gap-2 text-sm text-[#4B4740] mb-3" }, React.createElement("input", { type: "checkbox", className: "mt-1", checked: closing, onChange: (e) => setClosing(e.target.checked) }), React.createElement("span", null, React.createElement("b", null, "Closing reading"), " \u2014 the cottage is being sold. This bill goes to the current owner", (() => {
     const o = site ? getSiteOwner(db, site.id) : null;
     return o ? ` (${o.name})` : "";
-  })(), ", even if the sale is recorded before it's reviewed.")), willFlag && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, (site == null ? void 0 : site.meterDigits) ? `This is lower than the last reading \u2014 looks like the meter rolled over. Estimated usage: ${preview.usage} kWh. This will be flagged for accounting to double check.` : "This is lower than the last reading and this site has no meter digit count set, so usage can't be calculated automatically. This will be flagged for accounting to review manually."), !willFlag && preview && preview.usage != null && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Usage since last reading: ", preview.usage, " kWh"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Save Reading")));
+  })(), ", even if the sale is recorded before it's reviewed.")), askDigits && reading !== "" && React.createElement(
+    "div",
+    { className: "rounded-lg border border-[#E8C98F] bg-[#FFFBF3] px-3 py-2 mb-3", "data-digit-picker": true },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, React.createElement("b", null, "How many digits on this meter?"), " Count every wheel, including any 0s at the start. Only asked once."),
+    React.createElement("div", { className: "flex gap-2" }, METER_DIGIT_CHOICES.map((d) => React.createElement("button", { key: d, type: "button", "aria-pressed": digits === d, onClick: () => setDigitsPicked(d), className: `flex-1 py-2 rounded-lg border text-base font-semibold ${digits === d ? "bg-[#377249] border-[#377249] text-white" : "bg-white border-[#E2DED5] text-[#4B4740]"}` }, d)))
+  ), willFlag && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-3" }, digits ? `This is lower than the last reading \u2014 looks like the meter rolled over. Estimated usage: ${preview.usage} kWh. This will be flagged for accounting to double check.` : "This is lower than the last reading and this site has no meter digit count set, so usage can't be calculated automatically. This will be flagged for accounting to review manually."), !willFlag && preview && preview.usage != null && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Usage since last reading: ", preview.usage, " kWh"), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, disabled: !valid, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, "Save Reading")));
 }
 // One activity-log line per person per day for hydro readings (e.g.
 // "Logged 57 hydro readings today (40 baseline, 2 flagged)"), updated as
@@ -15943,6 +16075,8 @@ function HydroSiteCard({ site, owner, last, onEnterReading, onViewHistory }) {
 }
 function HydroMeterView({ db, persist }) {
   const actor = useCurrentActor();
+  const [digitsOpen, setDigitsOpen] = useState(false);
+  const digitsMissing = (db.sites || []).filter((x) => isHydroTrackedSite(x) && !x.meterDigits).length;
   const [filter, setFilter] = useState("");
   const [entrySiteId, setEntrySiteId] = useState(null);
   const [historySiteId, setHistorySiteId] = useState(null);
@@ -15983,7 +16117,10 @@ function HydroMeterView({ db, persist }) {
     if (!site) return;
     const last = getHydroBillingBase(db, siteId);
     const previousReading = last ? last.reading : null;
-    const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits);
+    const newDigits = !site.meterDigits && opts && opts.meterDigits ? opts.meterDigits : null;
+    if (newDigits) saveSiteMeterDigits(site.id, newDigits).catch(() => {
+    });
+    const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits || newDigits);
     const isBaseline = previousReading == null;
     const flagged = !isBaseline && readingValue < previousReading;
     const record = {
@@ -16016,7 +16153,7 @@ function HydroMeterView({ db, persist }) {
     setToast(isBaseline ? `Baseline reading saved for site ${site.number}` : `Reading saved for site ${site.number} \u2014 sent for accounting review${flagged ? " (flagged)" : ""}`);
     if (searchRef.current) searchRef.current.focus();
   };
-  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13] mb-5" }, "Hydro Readings"), /* @__PURE__ */ React.createElement("input", {
+  return /* @__PURE__ */ React.createElement("div", null, toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }), React.createElement("div", { className: "flex items-center justify-between gap-2 flex-wrap mb-5" }, React.createElement("h2", { className: "font-serif text-xl text-[#1E1A13]" }, "Hydro Readings"), digitsMissing > 0 && React.createElement("button", { type: "button", onClick: () => setDigitsOpen(true), className: "px-3 py-1.5 text-sm rounded-md border border-[#E8C98F] bg-[#FFFBF3] text-[#9A6B1F] font-medium hover:bg-[#FBEEDA]" }, `Set meter digits \u00B7 ${digitsMissing} site${digitsMissing === 1 ? "" : "s"}`)), digitsOpen && React.createElement(MeterDigitsModal, { db, persist, onClose: () => setDigitsOpen(false) }), /* @__PURE__ */ React.createElement("input", {
     ref: searchRef,
     type: "text",
     value: filter,
@@ -19101,7 +19238,10 @@ function FieldHydroPadScreen({ db, persist, actor, siteId, setToast, onSaved, on
   const save = (id, readingValue, dateValue, opts) => {
     const last = getHydroBillingBase(db, id);
     const previousReading = last ? last.reading : null;
-    const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits);
+    const newDigits = !site.meterDigits && opts && opts.meterDigits ? opts.meterDigits : null;
+    if (newDigits) saveSiteMeterDigits(site.id, newDigits).catch(() => {
+    });
+    const { usage, rolledOver } = computeHydroUsage(previousReading, readingValue, site.meterDigits || newDigits);
     const isBaseline = previousReading == null;
     const flagged = !isBaseline && readingValue < previousReading;
     const record = {
