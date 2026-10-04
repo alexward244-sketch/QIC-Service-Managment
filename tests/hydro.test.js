@@ -355,3 +355,23 @@ test("A reading typed with a leading 0 keeps it: it counts toward the meter's di
   assert.equal(r.readingText, "00950");
   await page.close();
 });
+
+test("Each reading in a site's history shows who owned the site when it was read", async () => {
+  await resetData({
+    ...base("office"),
+    "customers/c2": { id: "c2", name: "Bea Buyer", email: "bea@x.com", siteIds: ["s42"] },
+    "customers/c1": { id: "c1", name: "Robert Smith", email: "rsmith@x.com", siteIds: [] },
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-05-01", reading: 1000, status: "confirmed", isBaseline: true, ownerAtReading: "c1" },
+    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-08-01", reading: 1200, previousReading: 1000, usage: 200, status: "invoiced", closingReading: true, ownerAtReading: "c1" },
+    "hydroReadings/c": { id: "c", siteId: "s42", date: "2026-10-01", reading: 1300, previousReading: 1200, usage: 100, status: "pending", ownerAtReading: "c2" }
+  });
+  const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
+  await mountWithDb(page, asUser("HydroMeterView"), READY(3));
+  await openSection(page);
+  await page.getByRole("button", { name: "History" }).first().click();
+  const table = page.locator("table:visible").filter({ has: page.getByRole("columnheader", { name: "Usage (kWh)" }) }).first();
+  await table.waitFor();
+  const rows = await table.locator("tbody tr").allInnerTexts();
+  assert.deepEqual(rows.map((t) => t.split("\t").slice(0, 3).join(" | ")), ["2026-10-01 | 1300 | Bea Buyer", "2026-08-01 | 1200 | Robert Smith", "2026-05-01 | 1000 | Robert Smith"]);
+  await page.close();
+});
