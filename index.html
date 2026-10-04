@@ -15676,8 +15676,14 @@ function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
 }
-function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmount, total, taxRate, db) {
+// meter: { previousReading, previousDate, currentReading, currentDate,
+// rolledOver } - the bill shows both readings and their dates as well as
+// the usage.
+function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmount, total, taxRate, db, meter) {
   const company = getCompanyProfile(db);
+  const m = meter || {};
+  const readingRow = (label, value, date) => value == null ? "" : `<tr><td style="padding:4px 0;color:#75716A;">${label}${date ? ` <span style="font-size:12px;">(${escapeHtml(winterShortDate(date, { year: "numeric", month: "short", day: "numeric" }) || date)})</span>` : ""}</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${escapeHtml(String(value))}</td></tr>`;
+  const meterRows = readingRow("Previous reading", m.previousReading, m.previousDate) + readingRow("Current reading", m.currentReading, m.currentDate);
   return `
   <meta name="color-scheme" content="light">
   <meta name="supported-color-schemes" content="light">
@@ -15697,7 +15703,8 @@ function buildHydroInvoiceEmailText(site, owner, usage, rate, subtotal, taxAmoun
         <tr><td style="padding:2px 0;color:#75716A;">Site</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${escapeHtml(site.number)}</td></tr>
       </table>
       <table style="width:100%;font-size:14px;border-top:1px solid #E2DED5;padding-top:4px;">
-        <tr><td style="padding:4px 0;color:#75716A;">Usage</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${usage} kWh</td></tr>
+        ${meterRows}
+        <tr><td style="padding:4px 0;color:#75716A;">Usage${m.rolledOver ? ` <span style="font-size:12px;">(meter rolled over)</span>` : ""}</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${usage} kWh</td></tr>
         <tr><td style="padding:4px 0;color:#75716A;">Rate</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${rate}\u00A2/kWh</td></tr>
         <tr><td style="padding:4px 0;color:#75716A;border-top:1px solid #E2DED5;">Subtotal (${usage} kWh \u00D7 ${rate}\u00A2)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;border-top:1px solid #E2DED5;">${formatPrice(subtotal)}</td></tr>
         <tr><td style="padding:4px 0;color:#75716A;">Tax (${taxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(taxAmount)}</td></tr>
@@ -16314,6 +16321,10 @@ function HydroReviewView({ db, persist }) {
     let activityLog = addLog(db, actor, `Confirmed hydro reading and sent invoice for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`);
     persist({ ...db, activityLog });
     const owner = hydroBillTo(db, reading);
+    // The last billed (or baseline) reading before this one - carried
+    // readings in between weren't billed, so the bill starts from it.
+    const earlier = siteReadings(reading.siteId).filter((x) => x.id !== reading.id && x.status !== "carried" && (x.date < final.date || x.date === final.date && x.id < reading.id)).sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : -1)[0];
+    const meter = { previousReading: reading.previousReading != null ? reading.previousReading : earlier ? earlier.reading : null, previousDate: earlier ? earlier.date : null, currentReading: final.reading, currentDate: final.date, rolledOver: final.rolledOver };
     const recipientEmail = toEmail || (owner == null ? void 0 : owner.email);
     const copyEmail = getAccountingCopyEmail(db);
     if (EMAIL_ENABLED && owner && recipientEmail) {
@@ -16321,7 +16332,7 @@ function HydroReviewView({ db, persist }) {
         toEmail: recipientEmail,
         toName: owner.name,
         subject: `Hydro Bill \u2014 Site ${site.number}`,
-        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
+        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db, meter),
         department: "accounting",
         source: "Hydro invoice email"
       }).catch(() => {
@@ -16334,7 +16345,7 @@ function HydroReviewView({ db, persist }) {
         toEmail: copyEmail,
         toName: "Accounting",
         subject: `Copy: Hydro Bill \u2014 Site ${site.number}${(owner == null ? void 0 : owner.name) ? ` (${owner.name})` : ""}`,
-        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db),
+        message: buildHydroInvoiceEmailText(site, owner, final.usage, rate, subtotal, taxAmount, total, taxRate, db, meter),
         // From the service inbox so it lands unread in accounting's Zoho.
         department: "service",
         source: "Hydro invoice copy email"
