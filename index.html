@@ -15810,6 +15810,9 @@ function HydroRateControl({ db, persist }) {
 // don't fit is marked "check" rather than assumed (most of Limestone South
 // is 5 but a couple are 4; the original park is 4 with a few 5s).
 const HYDRO_AREA_DIGITS = { "Front of Park": 4, "Limestone South": 5, "Pebble Beach": 5 };
+// Areas where every meter has the area's digit count - a shorter reading
+// there is a dropped leading 0, not a smaller meter.
+const HYDRO_AREA_DIGITS_CERTAIN = new Set(["Pebble Beach"]);
 const METER_DIGIT_CHOICES = [4, 5, 6];
 function hydroAreaOf(site) {
   const group = groupSitesByHydroRange([site])[0];
@@ -15833,13 +15836,14 @@ function hydroDigitsFromLeadingZero(db, siteId) {
   return r ? { digits: hydroReadingText(r).length, text: hydroReadingText(r) } : null;
 }
 // Suggested digit count for one site: { digits, sure, reason }.
-function suggestMeterDigitsFor(db, site, areaDefault) {
+function suggestMeterDigitsFor(db, site, areaDefault, certain) {
   const zero = hydroDigitsFromLeadingZero(db, site.id);
   if (zero && zero.digits >= 4) return { digits: zero.digits, sure: true, reason: `Reading entered as ${zero.text} (${zero.digits} digits)` };
   const len = longestHydroReading(db, site.id);
-  if (!len) return areaDefault ? { digits: areaDefault, sure: false, reason: `No reading yet — most of this area is ${areaDefault}` } : null;
+  if (!len) return areaDefault ? { digits: areaDefault, sure: Boolean(certain), reason: certain ? `Every meter in this area is ${areaDefault} digits` : `No reading yet — most of this area is ${areaDefault}` } : null;
   if (!areaDefault || len === areaDefault) return { digits: Math.max(len, 4), sure: len >= 4, reason: len >= 4 ? `Reading has ${len} digits` : `Reading has only ${len} digits — check` };
   if (len > areaDefault) return { digits: len, sure: true, reason: `Reading has ${len} digits (more than most of this area)` };
+  if (certain) return { digits: areaDefault, sure: true, reason: `Every meter in this area is ${areaDefault} digits` };
   return { digits: areaDefault, sure: false, reason: `Reading has ${len} digits — a ${len}-digit meter, or a leading 0 on a ${areaDefault}-digit one? Check` };
 }
 // Every hydro site without a digit count, grouped by area, with a suggestion.
@@ -15857,7 +15861,8 @@ function meterDigitSuggestions(db) {
       const top = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
       areaDefault = top ? Number(top) : null;
     }
-    return { label: g.label, rows: g.sites.map((site) => ({ site, s: suggestMeterDigitsFor(db, site, areaDefault) })) };
+    const certain = HYDRO_AREA_DIGITS_CERTAIN.has(g.label);
+    return { label: g.label, rows: g.sites.map((site) => ({ site, s: suggestMeterDigitsFor(db, site, areaDefault, certain) })) };
   });
 }
 function saveSiteMeterDigits(siteId, digits) {
