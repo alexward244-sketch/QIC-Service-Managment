@@ -204,3 +204,25 @@ test("The reading screen asks once how many digits the meter has, and works out 
   assert.equal(r.rolledOver, true);
   await page.close();
 });
+
+test("The hydro bill email shows the previous and current readings with their dates, as well as the usage", async () => {
+  await resetData({
+    ...base("accounting"),
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-06-01", reading: 1000, status: "confirmed", isBaseline: true },
+    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-07-01", reading: 1012, previousReading: 1000, usage: 12, status: "carried" },
+    "hydroReadings/c": { id: "c", siteId: "s42", date: "2026-09-20", reading: 1250, previousReading: 1000, usage: 250, status: "pending", ownerAtReading: "c1" }
+  });
+  const page = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await page.evaluate(() => { window.__sent = []; window.sendEmail = async (o) => { window.__sent.push(o); }; });
+  await mountWithDb(page, asUser("HydroReviewView"), READY(3));
+  await page.getByRole("button", { name: "Confirm & Send Invoice" }).click();
+  await page.getByRole("button", { name: "Yes, send" }).click();
+  await page.waitForFunction(() => window.__sent.length > 0);
+  const mail = await page.evaluate(() => window.__sent.find((m) => m.toEmail === "rsmith@x.com"));
+  const text = mail.message.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  // Measured from the last billed reading (June), not the carried one.
+  assert.match(text, /Previous reading \(Jun 1, 2026\) 1000/);
+  assert.match(text, /Current reading \(Sep 20, 2026\) 1250/);
+  assert.match(text, /Usage 250 kWh/);
+  await page.close();
+});
