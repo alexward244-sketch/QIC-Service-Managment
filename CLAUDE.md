@@ -91,6 +91,14 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   invoices. Payments are tracked in the accounting software, not the app.
 - The bill must show previous and current readings (with dates) and usage.
 
+**Parts**
+- Each part is its own document in the `parts` collection (not in
+  campground/data). `persist()` writes only parts a screen changed, stock
+  changes go as `FieldValue.increment` (`withStockChange` / `_stockDelta`),
+  and a part is deleted only when moved to Trash in the same save. An old
+  copy on a device that lost signal once wiped everyone's SKUs - don't go
+  back to writing the whole list.
+
 **Customers**
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".

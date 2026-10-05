@@ -108,6 +108,9 @@ service cloud.firestore {
     match /correspondence/{id} { allow read, write: if isSignedIn(); }
     match /sites/{id} { allow read, write: if isSignedIn(); }
     match /cottages/{id} { allow read, write: if isSignedIn(); }
+    // Parts (moved out of campground/data so a save can't wipe other
+    // people's part edits): any signed-in user, as before.
+    match /parts/{id} { allow read, write: if isSignedIn(); }
     // Hydro readings: anyone can enter one (office meter screen, field
     // hydro pad); confirming and invoicing it happens on the Hydro Review
     // screen, which only Accounting and Admin have.
