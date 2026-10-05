@@ -717,6 +717,20 @@ test("customers: fix couple names suggests the house style, only after review", 
   await page.close();
 });
 
+test("correspondence: email bodies are shown without the disclaimer, the park's signature block or Zoho's blank-looking lines", async () => {
+  const page = await openApp(browser, "stub");
+  const zoho = "Hello Wayne,\n\nI can get a work order going.\n\n \n\nLet me know if you would like us to proceed.\n\n \n\nThank you\n\nService Department \n\nQuinte’s Isle Campark     \n\nservice@qicampark.com \n\nwww.qicampark.com  \n\nPhone: 613-476-6310 \n\nBook Now\n\n \n\nThe information contained in this email message is solely for the intended addressee.  This message may contain confidential and/or privileged material.  If you have received this message in error, please notify me immediately and destroy the message.  Thank you.";
+  const out = await page.evaluate((t) => [
+    displayEmailBody(t),
+    displayEmailBody("Thanks, see you Tuesday.\n\nJohn Smith\nPhone: 613-555-1212"),
+    displayEmailBody("We love Quinte's Isle Campark.\n\nService Department")
+  ], zoho);
+  assert.equal(out[0], "Hello Wayne,\n\nI can get a work order going.\n\nLet me know if you would like us to proceed.\n\nThank you");
+  assert.equal(out[1], "Thanks, see you Tuesday.\n\nJohn Smith\nPhone: 613-555-1212", "a customer's own signature is left alone");
+  assert.equal(out[2], "We love Quinte's Isle Campark.\n\nService Department", "one signature-like line on its own isn't removed");
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
