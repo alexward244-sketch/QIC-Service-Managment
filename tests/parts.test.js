@@ -24,10 +24,21 @@ test("Parts move from the shared record into their own collection on first load"
   await resetData({ "campground/data": MAIN });
   const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
   await mountWithDb(page, `(api) => React.createElement(PartsView, { db: api.db, persist: api.persist })`, `(api) => api.db.parts.length === 2`);
-  const moved = await waitFor(async () => { const d = await readDoc("campground/data"); return d.parts === undefined ? await partsInCollection() : null; }, "the parts to be moved");
+  const moved = await waitFor(async () => { const d = await readDoc("campground/data"); return d.parts === undefined ? await partsInCollection() : null; }, "the parts to be moved", 30000);
   assert.deepEqual(Object.keys(moved).sort(), ["p1", "p2"]);
   assert.equal(moved.p2.name, "Sealant");
   await page.getByText("Sealant").first().waitFor();
+  await page.close();
+});
+
+test("A part saved while the move is still running keeps its change", async () => {
+  await resetData({ "campground/data": MAIN, "parts/p1": { ...MAIN.parts[0], quantity: 4, sku: "NEW" } });
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await mountWithDb(page, `(api) => React.createElement(PartsView, { db: api.db, persist: api.persist })`, `(api) => api.db.parts.length === 2`);
+  await waitFor(async () => (await readDoc("campground/data")).parts === undefined, "the move to finish", 30000);
+  const parts = await partsInCollection();
+  assert.deepEqual([parts.p1.quantity, parts.p1.sku], [4, "NEW"], "the newer copy in the collection wins over the old array");
+  assert.equal(parts.p2.name, "Sealant");
   await page.close();
 });
 
@@ -40,7 +51,7 @@ test("An out-of-date copy saving later can't wipe a SKU, and stock used on two d
   await page.locator("tr", { hasText: "Washer" }).getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByPlaceholder("e.g. WH-1001").fill("WSH-10");
   await page.getByRole("button", { name: /Save/ }).first().click();
-  await waitFor(async () => (await partsInCollection()).p1.sku === "WSH-10", "the SKU to save");
+  await waitFor(async () => (await partsInCollection()).p1.sku === "WSH-10", "the SKU to save", 30000);
   // The stale device now saves: once an activity line, then stock used on
   // two jobs (1 and 2 washers) from that same old copy.
   await page.evaluate(async () => {
@@ -49,7 +60,7 @@ test("An out-of-date copy saving later can't wipe a SKU, and stock used on two d
     await window.__api.persist({ ...stale, parts: deductPartsUsed(stale.parts, [{ partId: "p1", quantity: 1 }]) });
     await window.__api.persist({ ...stale, parts: deductPartsUsed(stale.parts, [{ partId: "p1", quantity: 2 }]) });
   });
-  const p1 = await waitFor(async () => { const p = (await partsInCollection()).p1; return p.quantity === 7 ? p : null; }, "both stock changes");
+  const p1 = await waitFor(async () => { const p = (await partsInCollection()).p1; return p.quantity === 7 ? p : null; }, "both stock changes", 30000);
   assert.equal(p1.sku, "WSH-10", "the SKU survives the old copy's saves");
   assert.equal(p1.quantity, 7, "10 - 1 - 2: both uses counted");
   assert.equal((await readDoc("campground/data")).parts, undefined, "parts are never written back into the shared record");

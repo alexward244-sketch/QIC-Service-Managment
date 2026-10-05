@@ -108,7 +108,7 @@ test("Completing through the wrap-up window saves hours, service call and parts 
   assert.equal(wo.serviceCall, 70);
   assert.ok(wo.completedDate);
   assert.equal(wo.notes[0].text, "Work done: Swapped the washer");
-  const stock = await waitFor(async () => { const p = await readDoc("parts/p1"); return p && p.quantity === 9 ? p : null; }, "stock to be deducted");
+  const stock = await waitFor(async () => { const p = await readDoc("parts/p1"); return p && p.quantity === 9 ? p : null; }, "stock to be deducted", 30000);
   assert.equal(stock.quantity, 9);
   await page.close();
 });

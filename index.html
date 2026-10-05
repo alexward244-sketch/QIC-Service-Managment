@@ -1813,7 +1813,21 @@ function useDb() {
     const inCollection = new Set(partsList.map((p) => p.id));
     const trashed = new Set(((mainData && mainData.trash) || []).filter((t) => t && t.type === "part" && t.data).map((t) => t.data.id));
     const toMove = legacy.filter((p) => p && p.id && !inCollection.has(p.id) && !trashed.has(p.id));
-    commitInChunks(toMove.map((p) => ({ type: "set", ref: PARTS_REF.doc(p.id), data: p }))).then(() => db_.runTransaction(async (tx) => {
+    // Each part is created only if it doesn't exist yet, checked inside a
+    // transaction - a part someone saved (or used stock of) in the moments
+    // since the list loaded is never put back to the old array's copy.
+    const createMissing = async () => {
+      for (let i = 0; i < toMove.length; i += 200) {
+        const chunk = toMove.slice(i, i + 200);
+        await db_.runTransaction(async (tx) => {
+          const snaps = await Promise.all(chunk.map((p) => tx.get(PARTS_REF.doc(p.id))));
+          snaps.forEach((snap, j) => {
+            if (!snap.exists) tx.set(PARTS_REF.doc(chunk[j].id), firestoreSafe(chunk[j]));
+          });
+        });
+      }
+    };
+    createMissing().then(() => db_.runTransaction(async (tx) => {
       const snap = await tx.get(DOC_REF);
       const current = (snap.exists && snap.data().parts) || [];
       const moved = new Set([...inCollection, ...trashed, ...toMove.map((p) => p.id)]);
