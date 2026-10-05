@@ -1170,9 +1170,17 @@ exports.serviceCorrespondence = onRequest(
       let effectiveFrom = fromEmail;
       let forwardedBy = null;
       let fromStaff = false;
-      const isForward = looksForwarded(body.subject, plainBody);
+      // A reply ("Re: ...", including "Re: Fwd: ...") from our own domain
+      // is a reply going out with the earlier messages quoted under it -
+      // e.g. a reply sent from Zoho to a customer echoing back into the
+      // inbox - never a forward. Its quoted "From: customer / Sent: ..."
+      // header must not be read as a forwarded sender, or our own reply is
+      // filed as a new email from the customer. (Replies sent from Zoho are
+      // already recorded by zohoSentMail.)
+      const isReplySubject = /^\s*re\s*:/i.test(toStr(body.subject));
+      const isForward = !isReplySubject && looksForwarded(body.subject, plainBody);
       if (isInternalSender(fromEmail)) {
-        const forwardedSender = extractForwardedSender(plainBody);
+        const forwardedSender = isReplySubject ? null : extractForwardedSender(plainBody);
         if (forwardedSender && !isInternalSender(forwardedSender)) {
           effectiveFrom = forwardedSender;
           forwardedBy = fromEmail;

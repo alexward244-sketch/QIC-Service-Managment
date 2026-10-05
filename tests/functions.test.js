@@ -49,6 +49,12 @@ test("incoming email: forwards keep their content, staff mail comes in, our own 
   await send("sales@qicampark.com", "Site 12", "Please call the Smiths about their deck.");
   const skipped = await send("service@qicampark.com", "Re: Deck", "Thanks!");
   assert.equal(skipped.body.reason, "skipped-sender");
+  // Our own reply (sent from Zoho) echoing back with the customer's email
+  // quoted under it is still ours - not a forward from the customer.
+  const echo = await send("service@qicampark.com", "Re: Service Inquiry", "Hello Wayne,\n\nI can get a work order going.\n\nFrom: Wayne McKinnon <waynemckinnon5@icloud.com>\nSent: Saturday\nTo: service@qicampark.com\nSubject: Service Inquiry\n\nWater leak in the sunroom.");
+  assert.equal(echo.body.reason, "skipped-sender");
+  const echoFwd = await send("service@qicampark.com", "Re: Fwd: Deck quote", "Booked for Tuesday.\n\n---------- Forwarded message ---------\nFrom: Bob <bob@builders.ca>\nDate: Mon\n\nThe deck needs 3 new joists.");
+  assert.equal(echoFwd.body.reason, "skipped-sender");
   const mail = await all("correspondence");
   const by = (pred) => mail.find(pred);
   assert.match(by((m) => m.subject === "Fwd: Deck quote").body, /3 new joists/, "a customer's forward keeps the forwarded part");
