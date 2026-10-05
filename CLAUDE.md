@@ -86,8 +86,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - A reading below the last billed one is an under-read (over-read last
   bill), not a rollover, when the "rollover" would exceed half the meter's
   range → "Hold until it passes …". Keep this quiet from the customer.
-- Hydro bills are numbered HYD-0001…, separate from service invoices
-  (INV-). Payments are tracked in the accounting software, not the app.
+- Invoice numbers carry the year and restart each January: INV-26-0010,
+  INV-27-0001; hydro bills the same (HYD-26-0001), separate from service
+  invoices. Payments are tracked in the accounting software, not the app.
 - The bill must show previous and current readings (with dates) and usage.
 
 **Customers**

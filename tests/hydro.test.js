@@ -249,7 +249,8 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
     ...base("accounting"),
     "sites/s43": { id: "s43", number: "43", tags: ["Seasonal"] },
     "customers/c3": { id: "c3", name: "Nora North", email: "nora@x.com", siteIds: ["s43"] },
-    "hydroReadings/old": { id: "old", siteId: "s42", date: "2026-05-01", reading: 900, status: "invoiced", invoiceNumber: "HYD-0007", confirmedUsage: 10, rate: 18.5, taxAmount: 0.24, amount: 2.09 },
+    // A bill numbered before the year was added counts toward its year.
+    "hydroReadings/old": { id: "old", siteId: "s42", date: `${new Date().getFullYear()}-01-02`, reading: 900, status: "invoiced", invoiceNumber: "HYD-0007", confirmedUsage: 10, rate: 18.5, taxAmount: 0.24, amount: 2.09 },
     "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-06-01", reading: 1000, status: "confirmed", isBaseline: true },
     "hydroReadings/c": { id: "c", siteId: "s42", date: "2026-09-20", reading: 1250, previousReading: 1000, usage: 250, status: "pending", ownerAtReading: "c1" },
     "hydroReadings/d": { id: "d", siteId: "s43", date: "2026-09-21", reading: 2100, previousReading: 2000, usage: 100, status: "pending", ownerAtReading: "c3" }
@@ -275,7 +276,8 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
     const c = list.find((x) => x.id === "c"), d = list.find((x) => x.id === "d");
     return c.emailStatus && c.emailStatus !== "sending" && d.emailStatus && d.emailStatus !== "sending" ? { c, d } : null;
   }, "both bills");
-  assert.deepEqual([done.c.invoiceNumber, done.d.invoiceNumber].sort(), ["HYD-0008", "HYD-0009"]);
+  const yy = String(new Date().getFullYear()).slice(2);
+  assert.deepEqual([done.c.invoiceNumber, done.d.invoiceNumber].sort(), [`HYD-${yy}-0008`, `HYD-${yy}-0009`]);
   assert.equal(done.c.emailStatus, "sent");
   assert.equal(done.c.emailedTo, "rsmith@x.com");
   assert.equal(done.d.emailStatus, "failed");

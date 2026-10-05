@@ -756,6 +756,28 @@ test("invoices: payment instructions keep line breaks and make links and email a
   await page.close();
 });
 
+test("invoices: numbers carry the year and start over each January; the email asks to include the number when something is owed", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { invoices: [{ invoiceNumber: "INV-0009", date: "2026-09-01" }, { invoiceNumber: "INV-0031", date: "2025-11-01" }] };
+    const owed = { invoiceNumber: "INV-26-0010", date: "2026-10-05", lineItems: [{ description: "Sealant", quantity: 1, unitPrice: 50 }], taxRate: 13 };
+    const paid = { ...owed, invoiceNumber: "INV-26-0011", depositAmount: 56.5, paidInFullDate: "2026-10-05" };
+    const text = (h) => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const d = { settings: {}, sites: [], cottages: [], customers: [] };
+    return [
+      nextInvoiceNumber(db, "2026-10-05"),
+      nextInvoiceNumber({ invoices: [...db.invoices, { invoiceNumber: "INV-26-0010", date: "2026-10-05" }] }, "2026-10-06"),
+      nextInvoiceNumber({ invoices: [{ invoiceNumber: "INV-26-0099", date: "2026-12-30" }] }, "2027-01-04"),
+      nextHydroInvoiceNumber({ hydroReadings: [{ invoiceNumber: "HYD-0004", invoicedAt: "2026-09-01" }] }, "2026-10-05"),
+      /Please include INV-26-0010 with your payment/.test(text(buildInvoiceEmailText(owed, d, 13))),
+      /Please include/.test(text(buildInvoiceEmailText(paid, d, 13))),
+      /Please include INV-26-0010 with your payment/.test(text(buildInvoiceHtml(owed, d, 13)))
+    ];
+  });
+  assert.deepEqual(out, ["INV-26-0010", "INV-26-0011", "INV-27-0001", "HYD-26-0005", true, false, true]);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
