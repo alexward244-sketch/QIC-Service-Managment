@@ -987,6 +987,8 @@ async function trashZohoCopy(c) {
     if (zohoNotAllowed(moved)) return { notAllowed: true };
     throw new Error(`Zoho wouldn't move it to Trash (${moved.status}): ${toStr(moved.body).slice(0, 200)}`);
   }
+  // Already gone from the app: the Trash check needn't look at it.
+  await ZOHO_SENT_STATE.set({ trashSeen: admin.firestore.FieldValue.arrayUnion(toStr(best.messageId)) }, { merge: true });
   return { moved: 1 };
 }
 
@@ -1057,7 +1059,18 @@ async function syncZohoTrash(accessToken) {
       target = best ? best.ref : null;
     }
     if (target) {
+      const snap = await target.get();
+      const c = { id: snap.id, ...snap.data() };
       await target.delete();
+      // Kept in the app's Trash, like an email deleted in the app.
+      await ROLES_DOC.set({ trash: admin.firestore.FieldValue.arrayUnion({
+        id: `zoho_trash_${m.messageId}`,
+        type: "correspondence",
+        data: c,
+        label: `Email — ${c.subject || "(no subject)"}`,
+        deletedAt: new Date().toISOString(),
+        deletedIn: "Zoho"
+      }) }, { merge: true });
       removed++;
     }
   }

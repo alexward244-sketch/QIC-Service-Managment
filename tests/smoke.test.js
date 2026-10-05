@@ -647,6 +647,29 @@ test("correspondence: every message in a customer's conversation can be deleted 
   await page.close();
 });
 
+test("trash: a deleted email can be read before restoring, and says where it was deleted", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__restored = [];
+    const email = { id: "e1", direction: "in", fromEmail: "anne@x.com", subject: "Leak", body: "The tap leaks.\n\n\n\nThanks, Anne", receivedAt: "2026-10-01T12:00:00Z" };
+    const db = { activityLog: [], trash: [
+      { id: "t1", type: "correspondence", data: email, label: "Email \u2014 Leak", deletedAt: "2026-10-05T12:00:00Z", deletedIn: "Zoho" },
+      { id: "t2", type: "site", data: { id: "s1", number: "0001" }, label: "Site 0001", deletedAt: "2026-10-04T12:00:00Z" }
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(TrashModal, { db, persist() {}, saveCorrespondence: (c) => window.__restored.push(c), onClose() {} }));
+  });
+  await page.getByText("Deleted in Zoho").waitFor();
+  assert.equal(await page.getByRole("button", { name: "View" }).count(), 1, "only emails have View");
+  await page.getByRole("button", { name: "View" }).click();
+  const shown = await page.locator("[data-trash-email]").innerText();
+  assert.match(shown, /From anne@x\.com/);
+  assert.match(shown, /The tap leaks\.\s+Thanks, Anne/);
+  await page.getByRole("button", { name: "Restore" }).first().click();
+  assert.deepEqual(await page.evaluate(() => window.__restored.map((c) => c.id)), ["e1"]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("customers: tidy names takes the site number off the end, only after review", async () => {
   const page = await openApp(browser, "stub");
   const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));

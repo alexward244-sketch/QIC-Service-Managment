@@ -319,6 +319,7 @@ test("deleting an email in the app moves its Zoho copy to Zoho's Trash", async (
 
   assert.deepEqual(await del({ direction: "in", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: true, moved: 1 });
   assert.deepEqual(zoho.moved.pop(), { mode: "moveMessage", messageId: ["z-leak"], destfolderId: "trash1" }, "only the same email - not her other one or an older one");
+  assert.deepEqual((await db.doc("serverState/zohoSentSync").get()).data().trashSeen, ["z-leak"], "the Trash check skips what the app already deleted");
   // A coworker's forward is in Zoho under the coworker.
   assert.deepEqual(await del({ direction: "in", fromEmail: "bob@y.com", forwardedBy: "krista@qicampark.com", subject: "Fwd: Deck", receivedAt: iso(now - 7200e3 + 5e3) }), { ok: true, moved: 1 });
   assert.equal(zoho.moved.pop().messageId[0], "z-fwd");
@@ -359,6 +360,10 @@ test("an email moved to Zoho's Trash is removed from the app", async () => {
   await fns.zohoSentMail();
   assert.deepEqual((await all("correspondence")).map((c) => c.id).sort(), ["in-other"]);
   assert.equal((await all("serverAlerts")).length, 0);
+  // They're kept in the app's Trash, where they can be read or restored.
+  const trash = (await db.doc("campground/data").get()).data().trash;
+  assert.deepEqual(trash.map((t) => [t.type, t.data.id, t.deletedIn]).sort(), [["correspondence", "app-out", "Zoho"], ["correspondence", "in-leak", "Zoho"], ["correspondence", "in-webform", "Zoho"], ["correspondence", "zoho_sent_r1", "Zoho"]]);
+  assert.equal(trash.find((t) => t.data.id === "in-leak").label, "Email — Leak");
 
   // Each trashed message is only looked at once.
   await put({ id: "in-leak", direction: "in", status: "new", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) });
