@@ -792,7 +792,7 @@ test("work order print-off shows the WO number; Cash is a payment option everywh
 test("sites: numbers are written with 4 digits, and \"20\" still finds site 0020", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
-    const sites = [{ id: "a", number: "1" }, { id: "b", number: "20" }, { id: "c", number: "412a" }, { id: "d", number: "K1" }, { id: "e", number: "1316" }, { id: "f", number: "33" }, { id: "g", number: "0033" }];
+    const sites = [{ id: "a", number: "1" }, { id: "b", number: "20" }, { id: "c", number: "412a" }, { id: "d", number: "K1" }, { id: "e", number: "1316" }, { id: "f", number: "33" }, { id: "g", number: "0033" }, { id: "h", number: "5", siteType: "QIC Facility" }];
     return {
       fmt: ["1", "20", "100", "412A", "412a", "1316", "K1", "A", " 7 "].map(formatSiteNumber),
       same: [sameSiteNumber("0020", "20"), sameSiteNumber("Site #20", "0020"), sameSiteNumber("0020", "200"), sameSiteNumber("K1", "k1")],
@@ -802,7 +802,7 @@ test("sites: numbers are written with 4 digits, and \"20\" still finds site 0020
   });
   assert.deepEqual(out.fmt, ["0001", "0020", "0100", "0412A", "0412A", "1316", "K1", "A", "0007"]);
   assert.deepEqual(out.same, [true, true, false, true]);
-  assert.deepEqual(out.todo, ["1>0001", "20>0020", "33>0033!", "412a>0412A"], "a clash with an existing 0033 is flagged, not changed");
+  assert.deepEqual(out.todo, ["1>0001", "20>0020", "33>0033!", "412a>0412A"], "a clash with an existing 0033 is flagged, not changed; park facilities are left alone");
   assert.equal(out.typed, "b");
   await page.close();
 });

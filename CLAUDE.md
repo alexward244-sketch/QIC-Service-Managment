@@ -93,7 +93,7 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 
 **Sites**
 - Site numbers are written with 4 digits (1 -> 0001, 412A -> 0412A; letter
-  sites like A, K1 unchanged) - `formatSiteNumber` on save. Compare site
+  sites like A, K1 and QIC Facility sites unchanged) - `formatSiteNumber` on save. Compare site
   numbers with `sameSiteNumber` / `signupSiteKey` (server: `matchSiteKey`),
   never with `===`, so "site 20" still finds 0020.
 

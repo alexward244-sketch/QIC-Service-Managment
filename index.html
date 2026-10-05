@@ -882,7 +882,8 @@ async function requestWorkOrderSummary(rawNotes) {
   return { resp, data };
 }
 // Site numbers are written with 4 digits: 1 -> 0001, 20 -> 0020,
-// 412A -> 0412A. Letter sites (A, K1) are left as they are.
+// 412A -> 0412A. Letter sites (A, K1) are left as they are, and so are
+// park facilities (QIC Facility sites).
 function formatSiteNumber(value) {
   const t = String(value == null ? "" : value).trim();
   const m = /^(\d+)([A-Za-z]?)$/.exec(t);
@@ -3890,7 +3891,7 @@ function SiteForm({ initial, sites, onSave, onCancel }) {
     const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
     // Spread the original so fields this form doesn't show (seasonal fee
     // history, map position...) aren't lost when a site is edited.
-    onSave({ ...initial || {}, id: (initial == null ? void 0 : initial.id) || uid(), number: formatSiteNumber(number), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null, siteType, rmsSiteId: rmsSiteId.trim() || null });
+    onSave({ ...initial || {}, id: (initial == null ? void 0 : initial.id) || uid(), number: siteType === "QIC Facility" ? number.trim() : formatSiteNumber(number), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null, siteType, rmsSiteId: rmsSiteId.trim() || null });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
@@ -15677,7 +15678,8 @@ function SiteTypeBadge({ site }) {
 // (20 -> 0020) and changes them together once confirmed. A number that
 // would clash with another site (both "20" and "0020" exist) is left out.
 function sitesToFormat(sites) {
-  return (sites || []).filter((x) => x.number && formatSiteNumber(x.number) !== x.number.trim()).map((x) => ({ site: x, after: formatSiteNumber(x.number) }))
+  // Park facilities keep their numbers as they are.
+  return (sites || []).filter((x) => x.number && !isFacilitySite(x) && formatSiteNumber(x.number) !== x.number.trim()).map((x) => ({ site: x, after: formatSiteNumber(x.number) }))
     .map((r) => ({ ...r, clash: (sites || []).some((o) => o.id !== r.site.id && o.number && o.number.trim() === r.after) }))
     .sort((a, b) => a.after.localeCompare(b.after, void 0, { numeric: true }));
 }
@@ -15702,7 +15704,7 @@ function SiteNumberFormatModal({ db, persist, bulkWriteSites, onClose }) {
     rows.length === 0 ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Every site number already has 4 digits.") : React.createElement(
       React.Fragment,
       null,
-      React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${ok.length} site number${ok.length === 1 ? "" : "s"} will change, e.g. 1 → 0001, 20 → 0020, 412A → 0412A. Letter sites (A, K1) stay as they are. Searches, sign-up forms and emails that say "site 20" still find site 0020.`),
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${ok.length} site number${ok.length === 1 ? "" : "s"} will change, e.g. 1 → 0001, 20 → 0020, 412A → 0412A. Letter sites (A, K1) and park facilities stay as they are. Searches, sign-up forms and emails that say "site 20" still find site 0020.`),
       React.createElement(
         "div",
         { className: "max-h-[50vh] overflow-y-auto rounded-lg border border-[#E2DED5] grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 p-3 mb-4 text-sm" },
