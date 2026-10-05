@@ -829,6 +829,27 @@ test("customers: phone numbers are stored as plain digits; Tidy phone numbers fi
   await page.close();
 });
 
+test("customers: the form warns when a typed email is already on file for another customer", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const customers = [
+      { id: "c1", name: "Anne Lee", email: "Anne@X.com" },
+      { id: "c2", name: "Bo Day", email: "bo@y.com", matchEmails: ["bo.work@y.com"] },
+      { id: "c3", name: "Park Office", email: "service@qicampark.com" }
+    ];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CustomerForm, { initial: customers[0], sites: [], customers, onSave() {}, onCancel() {} }));
+  });
+  const note = page.getByText("is already on file for");
+  assert.equal(await note.count(), 0, "a customer's own email isn't a duplicate");
+  await page.getByLabel("Email Address").fill(" BO.work@y.com ");
+  await page.getByText('"BO.work@y.com" is already on file for Bo Day').waitFor();
+  await page.getByLabel("Email Address").fill("service@qicampark.com");
+  assert.equal(await note.count(), 0, "park addresses don't warn");
+  await page.getByLabel("Email", { exact: true }).fill("bo@y.com");
+  await page.getByText('"bo@y.com" is already on file for Bo Day').waitFor();
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
