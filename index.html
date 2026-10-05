@@ -17755,6 +17755,13 @@ function CorrespondenceRow({ item, customer, active, onClick, count, hasWorkOrde
 }
 // TODO(design-handoff): who owns a failed send, and what happens at the monthly Zoho task
 // ceiling, are open decisions the handoff flags explicitly — not resolved here.
+// Deleting an email in the app moves its copy in Zoho to Zoho's Trash, so
+// nobody answers it from there. Best effort: problems show up in System
+// Health.
+function trashEmailInZoho(item) {
+  const { direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt } = item;
+  return functions_.httpsCallable("trashEmailInZoho")({ direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt }).catch((e) => console.error("Couldn't move the email to Zoho's Trash:", e));
+}
 function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice }) {
   const actor = useCurrentActor();
   const [selectedId, setSelectedId] = useState(null);
@@ -17853,6 +17860,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     const entry = { id: uid(), type: "correspondence", data: item, label, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
     persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
     deleteCorrespondence(deleteConfirmId);
+    if (item) trashEmailInZoho(item);
     if (selectedId === deleteConfirmId) {
       setSelectedId(null);
       // Stay on the customer's conversation while it has other messages.
@@ -17971,7 +17979,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
       ...correspondencePrefill(db, creatingTreeFrom, creatingTreeFrom.customerId, "tree")
     }
   }), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" }), deleteConfirmId && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
-    message: "Delete this email? It'll be removed from correspondence.",
+    message: "Delete this email? It'll be removed from correspondence and moved to Zoho's Trash too.",
     onConfirm: confirmDelete,
     onCancel: () => setDeleteConfirmId(null)
   }), cannedRepliesOpen && /* @__PURE__ */ React.createElement(CannedRepliesModal, { db, persist, onClose: () => setCannedRepliesOpen(false) }));

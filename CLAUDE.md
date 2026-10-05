@@ -72,6 +72,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   to a customer, even if one was saved on a customer record.
 - Zoho's `sentDateInGMT` is off by hours — use `receivedTime`.
 - No bulk delete in Correspondence; every message has its own Delete.
+- Deleting an email in the app moves its Zoho copy to Zoho's Trash
+  (`trashEmailInZoho`); an email moved to Zoho's Trash is removed from the
+  app (`zohoSentMail` checks Trash), so nobody answers it twice.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
   signature block, blank lines) — display only, stored body untouched.
 

@@ -617,6 +617,8 @@ test("correspondence: every message in a customer's conversation can be deleted 
   await page.evaluate(() => {
     window.__deleted = [];
     window.__persisted = [];
+    window.__calls = [];
+    window.__callable = async (name, data) => { window.__calls.push([name, data]); return { data: { ok: true } }; };
     let db = { settings: {}, activityLog: [], trash: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
       correspondence: [
         { id: "a", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "First", body: "Older message", receivedAt: "2026-10-01T12:00:00Z" },
@@ -637,6 +639,8 @@ test("correspondence: every message in a customer's conversation can be deleted 
   assert.deepEqual(await page.evaluate(() => window.__deleted), ["b"]);
   const trash = await page.evaluate(() => window.__persisted[window.__persisted.length - 1].trash);
   assert.equal(trash[0].data.id, "b");
+  const calls = await page.evaluate(() => window.__calls);
+  assert.deepEqual(calls.map(([n, d]) => [n, d.direction, d.toEmail, d.subject, d.receivedAt]), [["trashEmailInZoho", "out", "anne@x.com", "Re: First", "2026-10-01T13:00:00Z"]], "its copy in Zoho goes to Zoho's Trash too");
   await card("Older message").waitFor();
   assert.equal(await card("Duplicate copy").count(), 0);
   assert.deepEqual(page.pageErrors, []);
