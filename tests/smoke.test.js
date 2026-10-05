@@ -731,6 +731,16 @@ test("correspondence: email bodies are shown without the disclaimer, the park's 
   await page.close();
 });
 
+test("correspondence: our own addresses never match a customer, even if saved on one by mistake", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const customers = [{ id: "c7", name: "Gary & Lynn, Callaghan", email: "gary@x.com", matchEmails: ["service@qicampark.com", "Jayden@QICampark.com"] }];
+    return [matchCustomerByEmail(customers, "service@qicampark.com"), matchCustomerByEmail(customers, "jayden@qicampark.com"), (matchCustomerByEmail(customers, "GARY@x.com") || {}).id, isParkEmail("info@quintesisle.ca")];
+  });
+  assert.deepEqual(out, [null, null, "c7", true]);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([

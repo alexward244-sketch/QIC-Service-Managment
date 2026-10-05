@@ -239,6 +239,8 @@ exports.checkUserRoles = onCall(async (request) => {
 // other staff email comes in marked as from staff.
 const INTERNAL_DOMAINS = ["qicampark.com", "quintesisle.ca"];
 const DEFAULT_SKIPPED_SENDERS = ["service@qicampark.com"];
+// The inbox's own address.
+const OWN_INBOX = "service@qicampark.com";
 
 async function skippedSenders() {
   const snap = await ROLES_DOC.get();
@@ -927,7 +929,9 @@ exports.zohoSentMail = onSchedule(
 // and any additional emails manually linked over time (matchEmails).
 async function findCustomerByEmail(email) {
   const target = toStr(email).toLowerCase();
-  if (!target) return null;
+  // Our own addresses (service@, a coworker's) never belong to a customer -
+  // even if one got saved on a customer record by mistake.
+  if (!target || isInternalSender(target)) return null;
 
   const [byEmail, byEmail2, byMatchEmails] = await Promise.all([
     db.collection("customers").where("email", "==", target).limit(1).get(),
@@ -947,7 +951,7 @@ async function findCustomerByEmail(email) {
 // new, unlinked one. Uses the most recent such email.
 async function customerFromEarlierEmails(email) {
   const target = toStr(email).trim();
-  if (!target) return null;
+  if (!target || isInternalSender(target)) return null;
   const lower = target.toLowerCase();
   const variants = Array.from(new Set([target, lower]));
   const snaps = await Promise.all(variants.flatMap((v) => [
@@ -1178,6 +1182,15 @@ exports.serviceCorrespondence = onRequest(
       // filed as a new email from the customer. (Replies sent from Zoho are
       // already recorded by zohoSentMail.)
       const isReplySubject = /^\s*re\s*:/i.test(toStr(body.subject));
+      // A reply or forward sent FROM the service inbox's own address is our
+      // own outgoing mail (sent from Zoho) echoing back in -
+      // zohoSentMail already records it under the person it went to. A
+      // forward from service@ used to be filed as a new email, and could
+      // land in an unrelated customer's conversation.
+      if (fromEmail === OWN_INBOX && (isReplySubject || looksForwarded(body.subject, plainBody))) {
+        res.status(200).json({ ok: true, skipped: true, reason: "own-outgoing" });
+        return;
+      }
       const isForward = !isReplySubject && looksForwarded(body.subject, plainBody);
       if (isInternalSender(fromEmail)) {
         const forwardedSender = isReplySubject ? null : extractForwardedSender(plainBody);
