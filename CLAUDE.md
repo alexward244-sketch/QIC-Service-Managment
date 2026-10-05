@@ -63,7 +63,11 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Voicemails (phone system emails) never link to a customer.
 - Mail from our own domain with a "Re:" subject is a reply, never a
   forward (it used to be misfiled as a new email from the customer).
-- service@qicampark.com is the inbox's own address (skipped sender).
+- service@qicampark.com is the inbox's own address (skipped sender). A reply
+  or forward sent from it (in Zoho) echoing back in is always skipped -
+  `zohoSentMail` records it under the person it went to.
+- Our own addresses (@qicampark.com, @quintesisle.ca) never match or link
+  to a customer, even if one was saved on a customer record.
 - Zoho's `sentDateInGMT` is off by hours — use `receivedTime`.
 - No bulk delete in Correspondence; every message has its own Delete.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,

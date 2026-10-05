@@ -48,13 +48,18 @@ test("incoming email: forwards keep their content, staff mail comes in, our own 
   await send("sales@qicampark.com", "FW: Leaky roof", "Service - see below.\n\nFrom: Tom Smith [mailto:tom@hotmail.com]\nSent: Monday\nTo: Sales\nSubject: Leaky roof\n\nRoof on site 42 is leaking.");
   await send("sales@qicampark.com", "Site 12", "Please call the Smiths about their deck.");
   const skipped = await send("service@qicampark.com", "Re: Deck", "Thanks!");
-  assert.equal(skipped.body.reason, "skipped-sender");
+  assert.equal(skipped.body.reason, "own-outgoing");
   // Our own reply (sent from Zoho) echoing back with the customer's email
   // quoted under it is still ours - not a forward from the customer.
   const echo = await send("service@qicampark.com", "Re: Service Inquiry", "Hello Wayne,\n\nI can get a work order going.\n\nFrom: Wayne McKinnon <waynemckinnon5@icloud.com>\nSent: Saturday\nTo: service@qicampark.com\nSubject: Service Inquiry\n\nWater leak in the sunroom.");
-  assert.equal(echo.body.reason, "skipped-sender");
+  assert.equal(echo.body.reason, "own-outgoing");
   const echoFwd = await send("service@qicampark.com", "Re: Fwd: Deck quote", "Booked for Tuesday.\n\n---------- Forwarded message ---------\nFrom: Bob <bob@builders.ca>\nDate: Mon\n\nThe deck needs 3 new joists.");
-  assert.equal(echoFwd.body.reason, "skipped-sender");
+  assert.equal(echoFwd.body.reason, "own-outgoing");
+  // A forward sent from Zoho (service@ -> a customer) whose chain starts with
+  // a coworker is ours too - it used to land in an unrelated customer's
+  // conversation.
+  const zohoFwd = await send("service@qicampark.com", "Fwd: Re: Quinte's Isle Campark - Winterizing Sign Up", "Hello Marquise,\n\nYou signed-up for Oct 30.\n\n============ Forwarded message ============\nFrom: Jayden Ward <jayden@qicampark.com>\nTo: service@qicampark.com\n\n============ Forwarded message ============\nFrom: Marquise Nadon <chezmarquise1@gmail.com>\nTo: <info@quintesisle.ca>\n\nI can leave a key at the front desk.");
+  assert.equal(zohoFwd.body.reason, "own-outgoing");
   const mail = await all("correspondence");
   const by = (pred) => mail.find(pred);
   assert.match(by((m) => m.subject === "Fwd: Deck quote").body, /3 new joists/, "a customer's forward keeps the forwarded part");
@@ -126,6 +131,15 @@ test("incoming email: voicemails are never linked to a customer, and say who cal
   const noName = await callWebhook(fns.serviceCorrespondence, { fromEmail: "noreply@phones.example", subject: "V-Mail from (647) 469-6932 to Service Department 106", body: "You have a new voicemail from (647) 469-6932" });
   const saved2 = (await all("correspondence")).find((m) => m.id === noName.body.id);
   assert.deepEqual([saved2.customerId, saved2.voicemail.callerName, saved2.voicemail.callerNumber], [null, null, "(647) 469-6932"]);
+});
+
+test("incoming email: our own addresses never link to a customer, even if one was saved on a customer by mistake", async () => {
+  await db.doc("customers/c7").set({ name: "Gary & Lynn, Callaghan", email: "gary@x.com", matchEmails: ["jayden@qicampark.com", "service@qicampark.com"], siteIds: [] });
+  await db.doc("correspondence/old1").set({ id: "old1", direction: "in", fromEmail: "jayden@qicampark.com", customerId: "c7", subject: "Old", receivedAt: "2026-10-01T12:00:00Z" });
+  const res = await callWebhook(fns.serviceCorrespondence, { fromEmail: "jayden@qicampark.com", subject: "Site 12", body: "Please call the Smiths about their deck." });
+  const saved = (await all("correspondence")).find((m) => m.id === res.body.id);
+  assert.equal(saved.fromStaff, true);
+  assert.equal(saved.customerId, null);
 });
 
 test("the Email Intake ignore list is respected", async () => {
