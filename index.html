@@ -552,9 +552,9 @@ function paymentStatusLabel(value) {
   const match = PAYMENT_STATUS.find((p) => p.value === value);
   return match ? match.label : value || "";
 }
-const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho"];
-const INVOICE_PAYMENT_METHODS = ["Accounting", "Zoho", "RMS", "Store"];
-const ADVANCE_PAYMENT_METHODS = ["Zoho", "RMS", "Square"];
+const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho", "Cash"];
+const INVOICE_PAYMENT_METHODS = ["Accounting", "Zoho", "RMS", "Store", "Cash"];
+const ADVANCE_PAYMENT_METHODS = ["Zoho", "RMS", "Square", "Cash"];
 const SQUARE_LOCATIONS = ["Waterfront Store", "Snack Bar", "Quinte's Isle Campark", "Dockside GC"];
 const SQUARE_FIELD_GROUPS = [
   { title: "Gross Sales", fields: [{ key: "items", label: "Items" }, { key: "serviceCharges", label: "Service Charges" }] },
@@ -7945,6 +7945,7 @@ function buildWorkOrderHtml(wo, db) {
           <h1>${escapeHtml(wo.title)}</h1>
         </div>
         <div class="meta">
+          ${wo.workOrderNumber ? `<div style="font-weight:700;font-size:14px;color:#1E1A13;">${escapeHtml(wo.workOrderNumber)}</div>` : ""}
           <div>Date: ${escapeHtml(wo.date)}</div>
           <div>Status: ${escapeHtml(wo.status)}</div>
           ${wo.priority ? `<div>Priority: ${escapeHtml(wo.priority)}</div>` : ""}
@@ -15185,7 +15186,7 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest, savePropaneRe
   };
   const availableStatuses = Array.from(new Set(TYPES.filter((t) => activeTypes.has(t)).flatMap((t) => STATUS_BY_TYPE[t] || [])));
   const staffList = (db.staff || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-  const PAYMENT_OPTIONS = ["Zoho", "RMS", "Square", "Invoice"];
+  const PAYMENT_OPTIONS = ["Zoho", "RMS", "Square", "Cash", "Invoice"];
   const paymentLabel = (key) => key === "Invoice" ? "To Invoice" : `Paid \u2014 ${key}`;
   const paymentKeyFor = (item) => item.payment === "Paid" ? item.paymentMethod : item.payment === "Invoice" ? "Invoice" : null;
   const filtered = allItems.filter((item) => {

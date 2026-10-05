@@ -778,6 +778,17 @@ test("invoices: numbers carry the year and start over each January; the email as
   await page.close();
 });
 
+test("work order print-off shows the WO number; Cash is a payment option everywhere", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: {}, sites: [], cottages: [], customers: [], parts: [], staff: [] };
+    const html = buildWorkOrderHtml({ id: "w1", workOrderNumber: "WO-0088", title: "Loose front step", status: "Open", date: "2026-10-01", partsUsed: [], notes: [] }, db);
+    return [/WO-0088/.test(html), PROPANE_PAYMENT_METHODS.includes("Cash"), INVOICE_PAYMENT_METHODS.includes("Cash"), ADVANCE_PAYMENT_METHODS.includes("Cash")];
+  });
+  assert.deepEqual(out, [true, true, true, true]);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([
