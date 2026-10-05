@@ -807,6 +807,28 @@ test("sites: numbers are written with 4 digits, and \"20\" still finds site 0020
   await page.close();
 });
 
+test("customers: phone numbers are stored as plain digits; Tidy phone numbers fixes existing ones after review", async () => {
+  const page = await openApp(browser, "stub");
+  const fmt = await page.evaluate(() => ["613-555-0148", "(613) 555-0148", "+1 613 555 0148", "613.555.0148", "6135550148", "613-555-0148 ext 2", "", "1-613-555-0148"].map(normalizePhone));
+  assert.deepEqual(fmt, ["6135550148", "6135550148", "6135550148", "6135550148", "6135550148", "613-555-0148 ext 2", "", "6135550148"]);
+  await page.evaluate(() => {
+    window.__saved = [];
+    window.__persisted = [];
+    const db = { activityLog: [], customers: [
+      { id: "c1", name: "Anne Lee", phone: "613-555-0148", phone2: "(613) 555-0199", email: "a@x.com" },
+      { id: "c2", name: "Bo Day", phone: "6135550100" },
+      { id: "c3", name: "Cy Fox", phone: "613-555-0111 ext 4" }
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(PhoneTidyModal, { db, persist: (n) => window.__persisted.push(n), saveCustomer: async (c) => window.__saved.push(c), onClose() {} }));
+  });
+  assert.equal(await page.locator("[data-phone-tidy]").count(), 1, "only customers with something to change are listed");
+  await page.getByRole("button", { name: "Tidy 1 customer" }).click();
+  await page.waitForFunction(() => window.__saved.length === 1);
+  const saved = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual([saved.id, saved.phone, saved.phone2, saved.email], ["c1", "6135550148", "6135550199", "a@x.com"]);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([

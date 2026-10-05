@@ -101,6 +101,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".
 - No "(site)" in customer display names.
+- Phone numbers are stored as plain digits (6135550148) - `normalizePhone`
+  in `saveCustomer` and bulk add; numbers with words ("ext 2") are left as
+  typed.
+
+**Invoices**
+- Account numbers (sales/labour accounts) are kept on line items for
+  accounting but not shown on the invoice form or anything customers see.
 
 ## Ideas parked for later
 

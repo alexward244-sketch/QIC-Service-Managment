@@ -2018,7 +2018,8 @@ function useDb() {
       return false;
     }
   }, []);
-  const saveCustomer = useCallback(async (customer) => {
+  const saveCustomer = useCallback(async (customerIn) => {
+    const customer = withNormalizedPhones(customerIn);
     const attempt = () => CUSTOMERS_REF.doc(customer.id).set(firestoreSafe(customer));
     lastAttempt.current = attempt;
     try {
@@ -4795,6 +4796,53 @@ function CoupleNamesModal({ db, persist, saveCustomer, onClose }) {
     )
   );
 }
+// Phone numbers are stored as plain digits: 613-555-0148, (613) 555-0148
+// and +1 613 555 0148 all become 6135550148. Anything with words in it
+// ("613-555-0148 ext 2", "cell 613...") is left as typed.
+function normalizePhone(value) {
+  const t = String(value == null ? "" : value).trim();
+  if (!t || !/^[\d\s().+\-]+$/.test(t)) return t;
+  let d = t.replace(/\D/g, "");
+  if (d.length === 11 && d[0] === "1") d = d.slice(1);
+  return d;
+}
+function withNormalizedPhones(c) {
+  if (!c) return c;
+  const out = { ...c };
+  ["phone", "phone2"].forEach((k) => {
+    if (out[k]) out[k] = normalizePhone(out[k]);
+  });
+  return out;
+}
+function PhoneTidyModal({ db, persist, saveCustomer, onClose }) {
+  const actor = useCurrentActor();
+  const [rows] = useState(() => (db.customers || []).map((c) => ({ c, after: withNormalizedPhones(c) })).filter((x) => x.after.phone !== x.c.phone || x.after.phone2 !== x.c.phone2).sort((a, b) => String(a.c.name).localeCompare(String(b.c.name))));
+  const [saving, setSaving] = useState(false);
+  const apply = async () => {
+    setSaving(true);
+    await Promise.all(rows.map((x) => saveCustomer(x.after)));
+    persist({ ...db, activityLog: addLog(db, actor, `Took the dashes out of ${rows.length} customer phone number${rows.length === 1 ? "" : "s"}`) });
+    setSaving(false);
+    onClose();
+  };
+  const show = (c) => [c.phone, c.phone2].filter(Boolean).join(" / ");
+  return React.createElement(
+    Modal,
+    { title: "Tidy phone numbers", onClose, wide: true },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${rows.length} customer${rows.length === 1 ? "" : "s"} will have their phone numbers written as plain digits (613-555-0148 → 6135550148). Numbers with words in them, like "ext 2", are left as they are.`),
+    React.createElement(
+      "div",
+      { className: "max-h-[50vh] overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-4 text-sm" },
+      rows.map((x) => React.createElement("div", { key: x.c.id, "data-phone-tidy": x.c.id, className: "flex gap-3 px-3 py-1.5" }, React.createElement("span", { className: "w-1/3 truncate text-[#4B4740]" }, x.c.name), React.createElement("span", { className: "text-[#75716A]" }, show(x.c)), React.createElement("span", { className: "text-[#9A968D]" }, "→"), React.createElement("b", { className: "text-[#1E1A13]" }, show(x.after))))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      rows.length > 0 && React.createElement("button", { type: "button", disabled: saving, onClick: apply, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Tidy ${rows.length} customer${rows.length === 1 ? "" : "s"}`)
+    )
+  );
+}
 function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -4805,6 +4853,8 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [tidyOpen, setTidyOpen] = useState(false);
+  const [phoneTidyOpen, setPhoneTidyOpen] = useState(false);
+  const phonesToTidy = (db.customers || []).filter((c) => normalizePhone(c.phone) !== (c.phone || "").toString() && c.phone || normalizePhone(c.phone2) !== (c.phone2 || "").toString() && c.phone2).length;
   const [coupleOpen, setCoupleOpen] = useState(false);
   const coupleCount = coupleNameSuggestions(db).length;
   const namesToTidy = (db.customers || []).filter((c) => {
@@ -4835,7 +4885,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
     }));
     const activityLog = addLog(db, actor, `Bulk-added ${newCustomers.length} customer${newCustomers.length === 1 ? "" : "s"}`);
     persist({ ...db, activityLog });
-    commitInChunks(newCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
+    commitInChunks(newCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: withNormalizedPhones(c) }))).catch(() => {
     });
     setBulkOpen(false);
   };
@@ -4881,7 +4931,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Bulk Add"
-  ), coupleCount > 0 && React.createElement("button", { type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
+  ), coupleCount > 0 && React.createElement("button", { type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), phonesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setPhoneTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${phonesToTidy} phone number${phonesToTidy === 1 ? "" : "s"}`), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
@@ -4906,7 +4956,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       return (_a2 = db.sites.find((s) => s.id === id)) == null ? void 0 : _a2.number;
     }).filter(Boolean);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("button", { className: "text-left block font-semibold text-[#1E1A13] hover:underline", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "text-left block font-normal text-xs text-[#75716A] hover:underline mt-0.5", onClick: () => setDetailId(c.id) }, c.name2), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 space-y-0.5" }, c.phone && /* @__PURE__ */ React.createElement("div", null, c.phone), c.email && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.email), c.address && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.address), linkedSiteNumbers.length > 0 && /* @__PURE__ */ React.createElement("div", null, "Site ", linkedSiteNumbers.join(", "))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 mt-3 text-sm" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1", onClick: () => confirm.ask(c.id) }, "Delete")));
-  }))), coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  }))), coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), phoneTidyOpen && React.createElement(PhoneTidyModal, { db, persist, saveCustomer, onClose: () => setPhoneTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === detailId),
@@ -6421,11 +6471,6 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     value: li.unitPrice,
     onChange: (e) => updateLine(li.id, "unitPrice", e.target.value),
     placeholder: "Unit $"
-  }), /* @__PURE__ */ React.createElement("input", {
-    className: inputCls + " w-24",
-    value: li.account || "",
-    onChange: (e) => updateLine(li.id, "account", e.target.value),
-    placeholder: "Account"
   }), /* @__PURE__ */ React.createElement(
     "button",
     {
