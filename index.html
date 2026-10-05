@@ -6073,6 +6073,23 @@ function AccountingEmailControl({ db, persist }) {
   ));
 }
 const DEFAULT_PAYMENT_INSTRUCTIONS = "Please make payment by e-transfer to krista@qicampark.com or in person at the front desk.";
+// Payment instructions for an email or printed invoice: line breaks kept,
+// web addresses and email addresses made clickable. A long link (e.g. the
+// Zoho payment form) shows as "here (secure online form)" so it doesn't
+// sprawl across the email; the full address is still what opens.
+function paymentInstructionsHtml(text) {
+  const parts = String(text || "").split(/(https?:\/\/[^\s<>"]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return escapeHtml(part).replace(/\n/g, "<br>");
+    const trail = (part.match(/[.,;:!?)]+$/) || [""])[0];
+    const core = trail ? part.slice(0, -trail.length) : part;
+    if (/^https?:/i.test(core)) {
+      const label = core.length > 45 ? "here (secure online form)" : core.replace(/^https?:\/\//i, "");
+      return `<a href="${escapeHtml(core)}" style="color:#377249;text-decoration:underline;" target="_blank" rel="noopener">${escapeHtml(label)}</a>${escapeHtml(trail)}`;
+    }
+    return `<a href="mailto:${escapeHtml(core)}" style="color:#377249;text-decoration:underline;">${escapeHtml(core)}</a>${escapeHtml(trail)}`;
+  }).join("");
+}
 function getPaymentInstructions(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.paymentInstructions) != null ? _b : DEFAULT_PAYMENT_INSTRUCTIONS;
@@ -8352,7 +8369,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </table>` : ""}
       ${infoSheet && laborHours ? `<div class="label" style="margin-top:16px;">Labour</div><p class="desc" style="min-height:0;border:none;">${laborHours} hr \u2014 ${escapeHtml(invoice.laborRateType || "Rate")}</p>` : ""}
       ${summaryTable}
-      ${!infoSheet && getPaymentInstructions(db) ? `<p style="font-size:13px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${!infoSheet && getPaymentInstructions(db) ? `<p style="font-size:13px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${paymentInstructionsHtml(getPaymentInstructions(db))}</p>` : ""}
       ${!infoSheet ? `<p style="font-size:12px;color:#75716A;margin:14px 0 0;">If you have any questions, please don't hesitate to reach out.</p>` : ""}
     </div>`;
 }
@@ -8414,7 +8431,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
         ${Number(invoice.depositAmount) > 0 ? `<tr><td style="padding:4px 0;color:#75716A;">Deposit Received</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(invoice.depositAmount)}</td></tr><tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Balance Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(balance)}</td></tr>` : ""}
       </table>
       ${invoice.notes ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Notes:</strong> ${escapeHtml(invoice.notes).replace(/\n/g, "<br>")}</p>` : ""}
-      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${paymentInstructionsHtml(getPaymentInstructions(db))}</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
       <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
@@ -15798,7 +15815,7 @@ ${invoiceNumber ? `<tr><td style="padding:2px 0;color:#75716A;">Invoice #</td><t
         <tr><td style="padding:4px 0;color:#75716A;">Tax (${taxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(taxAmount)}</td></tr>
         <tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Total Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
       </table>
-      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${paymentInstructionsHtml(getPaymentInstructions(db))}</p>` : ""}
       ${invoiceNumber ? `<p style="font-size:14px;color:#4B4740;margin:8px 0 0;line-height:1.6;">Please include <strong>${escapeHtml(invoiceNumber)}</strong> with your payment.</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
       <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>

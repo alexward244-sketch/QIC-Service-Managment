@@ -31,7 +31,9 @@ Alex is the owner and the person you're working with; Tim
   firebase deploy --only functions:serviceCorrespondence
   ```
   (`firebase deploy --only firestore:rules` for rules.) Name the specific
-  function(s) changed.
+  function(s) changed. Alex deploys from a laptop or a Windows 11 work
+  desktop (PowerShell), so always start the commands with
+  `cd $HOME\Documents\QIC-Service-Managment` (the desktop's copy).
 - Explain things in plain language; Alex isn't a developer. Keep replies
   short and lead with what changed for them.
 - Alex reviews on desktop; phone layouts matter for field staff screens
