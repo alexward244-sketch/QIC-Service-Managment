@@ -749,7 +749,8 @@ test("invoices: payment instructions keep line breaks and make links and email a
     buildHydroInvoiceEmailText({ number: "42" }, { name: "Robert Smith" }, 100, 18.5, 18.5, 2.41, 20.91, 13, { settings: { paymentInstructions: "Pay at https://qicampark.com/pay" } }, {}, "HYD-0001")
   ]);
   assert.match(out[0], /<a href="mailto:krista@qicampark\.com"[^>]*>krista@qicampark\.com<\/a>/);
-  assert.match(out[0], /<a href="https:\/\/forms\.zohopublic\.ca\/quintesisle\/form\/SeasonalPaymentPortal\/formperma\/HUM6xPRgjAgGirxl4wjplMPipeYQXF8V218QDHuyiaM"[^>]*>here \(secure online form\)<\/a>/);
+  assert.match(out[0], /<a href="https:\/\/forms\.zohopublic\.ca\/quintesisle\/form\/SeasonalPaymentPortal\/formperma\/HUM6xPRgjAgGirxl4wjplMPipeYQXF8V218QDHuyiaM"[^>]*>QIC Payment Portal<\/a>/);
+  assert.match(out[0], /or via credit card through the <a /);
   assert.equal(out[1], 'Cheques to &lt;QIC&gt;.<br>See <a href="https://qicampark.com" style="color:#377249;text-decoration:underline;" target="_blank" rel="noopener">qicampark.com</a>.', "text stays escaped; a short link shows as itself; the full stop isn't part of the link");
   assert.match(out[2], /<a href="https:\/\/qicampark\.com\/pay"/, "hydro bills use it too");
   await page.close();

@@ -6075,7 +6075,7 @@ function AccountingEmailControl({ db, persist }) {
 const DEFAULT_PAYMENT_INSTRUCTIONS = "Please make payment by e-transfer to krista@qicampark.com or in person at the front desk.";
 // Payment instructions for an email or printed invoice: line breaks kept,
 // web addresses and email addresses made clickable. A long link (e.g. the
-// Zoho payment form) shows as "here (secure online form)" so it doesn't
+// Zoho payment form) reads "through the QIC Payment Portal" so it doesn't
 // sprawl across the email; the full address is still what opens.
 function paymentInstructionsHtml(text) {
   const parts = String(text || "").split(/(https?:\/\/[^\s<>"]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g);
@@ -6084,8 +6084,9 @@ function paymentInstructionsHtml(text) {
     const trail = (part.match(/[.,;:!?)]+$/) || [""])[0];
     const core = trail ? part.slice(0, -trail.length) : part;
     if (/^https?:/i.test(core)) {
-      const label = core.length > 45 ? "here (secure online form)" : core.replace(/^https?:\/\//i, "");
-      return `<a href="${escapeHtml(core)}" style="color:#377249;text-decoration:underline;" target="_blank" rel="noopener">${escapeHtml(label)}</a>${escapeHtml(trail)}`;
+      const long = core.length > 45;
+      const label = long ? "QIC Payment Portal" : core.replace(/^https?:\/\//i, "");
+      return `${long ? "through the " : ""}<a href="${escapeHtml(core)}" style="color:#377249;text-decoration:underline;" target="_blank" rel="noopener">${escapeHtml(label)}</a>${escapeHtml(trail)}`;
     }
     return `<a href="mailto:${escapeHtml(core)}" style="color:#377249;text-decoration:underline;">${escapeHtml(core)}</a>${escapeHtml(trail)}`;
   }).join("");
