@@ -15809,10 +15809,13 @@ function HydroRateControl({ db, persist }) {
 // How many digits each area's meters usually have. A site whose readings
 // don't fit is marked "check" rather than assumed (most of Limestone South
 // is 5 but a couple are 4; the original park is 4 with a few 5s).
-const HYDRO_AREA_DIGITS = { "Front of Park": 4, "Limestone South": 5, "Pebble Beach": 5 };
+const HYDRO_AREA_DIGITS = { "Front of Park": 4, "Limestone South": 5, "Pebble Beach": 5, "By the Woods": 5 };
 // Areas where every meter has the area's digit count - a shorter reading
 // there is a dropped leading 0, not a smaller meter.
-const HYDRO_AREA_DIGITS_CERTAIN = new Set(["Pebble Beach"]);
+const HYDRO_AREA_DIGITS_CERTAIN = new Set(["Pebble Beach", "By the Woods"]);
+// Areas with a mix of meter sizes: a 5-digit reading proves a 5-digit
+// meter, but a 4-digit one could be either, so it's always a "check".
+const HYDRO_AREA_DIGITS_MIXED = new Set(["4 Season"]);
 const METER_DIGIT_CHOICES = [4, 5, 6];
 function hydroAreaOf(site) {
   const group = groupSitesByHydroRange([site])[0];
@@ -15850,6 +15853,16 @@ function suggestMeterDigitsFor(db, site, areaDefault, certain) {
 function meterDigitSuggestions(db) {
   const sites = (db.sites || []).filter((x) => isHydroTrackedSite(x) && !x.meterDigits);
   return groupSitesByHydroRange(sites).map((g) => {
+    const mixed = HYDRO_AREA_DIGITS_MIXED.has(g.label);
+    if (mixed) {
+      return { label: g.label, rows: g.sites.map((site) => {
+        const zero = hydroDigitsFromLeadingZero(db, site.id);
+        const len = longestHydroReading(db, site.id);
+        if (zero && zero.digits >= 4) return { site, s: { digits: zero.digits, sure: true, reason: `Reading entered as ${zero.text} (${zero.digits} digits)` } };
+        if (len >= 5) return { site, s: { digits: len, sure: true, reason: `Reading has ${len} digits` } };
+        return { site, s: { digits: 4, sure: false, reason: len ? `This area's meters are mixed \u2014 a 4-digit meter, or a leading 0 on a 5-digit one? Check` : "No reading yet \u2014 this area's meters are mixed. Check" } };
+      }) };
+    }
     let areaDefault = HYDRO_AREA_DIGITS[g.label];
     if (!areaDefault) {
       // Unknown area: go with what most of its readings say.
