@@ -1996,7 +1996,8 @@ async function runAskTool(name, input, load, today) {
   const siteById = new Map(sites.map((s) => [s.id, s]));
   const custById = new Map(customers.map((c) => [c.id, c]));
   const siteNum = (id) => (id && siteById.get(id) ? toStr(siteById.get(id).number) : "");
-  const siteIdFor = (n) => { const s = sites.find((x) => toStr(x.number).toLowerCase() === toStr(n).toLowerCase().replace(/^(site|lot)\s*#?\s*/, "")); return s ? s.id : null; };
+  // "site 20" finds site 0020 (site numbers are written with 4 digits).
+  const siteIdFor = (n) => { const key = matchSiteKey(n); const s = key ? sites.find((x) => matchSiteKey(x.number) === key) : null; return s ? s.id : null; };
   const custName = (id) => (id && custById.get(id) ? toStr(custById.get(id).name) : "");
   const custSites = (c) => (Array.isArray(c.siteIds) ? c.siteIds : c.siteId ? [c.siteId] : []);
   const matchesCustomer = (rec, q) => !q || askText(custName(rec.customerId)).includes(toStr(q).toLowerCase());

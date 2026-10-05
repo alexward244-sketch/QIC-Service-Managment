@@ -91,6 +91,12 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   invoices. Payments are tracked in the accounting software, not the app.
 - The bill must show previous and current readings (with dates) and usage.
 
+**Sites**
+- Site numbers are written with 4 digits (1 -> 0001, 412A -> 0412A; letter
+  sites like A, K1 unchanged) - `formatSiteNumber` on save. Compare site
+  numbers with `sameSiteNumber` / `signupSiteKey` (server: `matchSiteKey`),
+  never with `===`, so "site 20" still finds 0020.
+
 **Customers**
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".

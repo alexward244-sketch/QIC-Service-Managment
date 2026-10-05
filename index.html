@@ -881,6 +881,18 @@ async function requestWorkOrderSummary(rawNotes) {
   const data = await resp.json();
   return { resp, data };
 }
+// Site numbers are written with 4 digits: 1 -> 0001, 20 -> 0020,
+// 412A -> 0412A. Letter sites (A, K1) are left as they are.
+function formatSiteNumber(value) {
+  const t = String(value == null ? "" : value).trim();
+  const m = /^(\d+)([A-Za-z]?)$/.exec(t);
+  return m && m[1].length < 4 ? `${m[1].padStart(4, "0")}${m[2].toUpperCase()}` : t;
+}
+// Same site, however it's written ("20", "0020", "Site #20").
+function sameSiteNumber(a, b) {
+  const ka = signupSiteKey(a);
+  return Boolean(ka) && ka === signupSiteKey(b);
+}
 function signupSiteKey(value) {
   return (value || "").toString().trim().toLowerCase().replace(/^(site|lot|unit|no\.?)\s*/, "").replace(/[#\s-]/g, "").replace(/^0+(?=\w)/, "");
 }
@@ -2919,6 +2931,8 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
   const [expandedSections, setExpandedSections] = useState(() => /* @__PURE__ */ new Set());
   const [typeFilter, setTypeFilter] = useState(null);
   const [typeSetupOpen, setTypeSetupOpen] = useState(false);
+  const [numberFormatOpen, setNumberFormatOpen] = useState(false);
+  const sitesNeedingFormat = sitesToFormat(db.sites).filter((r) => !r.clash).length;
   const unsetTypeCount = db.sites.filter((x) => !SITE_TYPES.includes(x.siteType)).length;
   useEffect(() => {
     if (filterPrefill) setFilter(filterPrefill.term);
@@ -2941,13 +2955,13 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
     setModal(null);
   };
   const bulkAdd = (numbers) => {
-    const existingNumbers = new Set(db.sites.map((s) => s.number.trim().toLowerCase()));
+    const existingNumbers = new Set(db.sites.map((s) => signupSiteKey(s.number)));
     const newSites = [];
     numbers.forEach((n) => {
-      const trimmed = n.trim();
+      const trimmed = formatSiteNumber(n);
       if (!trimmed) return;
-      if (existingNumbers.has(trimmed.toLowerCase())) return;
-      existingNumbers.add(trimmed.toLowerCase());
+      if (existingNumbers.has(signupSiteKey(trimmed))) return;
+      existingNumbers.add(signupSiteKey(trimmed));
       newSites.push({ id: uid(), number: trimmed, section: "", hookups: "", notes: "" });
     });
     if (newSites.length === 0) {
@@ -3038,7 +3052,12 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
     { className: "flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e8d7b4] bg-[#FBEEDA] px-4 py-2.5 mb-3 text-sm text-[#7A5418]" },
     React.createElement("span", null, `${unsetTypeCount} site${unsetTypeCount === 1 ? " doesn't" : "s don't"} have a site type yet (Seasonal, 4 Season, Transient, Rental Cottage or QIC Facility). Until then it's guessed from tags.`),
     React.createElement("button", { type: "button", onClick: () => setTypeSetupOpen(true), className: "px-3 py-1.5 rounded-md bg-[#9A6B1F] text-white text-xs font-semibold whitespace-nowrap" }, "Review site types")
-  ), db.sites.length > 0 && React.createElement(
+  ), db.sites.length > 0 && !readOnly && sitesNeedingFormat > 0 && React.createElement(
+    "div",
+    { className: "flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e8d7b4] bg-[#FBEEDA] px-4 py-2.5 mb-3 text-sm text-[#7A5418]" },
+    React.createElement("span", null, `${sitesNeedingFormat} site number${sitesNeedingFormat === 1 ? " isn't" : "s aren't"} 4 digits yet (e.g. 20 → 0020).`),
+    React.createElement("button", { type: "button", onClick: () => setNumberFormatOpen(true), className: "px-3 py-1.5 rounded-md bg-[#9A6B1F] text-white text-xs font-semibold whitespace-nowrap" }, "Change to 4 digits")
+  ), numberFormatOpen && React.createElement(SiteNumberFormatModal, { db, persist, bulkWriteSites, onClose: () => setNumberFormatOpen(false) }), db.sites.length > 0 && React.createElement(
     "div",
     { className: "flex items-center gap-2 flex-wrap mb-4" },
     [null, ...SITE_TYPES].map((t) => {
@@ -3865,13 +3884,13 @@ function SiteForm({ initial, sites, onSave, onCancel }) {
   const [meterDigits, setMeterDigits] = useState((initial == null ? void 0 : initial.meterDigits) ? String(initial.meterDigits) : "");
   const [siteType, setSiteType] = useState(() => initial ? siteTypeOf(initial) : "Seasonal");
   const [rmsSiteId, setRmsSiteId] = useState((initial == null ? void 0 : initial.rmsSiteId) || "");
-  const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && s.number.trim().toLowerCase() === number.trim().toLowerCase());
+  const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && sameSiteNumber(s.number, number));
   const submit = () => {
     if (!number.trim()) return;
     const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
     // Spread the original so fields this form doesn't show (seasonal fee
     // history, map position...) aren't lost when a site is edited.
-    onSave({ ...initial || {}, id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null, siteType, rmsSiteId: rmsSiteId.trim() || null });
+    onSave({ ...initial || {}, id: (initial == null ? void 0 : initial.id) || uid(), number: formatSiteNumber(number), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null, siteType, rmsSiteId: rmsSiteId.trim() || null });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
@@ -5196,8 +5215,7 @@ function correspondencePrefill(db, item, customerId, kind) {
   if (!t) return base;
   const out = { ...base };
   if (!out.siteId && t.siteNumber) {
-    const norm = (v) => String(v || "").trim().toLowerCase().replace(/^(site|lot)\s*#?\s*/, "");
-    const site = (db.sites || []).find((st) => norm(st.number) === norm(t.siteNumber));
+    const site = (db.sites || []).find((st) => sameSiteNumber(st.number, t.siteNumber));
     const customer = customerId ? (db.customers || []).find((c) => c.id === customerId) : null;
     const siteFitsCustomer = site && (!customer || customerSiteIds(customer).includes(site.id));
     if (siteFitsCustomer) {
@@ -5937,7 +5955,7 @@ function BulkAddCustomersForm({ sites, onSave, onCancel }) {
   };
   const parsed = text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
     const [name, phone, email, address, siteNumber] = parseLine(line);
-    const matchedSite = siteNumber ? sites.find((s) => s.number.toLowerCase() === siteNumber.toLowerCase()) : null;
+    const matchedSite = siteNumber ? sites.find((s) => sameSiteNumber(s.number, siteNumber)) : null;
     return {
       name: name || "",
       phone: phone || "",
@@ -13085,7 +13103,7 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   ))));
 }
 function PendingSignupRow({ entry, db, onReview, onReply }) {
-  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
+  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && sameSiteNumber(s.number, entry.submittedSiteNumber));
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 bg-[#FBEEDA]/40 hover:bg-[#FBEEDA]/60 transition" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.submittedName || "(no name given)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, /* @__PURE__ */ React.createElement("span", null, "Site ", entry.submittedSiteNumber || "\u2014"), entry.requestedDate && /* @__PURE__ */ React.createElement("span", null, "Requested ", entry.requestedDate), !guessSite && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No auto-match"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, entry.submittedEmail && onReply && /* @__PURE__ */ React.createElement("button", { onClick: () => onReply(entry), className: "px-2.5 py-1.5 rounded-md border border-[#E2DED5] text-xs font-medium text-[#377249] hover:bg-white whitespace-nowrap", "aria-label": "Reply by email", title: "Reply by email" }, "\u2709\ufe0f Reply"), /* @__PURE__ */ React.createElement("button", { onClick: () => onReview(entry), className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] whitespace-nowrap" }, "Review")));
 }
 function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
@@ -15655,6 +15673,50 @@ function SiteTypeBadge({ site }) {
 // One-time setup: shows each site that hasn't had its type set, with the
 // guess from its tags/section, so they can all be confirmed (and any wrong
 // ones changed) in one go.
+// One-time tidy: shows every site whose number isn't 4 digits yet
+// (20 -> 0020) and changes them together once confirmed. A number that
+// would clash with another site (both "20" and "0020" exist) is left out.
+function sitesToFormat(sites) {
+  return (sites || []).filter((x) => x.number && formatSiteNumber(x.number) !== x.number.trim()).map((x) => ({ site: x, after: formatSiteNumber(x.number) }))
+    .map((r) => ({ ...r, clash: (sites || []).some((o) => o.id !== r.site.id && o.number && o.number.trim() === r.after) }))
+    .sort((a, b) => a.after.localeCompare(b.after, void 0, { numeric: true }));
+}
+function SiteNumberFormatModal({ db, persist, bulkWriteSites, onClose }) {
+  const actor = useCurrentActor();
+  const [rows] = useState(() => sitesToFormat(db.sites));
+  const [saving, setSaving] = useState(false);
+  const ok = rows.filter((r) => !r.clash);
+  const confirmAll = async () => {
+    setSaving(true);
+    const changed = ok.map((r) => ({ ...r.site, number: r.after }));
+    const res = await bulkWriteSites(changed);
+    if (res !== false) {
+      persist({ ...db, activityLog: addLog(db, actor, `Changed ${changed.length} site number${changed.length === 1 ? "" : "s"} to 4 digits (e.g. ${changed[0] ? `${ok[0].site.number} → ${changed[0].number}` : ""})`) });
+      onClose();
+    }
+    setSaving(false);
+  };
+  return React.createElement(
+    Modal,
+    { title: "Change site numbers to 4 digits", onClose, wide: true },
+    rows.length === 0 ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Every site number already has 4 digits.") : React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${ok.length} site number${ok.length === 1 ? "" : "s"} will change, e.g. 1 → 0001, 20 → 0020, 412A → 0412A. Letter sites (A, K1) stay as they are. Searches, sign-up forms and emails that say "site 20" still find site 0020.`),
+      React.createElement(
+        "div",
+        { className: "max-h-[50vh] overflow-y-auto rounded-lg border border-[#E2DED5] grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 p-3 mb-4 text-sm" },
+        rows.map((r) => React.createElement("div", { key: r.site.id, "data-site-format": r.site.number, className: r.clash ? "text-[#a8532a]" : "text-[#4B4740]", title: r.clash ? `Site ${r.after} already exists - fix this one by hand` : "" }, r.site.number, " → ", React.createElement("b", null, r.after), r.clash ? " (already exists)" : ""))
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, rows.length ? "Cancel" : "Close"),
+      ok.length > 0 && React.createElement("button", { type: "button", onClick: confirmAll, disabled: saving, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Change ${ok.length} site number${ok.length === 1 ? "" : "s"}`)
+    )
+  );
+}
 function SiteTypeSetupModal({ db, persist, bulkWriteSites, onClose }) {
   const actor = useCurrentActor();
   const unset = (db.sites || []).filter((x) => !SITE_TYPES.includes(x.siteType)).sort((a, b) => String(a.number).localeCompare(String(b.number), void 0, { numeric: true }));
@@ -17238,7 +17300,7 @@ function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
     const [siteNumber, amountRaw, monthsRaw] = parseLine(line);
     const amount = amountRaw === "" || amountRaw == null ? NaN : Number(amountRaw);
     const months = Number(monthsRaw) === 9 ? 9 : 12;
-    const matchedSite = siteNumber ? sites.find((s) => s.number.toLowerCase() === siteNumber.toLowerCase()) : null;
+    const matchedSite = siteNumber ? sites.find((s) => sameSiteNumber(s.number, siteNumber)) : null;
     return {
       siteNumber: siteNumber || "",
       amount: Number.isFinite(amount) ? amount : null,
@@ -17778,8 +17840,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     // suggest whoever owns that site.
     const mentionedSite = !selectedVoicemail && !selectedItem.customerId && ((selectedItem.webForm && selectedItem.webForm.siteNumber) || (selectedItem.triage && selectedItem.triage.siteNumber));
     if (!knownCustomer && mentionedSite) {
-      const norm = (v) => String(v || "").trim().toLowerCase().replace(/^(site|lot)\s*#?\s*/, "");
-      const site = (db.sites || []).find((st) => norm(st.number) === norm(mentionedSite));
+      const site = (db.sites || []).find((st) => sameSiteNumber(st.number, mentionedSite));
       const owner = site ? getSiteOwner(db, site.id) : null;
       if (owner) {
         knownCustomer = owner;
