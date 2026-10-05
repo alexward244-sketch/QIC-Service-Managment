@@ -741,6 +741,43 @@ test("correspondence: our own addresses never match a customer, even if saved on
   await page.close();
 });
 
+test("invoices: payment instructions keep line breaks and make links and email addresses clickable", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => [
+    paymentInstructionsHtml("Please make payment by e-transfer to krista@qicampark.com or via credit card https://forms.zohopublic.ca/quintesisle/form/SeasonalPaymentPortal/formperma/HUM6xPRgjAgGirxl4wjplMPipeYQXF8V218QDHuyiaM"),
+    paymentInstructionsHtml("Cheques to <QIC>.\nSee https://qicampark.com."),
+    buildHydroInvoiceEmailText({ number: "42" }, { name: "Robert Smith" }, 100, 18.5, 18.5, 2.41, 20.91, 13, { settings: { paymentInstructions: "Pay at https://qicampark.com/pay" } }, {}, "HYD-0001")
+  ]);
+  assert.match(out[0], /<a href="mailto:krista@qicampark\.com"[^>]*>krista@qicampark\.com<\/a>/);
+  assert.match(out[0], /<a href="https:\/\/forms\.zohopublic\.ca\/quintesisle\/form\/SeasonalPaymentPortal\/formperma\/HUM6xPRgjAgGirxl4wjplMPipeYQXF8V218QDHuyiaM"[^>]*>QIC Payment Portal<\/a>/);
+  assert.match(out[0], /or via credit card through the <a /);
+  assert.equal(out[1], 'Cheques to &lt;QIC&gt;.<br>See <a href="https://qicampark.com" style="color:#377249;text-decoration:underline;" target="_blank" rel="noopener">qicampark.com</a>.', "text stays escaped; a short link shows as itself; the full stop isn't part of the link");
+  assert.match(out[2], /<a href="https:\/\/qicampark\.com\/pay"/, "hydro bills use it too");
+  await page.close();
+});
+
+test("invoices: numbers carry the year and start over each January; the email asks to include the number when something is owed", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { invoices: [{ invoiceNumber: "INV-0009", date: "2026-09-01" }, { invoiceNumber: "INV-0031", date: "2025-11-01" }] };
+    const owed = { invoiceNumber: "INV-26-0010", date: "2026-10-05", lineItems: [{ description: "Sealant", quantity: 1, unitPrice: 50 }], taxRate: 13 };
+    const paid = { ...owed, invoiceNumber: "INV-26-0011", depositAmount: 56.5, paidInFullDate: "2026-10-05" };
+    const text = (h) => h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const d = { settings: {}, sites: [], cottages: [], customers: [] };
+    return [
+      nextInvoiceNumber(db, "2026-10-05"),
+      nextInvoiceNumber({ invoices: [...db.invoices, { invoiceNumber: "INV-26-0010", date: "2026-10-05" }] }, "2026-10-06"),
+      nextInvoiceNumber({ invoices: [{ invoiceNumber: "INV-26-0099", date: "2026-12-30" }] }, "2027-01-04"),
+      nextHydroInvoiceNumber({ hydroReadings: [{ invoiceNumber: "HYD-0004", invoicedAt: "2026-09-01" }] }, "2026-10-05"),
+      /Please include INV-26-0010 with your payment/.test(text(buildInvoiceEmailText(owed, d, 13))),
+      /Please include/.test(text(buildInvoiceEmailText(paid, d, 13))),
+      /Please include INV-26-0010 with your payment/.test(text(buildInvoiceHtml(owed, d, 13)))
+    ];
+  });
+  assert.deepEqual(out, ["INV-26-0010", "INV-26-0011", "INV-27-0001", "HYD-26-0005", true, false, true]);
+  await page.close();
+});
+
 test("correspondence: the Handled list is in the order messages were sent or received", async () => {
   const page = await openApp(browser, "stub");
   const ids = await page.evaluate(() => handledCorrespondence([

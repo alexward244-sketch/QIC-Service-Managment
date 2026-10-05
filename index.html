@@ -1112,17 +1112,30 @@ function isOrderPaidInFull(order) {
   if (order.paidInFullDate) return true;
   return Number(order.totalPrice) > 0 && (Number(order.depositAmount) || 0) >= Number(order.totalPrice);
 }
-function nextInvoiceNumber(db) {
-  const invoices = db.invoices || [];
+// Invoice numbers carry the year: INV-26-0010. The count starts over each
+// January (INV-27-0001). Numbers from before the year was added
+// (INV-0009) count toward the year of their invoice's date, so 2026 carries
+// on from where it was.
+function nextYearlyNumber(prefix, records, dateOf, today) {
+  const year = String(today || todayISO()).slice(0, 4);
+  const yy = year.slice(2);
+  const withYear = new RegExp(`^${prefix}-(\\d{2})-(\\d+)$`);
+  const noYear = new RegExp(`^${prefix}-(\\d+)$`);
   let max = 0;
-  invoices.forEach((inv) => {
-    const match = /INV-(\d+)/.exec(inv.invoiceNumber || "");
-    if (match) {
-      const n = parseInt(match[1], 10);
-      if (n > max) max = n;
+  (records || []).forEach((r) => {
+    const num = String(r && r.invoiceNumber || "").trim();
+    const a = withYear.exec(num);
+    if (a) {
+      if (a[1] === yy) max = Math.max(max, parseInt(a[2], 10));
+      return;
     }
+    const b = noYear.exec(num);
+    if (b && String(dateOf(r) || "").slice(0, 4) === year) max = Math.max(max, parseInt(b[1], 10));
   });
-  return `INV-${String(max + 1).padStart(4, "0")}`;
+  return `${prefix}-${yy}-${String(max + 1).padStart(4, "0")}`;
+}
+function nextInvoiceNumber(db, today) {
+  return nextYearlyNumber("INV", db.invoices, (inv) => inv.date || inv.createdAt, today);
 }
 // Same pattern as nextInvoiceNumber - a short unique tag so two similarly
 // named work orders can always be told apart, especially when picking one
@@ -6073,6 +6086,24 @@ function AccountingEmailControl({ db, persist }) {
   ));
 }
 const DEFAULT_PAYMENT_INSTRUCTIONS = "Please make payment by e-transfer to krista@qicampark.com or in person at the front desk.";
+// Payment instructions for an email or printed invoice: line breaks kept,
+// web addresses and email addresses made clickable. A long link (e.g. the
+// Zoho payment form) reads "through the QIC Payment Portal" so it doesn't
+// sprawl across the email; the full address is still what opens.
+function paymentInstructionsHtml(text) {
+  const parts = String(text || "").split(/(https?:\/\/[^\s<>"]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return escapeHtml(part).replace(/\n/g, "<br>");
+    const trail = (part.match(/[.,;:!?)]+$/) || [""])[0];
+    const core = trail ? part.slice(0, -trail.length) : part;
+    if (/^https?:/i.test(core)) {
+      const long = core.length > 45;
+      const label = long ? "QIC Payment Portal" : core.replace(/^https?:\/\//i, "");
+      return `${long ? "through the " : ""}<a href="${escapeHtml(core)}" style="color:#377249;text-decoration:underline;" target="_blank" rel="noopener">${escapeHtml(label)}</a>${escapeHtml(trail)}`;
+    }
+    return `<a href="mailto:${escapeHtml(core)}" style="color:#377249;text-decoration:underline;">${escapeHtml(core)}</a>${escapeHtml(trail)}`;
+  }).join("");
+}
 function getPaymentInstructions(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.paymentInstructions) != null ? _b : DEFAULT_PAYMENT_INSTRUCTIONS;
@@ -8352,7 +8383,8 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
       </table>` : ""}
       ${infoSheet && laborHours ? `<div class="label" style="margin-top:16px;">Labour</div><p class="desc" style="min-height:0;border:none;">${laborHours} hr \u2014 ${escapeHtml(invoice.laborRateType || "Rate")}</p>` : ""}
       ${summaryTable}
-      ${!infoSheet && getPaymentInstructions(db) ? `<p style="font-size:13px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${!infoSheet && getPaymentInstructions(db) ? `<p style="font-size:13px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${paymentInstructionsHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${!infoSheet && invoice.invoiceNumber && balance > 0.005 && !invoice.paidInFullDate ? `<p style="font-size:13px;color:#4B4740;margin:8px 0 0;line-height:1.6;">Please include <strong>${escapeHtml(invoice.invoiceNumber)}</strong> with your payment.</p>` : ""}
       ${!infoSheet ? `<p style="font-size:12px;color:#75716A;margin:14px 0 0;">If you have any questions, please don't hesitate to reach out.</p>` : ""}
     </div>`;
 }
@@ -8414,7 +8446,8 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
         ${Number(invoice.depositAmount) > 0 ? `<tr><td style="padding:4px 0;color:#75716A;">Deposit Received</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(invoice.depositAmount)}</td></tr><tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Balance Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(balance)}</td></tr>` : ""}
       </table>
       ${invoice.notes ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Notes:</strong> ${escapeHtml(invoice.notes).replace(/\n/g, "<br>")}</p>` : ""}
-      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${paymentInstructionsHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${invoice.invoiceNumber && balance > 0.005 && !invoice.paidInFullDate ? `<p style="font-size:14px;color:#4B4740;margin:8px 0 0;line-height:1.6;">Please include <strong>${escapeHtml(invoice.invoiceNumber)}</strong> with your payment.</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
       <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
@@ -14365,7 +14398,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
         sendEmail({
           toEmail: accountingEmail,
           toName: "Accounting",
-          subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid)`,
+          subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid – ${request.paymentMethod})`,
           message: buildInvoiceEmailText(invoice, db, taxRateVal),
           // Sent from the service inbox: Zoho shows mail an inbox sends to
           // itself as already read, so accounting would miss it.
@@ -15715,16 +15748,11 @@ function getHydroRate(db) {
   var _a, _b;
   return (_b = (_a = db.settings) == null ? void 0 : _a.hydroRatePerKwh) != null ? _b : 18.5;
 }
-// Hydro bills have their own numbers (HYD-0001, HYD-0002, ...) so they're
+// Hydro bills have their own numbers (HYD-26-0001, HYD-26-0002, ...) so they're
 // told apart from service invoices (INV-) at a glance and can be quoted as
 // the payment reference.
-function nextHydroInvoiceNumber(db) {
-  let max = 0;
-  (db.hydroReadings || []).forEach((r) => {
-    const m = /HYD-(\d+)/.exec(r.invoiceNumber || "");
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  });
-  return `HYD-${String(max + 1).padStart(4, "0")}`;
+function nextHydroInvoiceNumber(db, today) {
+  return nextYearlyNumber("HYD", db.hydroReadings, (r) => r.invoicedAt || r.confirmedAt || r.date, today);
 }
 function hydroInvoiceSubject(site, reading) {
   return `Hydro Invoice${reading && reading.invoiceNumber ? ` ${reading.invoiceNumber}` : ""} — Site ${site ? site.number : "?"}`;
@@ -15798,7 +15826,7 @@ ${invoiceNumber ? `<tr><td style="padding:2px 0;color:#75716A;">Invoice #</td><t
         <tr><td style="padding:4px 0;color:#75716A;">Tax (${taxRate}%)</td><td style="padding:4px 0;text-align:right;color:#1E1A13;">${formatPrice(taxAmount)}</td></tr>
         <tr><td style="padding:4px 0;color:#1E1A13;font-weight:600;">Total Owing</td><td style="padding:4px 0;text-align:right;color:#1E1A13;font-weight:600;">${formatPrice(total)}</td></tr>
       </table>
-      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${escapeHtml(getPaymentInstructions(db))}</p>` : ""}
+      ${getPaymentInstructions(db) ? `<p style="font-size:14px;color:#4B4740;margin:16px 0 0;line-height:1.6;"><strong>Payment:</strong> ${paymentInstructionsHtml(getPaymentInstructions(db))}</p>` : ""}
       ${invoiceNumber ? `<p style="font-size:14px;color:#4B4740;margin:8px 0 0;line-height:1.6;">Please include <strong>${escapeHtml(invoiceNumber)}</strong> with your payment.</p>` : ""}
       <p style="font-size:13px;color:#75716A;margin:16px 0 0;">If you have any questions, please don't hesitate to reach out.</p>
       <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
@@ -16492,7 +16520,7 @@ function HydroSentBills({ db, setToast }) {
 }
 function HydroReviewView({ db, persist }) {
   const actor = useCurrentActor();
-  const lastIssuedRef = useRef(0);
+  const lastIssuedRef = useRef({ head: "", n: 0 });
   const [view, setView] = useState("review");
   const unsent = hydroBillsNotSent(db);
   const [toast, setToast] = useState(null);
@@ -16577,9 +16605,11 @@ function HydroReviewView({ db, persist }) {
     // Two bills confirmed back to back can beat the database update, so
     // never reuse a number this screen already gave out.
     const fromDb = nextHydroInvoiceNumber(db);
-    const n = Math.max(parseInt(fromDb.slice(4), 10), lastIssuedRef.current + 1);
-    lastIssuedRef.current = n;
-    const invoiceNumber = `HYD-${String(n).padStart(4, "0")}`;
+    const head = fromDb.replace(/\d+$/, "");
+    const last = lastIssuedRef.current;
+    const n = Math.max(parseInt(fromDb.slice(head.length), 10), last.head === head ? last.n + 1 : 0);
+    lastIssuedRef.current = { head, n };
+    const invoiceNumber = `${head}${String(n).padStart(4, "0")}`;
     let invoiced = { ...reading, reading: final.reading, date: final.date, rolledOver: final.rolledOver, status: "invoiced", invoiceNumber, confirmedUsage: final.usage, rate, taxAmount, amount: total, billTaxRate: taxRate, billMeter, confirmedBy: actor, confirmedAt: todayISO(), invoicedAt: todayISO(), emailStatus: "sending" };
     setPendingConfirm(null);
     setEdits((prev) => {
@@ -18957,7 +18987,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
         sendEmail({
           toEmail: accountingEmail,
           toName: "Accounting",
-          subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid)`,
+          subject: `Propane Fill Completed — ${invoice.invoiceNumber} (prepaid – ${request.paymentMethod})`,
           message: buildInvoiceEmailText(invoice, db, taxRateVal),
           // Sent from the service inbox: Zoho shows mail an inbox sends to
           // itself as already read, so accounting would miss it.
