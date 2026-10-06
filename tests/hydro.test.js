@@ -25,6 +25,15 @@ const readings = () => readCollection("hydroReadings");
 const openSection = (page) => page.getByRole("button", { name: /\(1\)/ }).first().click();
 const READY = (n) => `(api) => api.db.sites.length === 1 && api.db.customers.length === 2 && (api.db.hydroReadings || []).length === ${n}`;
 
+// The review page groups readings by area, closed; open them all.
+async function openReview(page) {
+  const groups = page.locator("[data-review-group] > button");
+  await groups.first().waitFor();
+  for (let i = 0; i < await groups.count(); i++) {
+    if (await groups.nth(i).getAttribute("aria-expanded") !== "true") await groups.nth(i).click();
+  }
+}
+
 test("A first reading is saved as the baseline, with one activity line for the day", async () => {
   await resetData(base("office"));
   const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
@@ -99,6 +108,7 @@ test("A closing reading bills the seller even after the sale is recorded", async
   await writeDoc("campground/data", { ...base("accounting")["campground/data"] });
   const review = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review, asUser("HydroReviewView"), "(api) => api.db.customers.length === 2 && (api.db.customers.find((c) => c.id === 'c2').siteIds || []).length === 1 && (api.db.hydroReadings || []).length === 2");
+  await openReview(review);
   await review.getByText("Billed to Robert Smith, the owner when this was read").waitFor();
   assert.ok(await review.getByText("Closing reading").first().isVisible());
   await review.close();
@@ -112,6 +122,7 @@ test("Hydro Review can carry a small reading over to the next bill, or remove on
   });
   const review = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review, asUser("HydroReviewView"), READY(2));
+  await openReview(review);
   await review.getByRole("button", { name: "Carry over to next bill" }).click();
   await review.getByRole("button", { name: "Yes, carry over" }).click();
   const carried = await waitFor(async () => { const b = (await readings()).find((x) => x.id === "b"); return b.status === "carried" ? b : null; }, "the reading to be carried");
@@ -137,6 +148,7 @@ test("Hydro Review can carry a small reading over to the next bill, or remove on
 
   const review2 = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review2, asUser("HydroReviewView"), READY(3));
+  await openReview(review2);
   await review2.getByText(/Includes usage carried over from 2026-09-20 \(12 kWh\)/).waitFor();
   assert.equal(await review2.getByRole("button", { name: "Carry over to next bill" }).count(), 1);
   await review2.getByRole("button", { name: "Remove", exact: true }).click();
@@ -149,6 +161,7 @@ test("Hydro Review can carry a small reading over to the next bill, or remove on
   await writeDoc("hydroReadings/z", { id: "z", siteId: "s42", date: "2026-10-01", reading: 1200, previousReading: 1000, usage: 200, status: "pending", closingReading: true, ownerAtReading: "c1" });
   const review3 = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review3, asUser("HydroReviewView"), READY(3));
+  await openReview(review3);
   await review3.getByText("Closing reading").first().waitFor();
   assert.equal(await review3.getByRole("button", { name: "Carry over to next bill" }).count(), 0);
   assert.ok(await review3.getByRole("button", { name: "Remove", exact: true }).isVisible());
@@ -232,6 +245,7 @@ test("The hydro bill email shows the previous and current readings with their da
   const page = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await page.evaluate(() => { window.__sent = []; window.sendEmail = async (o) => { window.__sent.push(o); }; });
   await mountWithDb(page, asUser("HydroReviewView"), READY(3));
+  await openReview(page);
   await page.getByRole("button", { name: "Confirm & Send Invoice" }).click();
   await page.getByRole("button", { name: "Yes, send" }).click();
   await page.waitForFunction(() => window.__sent.length > 0);
@@ -276,6 +290,7 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
     };
   });
   await mountWithDb(page, `(api) => React.createElement(CurrentUserContext.Provider, { value: "${EMAIL}" }, React.createElement(HydroReviewView, { db: api.db, persist: api.persist }))`, `(api) => api.db.sites.length === 2 && (api.db.hydroReadings || []).length === 4`);
+  await openReview(page);
   for (let i = 0; i < 2; i++) {
     await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
     await page.getByRole("button", { name: "Yes, send" }).click();
@@ -326,6 +341,7 @@ test("An under-read after an over-billed reading is held, not billed as a huge r
   ]);
   await page.evaluate(() => { window.__sent = []; window.sendEmail = async (o) => { window.__sent.push(o); }; });
   await mountWithDb(page, asUser("HydroReviewView"), READY(3));
+  await openReview(page);
   const banner = page.locator("[data-under-read]");
   await banner.getByText("Lower than the last billed reading (1500 on HYD-0004)").waitFor();
   assert.equal(await page.getByRole("spinbutton").nth(1).inputValue(), "", "no usage is pre-filled");
@@ -352,6 +368,7 @@ test("An under-read after an over-billed reading is held, not billed as a huge r
 
   const review = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
   await mountWithDb(review, asUser("HydroReviewView"), READY(4));
+  await openReview(review);
   await review.getByText(/Held after an over-read: 2026-07-01 \(1400\)/).waitFor();
   assert.equal(await review.getByText(/Includes usage carried over/).count(), 0);
   assert.deepEqual(review.pageErrors, []);

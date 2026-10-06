@@ -16151,9 +16151,18 @@ function SiteTypeSetupModal({ db, persist, bulkWriteSites, onClose }) {
   );
 }
 const HYDRO_PRIORITY_SITES = ["A", "B", "C", "D", "K1", "K2", "K3", "K4", "K5"];
+// "000A" is site A since site numbers went to 4 digits.
+function hydroPriorityKey(number) {
+  return String(number || "").trim().toUpperCase().replace(/^0+(?=[A-Z])/, "");
+}
+// 0412A counts as 412 when working out its area.
+function hydroSiteNumberValue(number) {
+  const t = String(number || "").trim();
+  return /^\d+[A-Za-z]?$/.test(t) ? parseInt(t, 10) : NaN;
+}
 function hydroSiteSort(a, b) {
-  const ai = HYDRO_PRIORITY_SITES.indexOf(a.number.trim().toUpperCase());
-  const bi = HYDRO_PRIORITY_SITES.indexOf(b.number.trim().toUpperCase());
+  const ai = HYDRO_PRIORITY_SITES.indexOf(hydroPriorityKey(a.number));
+  const bi = HYDRO_PRIORITY_SITES.indexOf(hydroPriorityKey(b.number));
   if (ai !== -1 || bi !== -1) {
     if (ai === -1) return 1;
     if (bi === -1) return -1;
@@ -16172,8 +16181,8 @@ function groupSitesByHydroRange(sites) {
   const groups = HYDRO_RANGE_GROUPS.map((g) => ({ label: g.label, sites: [] }));
   const other = [];
   sites.forEach((s) => {
-    const isPriority = HYDRO_PRIORITY_SITES.includes(s.number.trim().toUpperCase());
-    const n = Number(s.number);
+    const isPriority = HYDRO_PRIORITY_SITES.includes(hydroPriorityKey(s.number));
+    const n = hydroSiteNumberValue(s.number);
     const idx = HYDRO_RANGE_GROUPS.findIndex((g) => isPriority && g.includePriority || !isNaN(n) && n >= g.min && n <= g.max);
     if (idx === -1) other.push(s);
     else groups[idx].sites.push(s);
@@ -16977,6 +16986,13 @@ function HydroReviewView({ db, persist }) {
   // After a bill goes out: print a copy for the customer's file? (Asked,
   // since printing has to start from a click.)
   const [printAsk, setPrintAsk] = useState(null);
+  const [openReviewGroups, setOpenReviewGroups] = useState(() => /* @__PURE__ */ new Set());
+  const toggleReviewGroup = (label) => setOpenReviewGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    return next;
+  });
   const taxRate = (db.settings && db.settings.taxRate != null) ? db.settings.taxRate : 13;
   const rate = getHydroRate(db);
   const pending = (db.hydroReadings || []).filter((r) => r.status === "pending").slice().sort((a, b) => (a.flagged === b.flagged ? 0 : a.flagged ? -1 : 1) || (a.date < b.date ? -1 : 1));
@@ -17091,11 +17107,27 @@ function HydroReviewView({ db, persist }) {
     "button",
     { type: "button", onClick: () => setView("sent"), className: "w-full text-left mb-3 rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 text-sm text-[#a8532a] font-medium" },
     `${unsent.length} hydro bill${unsent.length === 1 ? "" : "s"} didn't reach the customer \u2014 open Sent bills to resend`
-  ), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "space-y-3" }, pending.map((r) => {
-    const site = db.sites.find((s) => s.id === r.siteId);
-    const owner = hydroBillTo(db, r);
-    const currentOwner = getSiteOwner(db, r.siteId);
-    return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r), billedFrom: billedBefore(r) });
+  ), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, pending.length === 0 ? "All caught up — nothing waiting on a reading right now." : `${pending.length} reading${pending.length === 1 ? "" : "s"} waiting to be confirmed and invoiced.`), pending.length === 0 ? null : React.createElement("div", { className: "space-y-2" }, (() => {
+    // In site order, area by area, the same dropdowns as the reading page.
+    const pendingSites = (db.sites || []).filter((s) => pending.some((r) => r.siteId === s.id));
+    const groups = groupSitesByHydroRange(pendingSites).map((g) => ({ label: g.label, readings: g.sites.flatMap((st) => pending.filter((r) => r.siteId === st.id)) }));
+    const orphans = pending.filter((r) => !pendingSites.some((st) => st.id === r.siteId));
+    if (orphans.length) groups.push({ label: "No site on file", readings: orphans });
+    return groups;
+  })().map((group) => {
+    const isOpen = openReviewGroups.has(group.label);
+    const flaggedCount = group.readings.filter((r) => r.flagged).length;
+    return React.createElement("div", { key: group.label, className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden", "data-review-group": group.label }, React.createElement(
+      "button",
+      { type: "button", onClick: () => toggleReviewGroup(group.label), "aria-expanded": isOpen, className: "w-full flex items-center justify-between gap-2 px-4 py-3 text-left" },
+      React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, group.label, " ", React.createElement("span", { className: "text-xs font-normal text-[#9A968D]" }, "(", group.readings.length, ")"), flaggedCount > 0 && React.createElement("span", { className: "ml-2 text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a]" }, `${flaggedCount} flagged`)),
+      React.createElement("span", { className: `text-[#75716A] transition-transform ${isOpen ? "rotate-180" : ""}` }, "\u25BC")
+    ), isOpen && React.createElement("div", { className: "px-3 pb-3 border-t border-[#E2DED5] pt-3 space-y-3" }, group.readings.map((r) => {
+      const site = db.sites.find((s) => s.id === r.siteId);
+      const owner = hydroBillTo(db, r);
+      const currentOwner = getSiteOwner(db, r.siteId);
+      return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r), billedFrom: billedBefore(r) });
+    })));
   }))), printAsk && React.createElement(Modal, { title: "Print a copy for the file?", onClose: () => setPrintAsk(null) }, React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} ${printAsk.reading.emailStatus === "sent" ? `was emailed to ${printAsk.reading.emailedTo}` : "wasn't emailed"}. Print a copy for the customer's file, in case they'd rather pay at the office?`), React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setPrintAsk(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not now"), React.createElement("button", { type: "button", onClick: () => {
     printHydroBills([printAsk.reading], db);
     setPrintAsk(null);

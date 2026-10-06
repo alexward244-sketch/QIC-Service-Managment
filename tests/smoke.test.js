@@ -884,6 +884,13 @@ test("a new version bar appears when the page on the server changes, and only th
   await page.close();
 });
 
+test("hydro areas still find sites A-D and K1-K5 after the 4-digit change, and 0412A is 4 Season", async () => {
+  const page = await openApp(browser, "stub");
+  const groups = await page.evaluate(() => groupSitesByHydroRange(["1046", "0001", "000B", "0412A", "K1", "000A", "0256", "0500"].map((n, i) => ({ id: String(i), number: n }))).map((g) => `${g.label}: ${g.sites.map((s) => s.number).join(" ")}`));
+  assert.deepEqual(groups, ["Front of Park: 000A 000B K1 0001 0256", "4 Season: 0412A", "Limestone South: 0500", "Pebble Beach: 1046"]);
+  await page.close();
+});
+
 test("customers: tidy names takes the site number off the end, only after review", async () => {
   const page = await openApp(browser, "stub");
   const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));
