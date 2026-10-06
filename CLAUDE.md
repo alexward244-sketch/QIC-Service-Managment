@@ -94,6 +94,14 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   invoices. Payments are tracked in the accounting software, not the app.
 - The bill must show previous and current readings (with dates) and usage.
 
+**Winterizing**
+- Planning is weekdays only, from the season start (`winterSeasonStart`),
+  up to `winterDailyLimit` (25) a day; `winterBlockedDays` are kept free of
+  sign-ups (Pebble Beach / By the Woods are in their fee and don't sign up).
+- Auto-plan honours a customer's requested date when there's room; a rain
+  day pushes that day and after back a workday; cottages not finished on
+  their day move to the next workday on their own (`carryOverWinter`).
+
 **Parts**
 - Each part is its own document in the `parts` collection (not in
   campground/data). `persist()` writes only parts a screen changed, stock

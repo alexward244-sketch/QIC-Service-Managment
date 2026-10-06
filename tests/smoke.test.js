@@ -489,6 +489,74 @@ async function openWinterizing(page) {
   });
 }
 
+test("winterizing season planning: auto-plan from the start date, 25 a day (2 here), blocked days, rain days, carry-over", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2, winterBlockedDays: [{ date: "2026-10-15", label: "Pebble Beach" }] }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    const reqs = [
+      { id: "r1", requestedDate: "2026-10-14", createdAt: "1" },
+      { id: "r2", requestedDate: "2026-10-14", createdAt: "2" },
+      { id: "r3", requestedDate: "2026-10-14", createdAt: "3" },
+      { id: "r4", createdAt: "4" },
+      { id: "r5", requestedDate: "2026-10-08", createdAt: "5" },
+      { id: "r6", plannedDate: "2026-10-13", createdAt: "6" },
+      { id: "r7", requestedDate: "2026-10-13", completed: true }
+    ];
+    db.winterizingRequests = reqs;
+    const plan = Object.fromEntries(autoPlanWinter(reqs, db, { today: "2026-10-06", byArea: false }).map((p) => [p.request.id, p.date]));
+    const planned = reqs.map((r) => plan[r.id] ? { ...r, plannedDate: plan[r.id] } : r);
+    const rain = Object.fromEntries(pushBackWinterDay(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
+    // It's the 14th and r4, r6 (planned the 13th) weren't finished.
+    const carry = Object.fromEntries(carryOverWinter(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
+    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)) };
+  });
+  // r6 is kept on the 13th (put there by hand); r1, r2 get the day they asked for; r3 overflows past the
+  // blocked 15th to the 16th; r4 and r5 (asked for a day before the season) fill the rest in sign-up order.
+  assert.deepEqual(out.plan, { r1: "2026-10-14", r2: "2026-10-14", r3: "2026-10-16", r4: "2026-10-13", r5: "2026-10-16" });
+  assert.deepEqual(out.rain, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r5: "2026-10-19" }, "a rain day moves that day and after back a weekday, skipping the blocked day and the weekend");
+  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r4: "2026-10-14", r5: "2026-10-19", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend)");
+  assert.equal(out.start, "2026-10-13", "the board opens on the season's first day");
+  assert.equal(out.blockedIsWorkday, "2026-10-16");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing plan board: season settings, day counts, blocking a day and the auto-plan preview", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.getByRole("tab", { name: "Plan" }).click();
+  await page.getByLabel("Max per day").fill("1");
+  const today = await page.evaluate(() => todayISO());
+  const col = page.locator(`[data-plan-column="${today}"]`);
+  assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
+  // Dropping Cedar on a full day offers the next day with room.
+  await page.locator('[data-plan-card="r2"]').dragTo(col);
+  await page.getByText("That day is full").waitFor();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  // Block a day (when the board shows one ahead).
+  const blockBtn = page.getByRole("button", { name: "Block day" }).first();
+  if (await blockBtn.count()) {
+    await blockBtn.click();
+    await page.getByPlaceholder("e.g. Pebble Beach & By the Woods").fill("Pebble Beach");
+    await page.getByRole("button", { name: "Block day" }).last().click();
+    await page.locator("[data-blocked-day]").first().getByText(/Pebble Beach/).waitFor();
+  }
+  // Print a day's forms in one click.
+  await page.evaluate(() => {
+    window.__printed = "";
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed += h; }, close() {} } });
+  });
+  await col.getByRole("button", { name: /Print/ }).click();
+  assert.match(await page.evaluate(() => window.__printed), /Willow/);
+  await page.getByRole("button", { name: "Auto-plan…" }).click();
+  await page.getByText("Auto-plan winterizing").waitFor();
+  await page.getByRole("button", { name: /^Plan \d+ cottage/ }).click();
+  const saved = await page.evaluate(() => window.__saved.map((r) => [r.id, r.plannedDate]));
+  assert.ok(saved.length >= 1 && saved.every(([, d]) => /^\d{4}-\d{2}-\d{2}$/.test(d)), "auto-plan gives each a day");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing on a computer: overview cards, filters, and the cottage panel's checklist", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => { try { localStorage.removeItem("qic-winter-view"); } catch (e) {} });

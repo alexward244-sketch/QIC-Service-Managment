@@ -241,6 +241,16 @@ test("The hydro bill email shows the previous and current readings with their da
   assert.match(text, /Previous reading \(Jun 1, 2026\) 1000/);
   assert.match(text, /Current reading \(Sep 20, 2026\) 1250/);
   assert.match(text, /Usage 250 kWh/);
+  // Then: print a copy for the customer's file.
+  await page.evaluate(() => {
+    window.__printed = "";
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed += h; }, close() {} } });
+  });
+  await page.getByText("Print a copy for the file?").waitFor();
+  await page.getByRole("button", { name: "Print", exact: true }).click();
+  const printed = (await page.evaluate(() => window.__printed)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  assert.match(printed, /Current reading \(Sep 20, 2026\) 1250/);
+  assert.match(printed, /HYD-\d{2}-\d{4}/);
   await page.close();
 });
 
@@ -269,7 +279,8 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
   for (let i = 0; i < 2; i++) {
     await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
     await page.getByRole("button", { name: "Yes, send" }).click();
-    await page.waitForTimeout(300);
+    await page.getByText("Print a copy for the file?").waitFor();
+    await page.getByRole("button", { name: "Not now" }).click();
   }
   const done = await waitFor(async () => {
     const list = await readings();
@@ -290,6 +301,7 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
   await page.getByRole("button", { name: /1 hydro bill didn't reach the customer/ }).click();
   const row = page.locator(`[data-hydro-bill="${done.d.invoiceNumber}"]`);
   await row.getByText("Didn't send").waitFor();
+  assert.equal(await row.getByRole("button", { name: "Print" }).count(), 1, "each sent bill can be printed");
   await page.evaluate(() => window.__fail.clear());
   await row.getByRole("button", { name: "Resend" }).click();
   await row.getByRole("button", { name: "Send", exact: true }).click();
