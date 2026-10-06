@@ -941,6 +941,9 @@ async function requestWorkOrderSummary(rawNotes) {
 // park facilities (QIC Facility sites).
 function formatSiteNumber(value) {
   const t = String(value == null ? "" : value).trim();
+  // Letter sites (A-D) are written 000A, however they're typed.
+  const letter = /^0*([A-Za-z])$/.exec(t);
+  if (letter) return `000${letter[1].toUpperCase()}`;
   const m = /^(\d+)([A-Za-z]?)$/.exec(t);
   return m && m[1].length < 4 ? `${m[1].padStart(4, "0")}${m[2].toUpperCase()}` : t;
 }
@@ -6958,7 +6961,8 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
   const filtered = invoices.filter((inv) => {
     if (!filter) return true;
     const customer = customerName(inv.customerId);
-    const hay = `${inv.invoiceNumber} ${inv.title || ""} ${customer}`.toLowerCase();
+    const site = invoiceSiteNumber(inv, db);
+    const hay = `${inv.invoiceNumber} ${inv.title || ""} ${customer} ${site} ${site.replace(/^0+(?=\w)/, "")}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   }).slice().sort((a, b) => (b.invoiceNumber || "").localeCompare(a.invoiceNumber || ""));
   const totalInvoiced = invoices.reduce((sum, inv) => sum + computeQuoteTotals(inv, inv.taxRate != null ? inv.taxRate : taxRate).total, 0);
@@ -20021,7 +20025,8 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
   const filtered = invoices.filter((inv) => {
     if (!filter) return true;
     const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
-    const hay = `${inv.invoiceNumber} ${inv.title || ""} ${(customer == null ? void 0 : customer.name) || ""}`.toLowerCase();
+    const site = invoiceSiteNumber(inv, db);
+    const hay = `${inv.invoiceNumber} ${inv.title || ""} ${(customer == null ? void 0 : customer.name) || ""} ${site} ${site.replace(/^0+(?=\w)/, "")}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   }).slice().sort((a, b) => (b.invoiceNumber || "").localeCompare(a.invoiceNumber || ""));
   return React.createElement(
