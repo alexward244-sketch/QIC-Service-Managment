@@ -797,6 +797,25 @@ test("cottage appliances: range and fireplace types, with make, model, year and 
   await page.close();
 });
 
+test("a new version bar appears when the page on the server changes, and only then", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__page = "v1";
+    window.__checks = 0;
+    const fetchPage = () => { window.__checks++; return Promise.resolve(window.__page); };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    ReactDOM.createRoot(host).render(React.createElement(UpdateAvailableBar, { fetchPage, intervalMs: 100 }));
+  });
+  await page.waitForFunction(() => window.__checks >= 3);
+  assert.equal(await page.getByText("New version of the app ready").count(), 0, "same page: no bar");
+  await page.evaluate(() => { window.__page = "v2"; });
+  await page.getByText("New version of the app ready").waitFor();
+  assert.equal(await page.getByRole("button", { name: "Reload" }).count(), 1);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("customers: tidy names takes the site number off the end, only after review", async () => {
   const page = await openApp(browser, "stub");
   const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));
