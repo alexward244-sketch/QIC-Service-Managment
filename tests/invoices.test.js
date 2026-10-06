@@ -28,11 +28,10 @@ for (const role of ["admin", "accounting"]) {
     assert.equal(inv.sourceType, "workOrder");
     assert.equal(inv.customerId, "c1");
     assert.equal(inv.notes, "We replaced the kitchen tap washer.");
-    assert.equal(inv.laborHours, 1.5, "the invoice carries the total hours only");
     assert.equal(inv.laborEntries, undefined, "the per-worker breakdown stays on the work order");
-    assert.equal(inv.serviceCallType, "Tech", "the service call picked at wrap-up carries over");
-    assert.equal(inv.serviceCall, 70);
-    assert.deepEqual(inv.lineItems.map((l) => [l.description, l.quantity, l.unitPrice]), [["Washer", 2, 20]]);
+    // Hours (total only) and the service call picked at wrap-up become lines.
+    assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Washer", 2, 20], ["labour", "Labour — Labour Tech", 1.5, 65], ["serviceCall", "Service call — Tech", 1, 70]]);
+    assert.deepEqual([inv.laborHours, inv.serviceCall], [0, 0]);
     assert.ok(inv.invoiceNumber, "the invoice has a number");
     assert.deepEqual(page.pageErrors, []);
     await page.close();

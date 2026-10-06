@@ -670,6 +670,44 @@ test("trash: a deleted email can be read before restoring, and says where it was
   await page.close();
 });
 
+test("invoice form: typing in a line's description offers parts, labour rates and service calls, and a new line opens under it", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = [];
+    const parts = [{ id: "p1", name: "Washer", sku: "W-12", price: 20, salesAccount: "4010" }, { id: "p2", name: "Water heater element", price: 45 }];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(InvoiceForm, { initial: null, sites: [], cottages: [], customers: [], parts, workOrders: [], invoiceNumber: "INV-26-0020", taxRate: 13, rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (inv) => window.__saved.push(inv), onCancel() {} }));
+  });
+  await page.getByRole("textbox").first().fill("Deck repair");
+  const desc = () => page.getByPlaceholder(/^Description/);
+  assert.equal(await desc().count(), 1);
+
+  await desc().nth(0).fill("labour");
+  const opts = await page.getByRole("option").allInnerTexts();
+  assert.deepEqual(opts.map((o) => o.split(/\s*\$/)[0].trim()), ["Labour — Service Tech", "Labour — Labour Tech", "Labour — Warranty"], "every labour rate, not N/A");
+  await page.getByRole("option", { name: /Labour — Service Tech/ }).click();
+  assert.equal(await desc().count(), 2, "a new line opens under it");
+  await page.getByLabel("Hours").fill("2");
+
+  await desc().nth(1).fill("w-12");
+  await page.getByRole("option", { name: /^Washer/ }).waitFor();
+  await desc().nth(1).press("Enter");
+  assert.equal(await desc().count(), 3);
+
+  await desc().nth(2).fill("service");
+  await page.getByRole("option", { name: /Service call — Tech/ }).click();
+  assert.equal(await desc().count(), 4);
+  assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
+  assert.equal(await page.getByText("Hours Worked").count(), 0, "no separate labour fields");
+
+  await page.getByRole("button", { name: "Save Invoice" }).click();
+  const inv = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.serviceCall, t.subtotal], [20, 220, 70, 310]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("customers: tidy names takes the site number off the end, only after review", async () => {
   const page = await openApp(browser, "stub");
   const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));

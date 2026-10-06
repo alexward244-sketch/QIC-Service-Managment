@@ -6341,6 +6341,81 @@ function PaymentInstructionsControl({ db, persist }) {
   ));
 }
 
+// ---- Invoice line items: parts, labour and service calls in one list ----
+const blankInvoiceLine = () => ({ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" });
+function labourInvoiceLine(opt, hours) {
+  return { id: uid(), kind: "labour", rateType: opt.label, description: `Labour — ${opt.label}`, quantity: hours != null ? hours : 1, unitPrice: Number(opt.rate) || 0, account: opt.account || "" };
+}
+function serviceCallInvoiceLine(opt) {
+  return { id: uid(), kind: "serviceCall", rateType: opt.label, description: `Service call — ${opt.label}`, quantity: 1, unitPrice: Number(opt.rate) || 0, account: opt.account || "" };
+}
+function partInvoiceLine(part, quantity) {
+  return { id: uid(), description: part.name, quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+}
+// The lines an invoice opens with in the form: an older invoice's labour
+// and service call fields become lines, with a blank line to type into last.
+function invoiceFormLines(initial, rateOptions, serviceCallOptions) {
+  const lines = ((initial && initial.lineItems) || []).filter((li) => li.description || Number(li.unitPrice));
+  if (initial && Number(initial.laborHours) > 0) {
+    const opt = rateOptions.find((r) => r.label === initial.laborRateType) || { label: initial.laborRateType || "Labour", rate: Number(initial.laborRate) || 0, account: initial.laborAccount || "" };
+    lines.push({ ...labourInvoiceLine(opt, Number(initial.laborHours)), unitPrice: initial.laborRate != null ? Number(initial.laborRate) : Number(opt.rate) || 0 });
+  }
+  if (initial && initial.serviceCallType && initial.serviceCallType !== "None") {
+    const opt = serviceCallOptions.find((o) => o.label === initial.serviceCallType) || { label: initial.serviceCallType, rate: Number(initial.serviceCall) || 0 };
+    lines.push({ ...serviceCallInvoiceLine(opt), unitPrice: initial.serviceCall != null ? Number(initial.serviceCall) : Number(opt.rate) || 0 });
+  }
+  return [...lines, blankInvoiceLine()];
+}
+// What typing in a line's Description offers: parts (by name or SKU),
+// labour at each rate, and service calls.
+function invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions) {
+  const q = (text || "").trim().toLowerCase();
+  if (!q) return [];
+  const words = q.split(/\s+/);
+  const hit = (hay) => words.every((w) => hay.toLowerCase().includes(w));
+  const labour = rateOptions.filter((r) => r.label !== "N/A" && hit(`labour labor hours ${r.label}`)).map((r) => ({ key: `labour:${r.label}`, label: `Labour — ${r.label}`, detail: `${formatPrice(r.rate)}/hr`, line: () => labourInvoiceLine(r) }));
+  const calls = serviceCallOptions.filter((o) => o.label !== "None" && hit(`service call ${o.label}`)).map((o) => ({ key: `call:${o.label}`, label: `Service call — ${o.label}`, detail: formatPrice(o.rate), line: () => serviceCallInvoiceLine(o) }));
+  const partHits = (parts || []).filter((p) => hit(`${p.name || ""} ${p.sku || ""}`)).slice(0, 8).map((p) => ({ key: `part:${p.id}`, label: p.name, detail: [p.sku, formatPrice(p.price)].filter(Boolean).join(" · "), line: () => partInvoiceLine(p) }));
+  return [...labour, ...calls, ...partHits];
+}
+// A line's Description box: type to search, pick with the mouse or
+// arrow keys + Enter. Anything typed that isn't picked stays as typed.
+function InvoiceLineDescription({ value, onChange, onPick, suggest, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const items = open ? suggest(value) : [];
+  const pick = (item) => {
+    setOpen(false);
+    onPick(item.line());
+  };
+  const onKeyDown = (e) => {
+    if (!items.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, items.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pick(items[Math.min(active, items.length - 1)]); }
+    else if (e.key === "Escape") { e.stopPropagation(); setOpen(false); }
+  };
+  return React.createElement("div", { className: "relative flex-1 min-w-[12rem]" },
+    React.createElement("input", {
+      className: inputCls,
+      value,
+      placeholder,
+      onChange: (e) => { onChange(e.target.value); setOpen(true); setActive(0); },
+      onFocus: () => setOpen(true),
+      onBlur: () => setTimeout(() => setOpen(false), 150),
+      onKeyDown
+    }),
+    items.length > 0 && React.createElement("div", { className: "absolute z-30 left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg", role: "listbox" },
+      items.map((item, i) => React.createElement("button", {
+        key: item.key,
+        type: "button",
+        role: "option",
+        "aria-selected": i === active,
+        onMouseDown: (e) => { e.preventDefault(); pick(item); },
+        onMouseEnter: () => setActive(i),
+        className: `w-full flex items-center justify-between gap-3 px-3 py-2 text-left text-sm ${i === active ? "bg-[#F1EEE9]" : ""}`
+      }, React.createElement("span", { className: "text-[#1E1A13]" }, item.label), React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.detail)))));
+}
 function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, invoiceNumber, taxRate, rateOptions, serviceCallOptions, onSave, onCancel }) {
   var _a, _b, _c, _d;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
@@ -6350,15 +6425,11 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [linkedWorkOrderId, setLinkedWorkOrderId] = useState((initial == null ? void 0 : initial.sourceType) === "workOrder" ? initial.sourceId || "" : "");
-  const [lineItems, setLineItems] = useState(
-    ((_a = initial == null ? void 0 : initial.lineItems) == null ? void 0 : _a.length) ? initial.lineItems : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }]
-  );
-  const [laborHours, setLaborHours] = useState((_b = initial == null ? void 0 : initial.laborHours) != null ? _b : "");
-  const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || "N/A");
+  // Labour and the service call are lines too (see invoiceFormLines).
+  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions));
   const [shopSuppliesMode, setShopSuppliesMode] = useState((initial == null ? void 0 : initial.shopSuppliesMode) || "percent");
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_c = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _c : 0);
   const [shopSuppliesAmount, setShopSuppliesAmount] = useState((initial == null ? void 0 : initial.shopSuppliesAmount) != null ? initial.shopSuppliesAmount : "");
-  const [serviceCallType, setServiceCallType] = useState((initial == null ? void 0 : initial.serviceCallType) || "None");
   const [depositAmount, setDepositAmount] = useState((initial == null ? void 0 : initial.depositAmount) != null ? initial.depositAmount : "");
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
   const initialPaidMethod = initial ? invoicePaidMethod(initial, initial.taxRate != null ? initial.taxRate : taxRate) : null;
@@ -6415,14 +6486,14 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     if (!siteId && wo.siteId) setSiteId(wo.siteId);
     if (!cottageId && wo.cottageId) setCottageId(wo.cottageId);
     if (!customerId && wo.customerId) setCustomerId(wo.customerId);
-    if (!Number(laborHours) && Number(wo.laborHours) > 0) setLaborHours(wo.laborHours);
-    if (laborRateType === "N/A" && wo.laborRateType) setLaborRateType(wo.laborRateType);
-    if (serviceCallType === "None" && wo.serviceCallType) setServiceCallType(wo.serviceCallType);
-    if (lineItems.length === 1 && !lineItems[0].description.trim() && (wo.partsUsed || []).length) {
-      setLineItems((wo.partsUsed || []).map((pu) => {
+    // Its parts, hours and service call fill the lines, if none are typed yet.
+    if (!lineItems.some((li) => li.description.trim())) {
+      const fromWo = (wo.partsUsed || []).map((pu) => {
         const part = parts.find((p) => p.id === pu.partId);
-        return { id: uid(), description: part ? part.name : "Part", quantity: Number(pu.quantity) || 1, unitPrice: part ? Number(part.price) || 0 : 0, account: part ? part.salesAccount || "" : "", partId: pu.partId };
-      }));
+        return part ? partInvoiceLine(part, Number(pu.quantity) || 1) : { ...blankInvoiceLine(), description: "Part", quantity: Number(pu.quantity) || 1, partId: pu.partId };
+      });
+      const extra = invoiceFormLines({ laborHours: wo.laborHours, laborRateType: wo.laborRateType, serviceCallType: wo.serviceCallType }, rateOptions, serviceCallOptions);
+      setLineItems([...fromWo, ...extra]);
     }
   };
   const updateLine = (id, field, value) => {
@@ -6432,19 +6503,18 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     setLineItems((items) => items.length > 1 ? items.filter((li) => li.id !== id) : items);
   };
   const addBlankLine = () => {
-    setLineItems((items) => [...items, { id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }]);
+    setLineItems((items) => [...items, blankInvoiceLine()]);
   };
-  const addPartLine = (partId) => {
-    const part = parts.find((p) => p.id === partId);
-    if (!part) return;
-    setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id }]);
+  // A part, labour or service call picked from a line's suggestions fills
+  // that line; picking on the last line opens a new blank one under it.
+  const pickLine = (id, picked) => {
+    setLineItems((items) => {
+      const next = items.map((li) => li.id === id ? { ...picked, id } : li);
+      return next[next.length - 1].id === id ? [...next, blankInvoiceLine()] : next;
+    });
   };
-  const laborRateOption = rateOptions.find((r) => r.label === laborRateType);
-  const laborRate = laborRateOption ? laborRateOption.rate : 0;
-  const laborAccount = laborRateOption ? laborRateOption.account : "";
-  const serviceCallOption = serviceCallOptions.find((s) => s.label === serviceCallType);
-  const serviceCall = serviceCallOption ? serviceCallOption.rate : 0;
-  const totalsInput = { lineItems, laborHours, laborRate, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount, serviceCall };
+  const suggestLines = (text) => invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions);
+  const totalsInput = { lineItems, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount };
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals(totalsInput, taxRate);
   const balance = total - (Number(depositAmount) || 0);
   const submit = () => {
@@ -6455,7 +6525,8 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       quantity: Number(li.quantity) || 0,
       unitPrice: Number(li.unitPrice) || 0,
       account: (li.account || "").trim(),
-      ...li.partId ? { partId: li.partId } : {}
+      ...li.partId ? { partId: li.partId } : {},
+      ...li.kind ? { kind: li.kind, rateType: li.rateType || "" } : {}
     }));
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
@@ -6469,15 +6540,16 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       customerId: customerId || null,
       notes: notes.trim(),
       lineItems: cleanItems,
-      laborHours: Number(laborHours) || 0,
-      laborRate,
-      laborRateType,
-      laborAccount,
+      // Labour and the service call are lines now; these older fields are cleared.
+      laborHours: 0,
+      laborRate: 0,
+      laborRateType: "N/A",
+      laborAccount: "",
       shopSuppliesMode,
       shopSuppliesPercent: Number(shopSuppliesPercent) || 0,
       shopSuppliesAmount: Number(shopSuppliesAmount) || 0,
-      serviceCallType,
-      serviceCall,
+      serviceCallType: "None",
+      serviceCall: 0,
       taxRate,
       // Ticked paid: the whole total is in. Unticked after being paid:
       // only a real (partial) deposit stays.
@@ -6529,24 +6601,26 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     value: customerId,
     onChange: pickCustomer,
     placeholder: "Search customers\u2026"
-  }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Shown on the invoice." }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, "This will appear on the invoice sent to the customer.")), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center flex-wrap" }, /* @__PURE__ */ React.createElement("input", {
-    className: inputCls + " flex-1 min-w-[10rem]",
+  }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Shown on the invoice." }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, "This will appear on the invoice sent to the customer.")), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center flex-wrap", "data-line-kind": li.kind || "part" }, React.createElement(InvoiceLineDescription, {
     value: li.description,
-    onChange: (e) => updateLine(li.id, "description", e.target.value),
-    placeholder: "Description"
-  }), /* @__PURE__ */ React.createElement("input", {
+    onChange: (v) => updateLine(li.id, "description", v),
+    onPick: (picked) => pickLine(li.id, picked),
+    suggest: suggestLines,
+    placeholder: "Description \u2014 type a part, \"labour\" or \"service call\""
+  }), li.kind === "labour" && React.createElement("span", { className: "text-[11px] text-[#75716A]" }, "Hours"), /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
-    step: "1",
-    className: inputCls + " w-16",
+    step: li.kind === "labour" ? "0.25" : "1",
+    className: inputCls.replace("w-full ", "") + " w-20",
     value: li.quantity,
     onChange: (e) => updateLine(li.id, "quantity", e.target.value),
-    placeholder: "Qty"
+    placeholder: li.kind === "labour" ? "Hrs" : "Qty",
+    "aria-label": li.kind === "labour" ? "Hours" : "Quantity"
   }), /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
     step: "0.01",
-    className: inputCls + " w-24",
+    className: inputCls.replace("w-full ", "") + " w-24",
     value: li.unitPrice,
     onChange: (e) => updateLine(li.id, "unitPrice", e.target.value),
     placeholder: "Unit $"
@@ -6559,22 +6633,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"), parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "sm:ml-auto w-56" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
-    options: parts.map((p) => ({ value: p.id, label: `${p.name} (${formatPrice(p.price)})`, searchText: `${p.name} ${p.sku || ""}` })),
-    value: "",
-    onChange: (val) => {
-      if (val) addPartLine(val);
-    },
-    placeholder: "Add from parts\u2026"
-  })))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Labour & Extras"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, /* @__PURE__ */ React.createElement("input", {
-    type: "number",
-    min: "0",
-    step: "0.25",
-    className: inputCls,
-    value: laborHours,
-    onChange: (e) => setLaborHours(e.target.value),
-    placeholder: "0"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", {
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Shop Supplies"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", {
     type: "button",
     onClick: () => setShopSuppliesMode("percent"),
     className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]")
@@ -6598,7 +6657,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     value: shopSuppliesAmount,
     onChange: (e) => setShopSuppliesAmount(e.target.value),
     placeholder: "0.00"
-  }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")")))))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
+  }))))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
     step: "0.01",
@@ -6606,7 +6665,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     value: depositAmount,
     onChange: (e) => setDepositAmount(e.target.value),
     placeholder: "0.00"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
 }
 
 function InvoiceCard({ inv, db, taxRate, emailStatus, onView, onEdit, onPrint, onInfoSheet, onEmail, onSetPaid, onDelete }) {
@@ -6672,12 +6731,12 @@ function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, o
         /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0)))
       ))
     ),
-    (Number(invoice.laborHours) > 0 || totals.shopSupplies > 0 || totals.serviceCall > 0) && /* @__PURE__ */ React.createElement(
+    (Number(invoice.laborHours) > 0 || totals.shopSupplies > 0 || Number(invoice.serviceCall) > 0) && /* @__PURE__ */ React.createElement(
       "div",
       { className: "mb-4 space-y-1 text-sm" },
       Number(invoice.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, `Labor — ${invoice.laborHours} hrs × ${formatPrice(invoice.laborRate || 0)}`), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.laborCost))),
       totals.shopSupplies > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Shop Supplies"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.shopSupplies))),
-      totals.serviceCall > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.serviceCall)))
+      Number(invoice.serviceCall) > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(Number(invoice.serviceCall))))
     ),
     /* @__PURE__ */ React.createElement(
       "div",
@@ -8058,11 +8117,16 @@ function buildWorkOrderHtml(wo, db) {
     </div>`;
 }
 
+// Line items can be parts (no kind), labour ("labour": quantity = hours)
+// or a service call ("serviceCall"); older invoices and quotes keep labour
+// and the service call in their own fields instead. Either way they add up
+// the same, and shop supplies are a share of parts + labour only.
 function computeQuoteTotals(quote, taxRate) {
-  const lineItemsSubtotal = quote.lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
-  const laborCost = (Number(quote.laborHours) || 0) * (Number(quote.laborRate) || 0);
+  const lineTotal = (kind) => (quote.lineItems || []).filter((li) => (li.kind || "part") === kind).reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+  const lineItemsSubtotal = lineTotal("part");
+  const laborCost = (Number(quote.laborHours) || 0) * (Number(quote.laborRate) || 0) + lineTotal("labour");
   const shopSupplies = quote.shopSuppliesMode === "flat" ? Number(quote.shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(quote.shopSuppliesPercent) || 0) / 100);
-  const serviceCall = Number(quote.serviceCall) || 0;
+  const serviceCall = (Number(quote.serviceCall) || 0) + lineTotal("serviceCall");
   const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCall;
   const tax = subtotal * (taxRate / 100);
   return { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total: subtotal + tax };
@@ -8425,7 +8489,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
   const summaryTable = infoSheet ? "" : `<div style="display:flex; justify-content:flex-end;">
         <table style="font-size:13px;">
           ${lineItemsSubtotal ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Parts / line items</td><td style="text-align:right;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-          ${laborHours ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labour</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
+          ${laborCost ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labour</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
           ${shopSupplies ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Shop supplies</td><td style="text-align:right;">${formatPrice(shopSupplies)}</td></tr>` : ""}
           ${serviceCall ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Service call</td><td style="text-align:right;">${formatPrice(serviceCall)}</td></tr>` : ""}
           <tr><td style="padding:2px 16px 2px 0; color:#555; border-top:1px solid #ccc;">Subtotal</td><td style="text-align:right; border-top:1px solid #ccc;">${formatPrice(subtotal)}</td></tr>
@@ -8525,7 +8589,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
       ${itemsTable}
       <table style="width:100%;font-size:14px;">
         ${lineItemsSubtotal ? `<tr><td style="padding:2px 0;color:#75716A;">Parts / line items</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-        ${laborHours ? `<tr><td style="padding:2px 0;color:#75716A;">Labour</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(laborCost)}</td></tr>` : ""}
+        ${laborCost ? `<tr><td style="padding:2px 0;color:#75716A;">Labour</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(laborCost)}</td></tr>` : ""}
         ${shopSupplies ? `<tr><td style="padding:2px 0;color:#75716A;">Shop supplies</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(shopSupplies)}</td></tr>` : ""}
         ${serviceCall ? `<tr><td style="padding:2px 0;color:#75716A;">Service call</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(serviceCall)}</td></tr>` : ""}
         <tr><td style="padding:4px 0;color:#75716A;border-top:1px solid #E2DED5;">Subtotal</td><td style="padding:4px 0;text-align:right;color:#1E1A13;border-top:1px solid #E2DED5;">${formatPrice(subtotal)}</td></tr>
