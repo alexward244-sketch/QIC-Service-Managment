@@ -617,6 +617,8 @@ test("correspondence: every message in a customer's conversation can be deleted 
   await page.evaluate(() => {
     window.__deleted = [];
     window.__persisted = [];
+    window.__calls = [];
+    window.__callable = async (name, data) => { window.__calls.push([name, data]); return { data: { ok: true } }; };
     let db = { settings: {}, activityLog: [], trash: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
       correspondence: [
         { id: "a", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "First", body: "Older message", receivedAt: "2026-10-01T12:00:00Z" },
@@ -637,8 +639,160 @@ test("correspondence: every message in a customer's conversation can be deleted 
   assert.deepEqual(await page.evaluate(() => window.__deleted), ["b"]);
   const trash = await page.evaluate(() => window.__persisted[window.__persisted.length - 1].trash);
   assert.equal(trash[0].data.id, "b");
+  const calls = await page.evaluate(() => window.__calls);
+  assert.deepEqual(calls.map(([n, d]) => [n, d.direction, d.toEmail, d.subject, d.receivedAt]), [["trashEmailInZoho", "out", "anne@x.com", "Re: First", "2026-10-01T13:00:00Z"]], "its copy in Zoho goes to Zoho's Trash too");
   await card("Older message").waitFor();
   assert.equal(await card("Duplicate copy").count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("trash: a deleted email can be read before restoring, and says where it was deleted", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__restored = [];
+    const email = { id: "e1", direction: "in", fromEmail: "anne@x.com", subject: "Leak", body: "The tap leaks.\n\n\n\nThanks, Anne", receivedAt: "2026-10-01T12:00:00Z" };
+    const db = { activityLog: [], trash: [
+      { id: "t1", type: "correspondence", data: email, label: "Email \u2014 Leak", deletedAt: "2026-10-05T12:00:00Z", deletedIn: "Zoho" },
+      { id: "t2", type: "site", data: { id: "s1", number: "0001" }, label: "Site 0001", deletedAt: "2026-10-04T12:00:00Z" }
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(TrashModal, { db, persist() {}, saveCorrespondence: (c) => window.__restored.push(c), onClose() {} }));
+  });
+  await page.getByText("Deleted in Zoho").waitFor();
+  assert.equal(await page.getByRole("button", { name: "View" }).count(), 1, "only emails have View");
+  await page.getByRole("button", { name: "View" }).click();
+  const shown = await page.locator("[data-trash-email]").innerText();
+  assert.match(shown, /From anne@x\.com/);
+  assert.match(shown, /The tap leaks\.\s+Thanks, Anne/);
+  await page.getByRole("button", { name: "Restore" }).first().click();
+  assert.deepEqual(await page.evaluate(() => window.__restored.map((c) => c.id)), ["e1"]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("invoice form: typing in a line's description offers parts, labour rates and service calls, and a new line opens under it", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = [];
+    const parts = [{ id: "p1", name: "Washer", sku: "W-12", price: 20, salesAccount: "4010" }, { id: "p2", name: "Water heater element", price: 45 }];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(InvoiceForm, { initial: null, sites: [], cottages: [], customers: [], parts, workOrders: [], invoiceNumber: "INV-26-0020", taxRate: 13, defaultShopSuppliesPercent: 5, rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (inv) => window.__saved.push(inv), onCancel() {} }));
+  });
+  await page.getByRole("textbox").first().fill("Deck repair");
+  const desc = () => page.getByPlaceholder(/^Description/);
+  // A new invoice starts with shop supplies at the Admin default, and a blank line.
+  assert.equal(await desc().count(), 2);
+  assert.equal(await desc().nth(0).inputValue(), "Shop supplies");
+  assert.equal(await page.getByLabel("Shop supplies percent").inputValue(), "5");
+
+  await desc().nth(1).fill("labour");
+  const opts = await page.getByRole("option").allInnerTexts();
+  assert.deepEqual(opts.map((o) => o.split(/\s*\$/)[0].trim()), ["Labour — Service Tech", "Labour — Labour Tech", "Labour — Warranty"], "every labour rate, not N/A");
+  await page.getByRole("option", { name: /Labour — Service Tech/ }).click();
+  assert.equal(await desc().count(), 3, "a new line opens under it");
+  await page.getByLabel("Hours").fill("2");
+
+  await desc().nth(2).fill("w-12");
+  await page.getByRole("option", { name: /^Washer/ }).waitFor();
+  await desc().nth(2).press("Enter");
+  assert.equal(await desc().count(), 4);
+
+  await desc().nth(3).fill("service");
+  await page.getByRole("option", { name: /Service call — Tech/ }).click();
+  assert.equal(await desc().count(), 5);
+
+  // Shop supplies: 5% of parts + labour, kept up to date; it can be picked by typing too.
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$12.00", "5% of $20 parts + $220 labour");
+  await page.getByLabel("Hours").fill("3");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$17.50");
+  await page.getByLabel("Hours").fill("2");
+  await desc().nth(4).fill("shop");
+  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).waitFor();
+  await desc().nth(4).fill("");
+  assert.equal(await page.getByText("Shop Supplies", { exact: true }).count(), 0, "no separate shop supplies box");
+  assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
+  assert.equal(await page.getByText("Hours Worked").count(), 0, "no separate labour fields");
+
+  await page.getByRole("button", { name: "Save Invoice" }).click();
+  const inv = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 12, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  assert.equal(inv.lineItems[0].percent, 5);
+  assert.equal(inv.shopSuppliesPercent, 0, "shop supplies is the line, not the old field");
+  const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
+  // Shop supplies: 5% of parts + labour, not the service call.
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 12, 70, 322]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("quote form: labour and service calls are typed into lines like invoices, and an older quote's hours become a line", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = [];
+    const parts = [{ id: "p1", name: "Washer", sku: "W-12", price: 20 }];
+    const initial = { id: "q1", title: "Deck repair", date: "2026-10-01", status: "Draft", lineItems: [{ id: "a", description: "Lumber", quantity: 4, unitPrice: 10 }], laborHours: 3, laborRate: 65, laborRateType: "Labour Tech", serviceCallType: "General", serviceCall: 50, shopSuppliesMode: "percent", shopSuppliesPercent: 10 };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(QuoteForm, { initial, sites: [], cottages: [], customers: [], parts, quotes: [], taxRate: 13, templates: [], rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (q) => window.__saved.push(q), onCancel() {} }));
+  });
+  const desc = () => page.getByPlaceholder(/^Description/);
+  await desc().first().waitFor();
+  assert.equal(await desc().count(), 5, "lumber, the labour, service call and shop supplies lines, and a blank line");
+  assert.equal(await page.getByText("Hours Worked").count(), 0);
+  await desc().nth(4).fill("washer");
+  await desc().nth(4).press("Enter");
+  assert.equal(await desc().count(), 6);
+  await page.getByRole("button", { name: /Save/ }).first().click();
+  const q = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual(q.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Lumber", 4, 10], ["labour", "Labour — Labour Tech", 3, 65], ["serviceCall", "Service call — General", 1, 50], ["shopSupplies", "Shop supplies", 1, 25.5], ["part", "Washer", 1, 20]]);
+  assert.deepEqual([q.laborHours, q.serviceCall, q.shopSuppliesPercent], [0, 0, 0]);
+  const t = await page.evaluate((x) => computeQuoteTotals(x, 13), q);
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [60, 195, 25.5, 50, 330.5], "10% of parts + labour, kept from the old quote");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("propane fills never get shop supplies: Create Invoice from a fill, or linking one on a new invoice", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { shopSuppliesPercent: 5 }, parts: [{ id: "gas", name: "Propane 100lb", price: 90 }], propaneRequests: [{ id: "r1", workOrderId: "old-fill" }] };
+    const fill = { id: "w1", title: "Propane Fill", source: "propane", partsUsed: [{ partId: "gas", quantity: 1 }] };
+    const oldFill = { id: "old-fill", title: "Fill tank", partsUsed: [] };
+    const job = { id: "w2", title: "Deck repair", partsUsed: [] };
+    const pct = (wo) => buildInvoicePrefillFromSource(wo, "workOrder", db).shopSuppliesPercent;
+    return { fill: pct(fill), oldFill: pct(oldFill), job: pct(job), byTitle: isPropaneWorkOrder({ id: "x", title: "Propane Fill" }) };
+  });
+  assert.deepEqual(out, { fill: 0, oldFill: 0, job: 5, byTitle: true }, "a propane work order (tagged, linked from its request, or titled Propane Fill) gets none; other jobs get the default");
+
+  await page.evaluate(() => {
+    window.__saved = [];
+    const parts = [{ id: "gas", name: "Propane 100lb", price: 90 }];
+    const workOrders = [{ id: "w1", title: "Propane Fill", source: "propane", workOrderNumber: "WO-0100", date: "2026-10-05", status: "Completed", partsUsed: [{ partId: "gas", quantity: 1 }] }];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(InvoiceForm, { initial: null, sites: [], cottages: [], customers: [], parts, workOrders, invoiceNumber: "INV-26-0030", taxRate: 13, defaultShopSuppliesPercent: 5, rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (inv) => window.__saved.push(inv), onCancel() {} }));
+  });
+  assert.equal(await page.getByLabel("Shop supplies percent").count(), 1, "a new invoice starts with shop supplies");
+  await page.getByPlaceholder(/Search work orders|Search/).first().click();
+  await page.getByText(/WO-0100/).first().click();
+  await page.getByRole("button", { name: "Save Invoice" }).click();
+  const inv = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description]), [["part", "Propane 100lb"]], "linking the propane fill drops shop supplies");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("cottage appliances: range and fireplace types, with make, model, year and install date", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = [];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ApplianceForm, { initial: null, onSave: (a) => window.__saved.push(a), onCancel() {} }));
+  });
+  assert.deepEqual(await page.locator("select option").allInnerTexts(), ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace"]);
+  await page.locator("select").selectOption("Fireplace");
+  await page.getByLabel("Make").fill(" Napoleon ");
+  await page.getByLabel("Model").fill("GX70");
+  await page.getByLabel("Year").fill("2018");
+  await page.getByLabel("Install Date (if replaced)").fill("2026-06-15");
+  await page.getByRole("button", { name: "Save" }).click();
+  const a = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual([a.type, a.make, a.model, a.year, a.installDate], ["Fireplace", "Napoleon", "GX70", "2018", "2026-06-15"]);
+  assert.equal(await page.evaluate((x) => applianceDetails(x), a), "Napoleon GX70 · 2018");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -775,6 +929,78 @@ test("invoices: numbers carry the year and start over each January; the email as
     ];
   });
   assert.deepEqual(out, ["INV-26-0010", "INV-26-0011", "INV-27-0001", "HYD-26-0005", true, false, true]);
+  await page.close();
+});
+
+test("work order print-off shows the WO number; Cash is a payment option everywhere", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: {}, sites: [], cottages: [], customers: [], parts: [], staff: [] };
+    const html = buildWorkOrderHtml({ id: "w1", workOrderNumber: "WO-0088", title: "Loose front step", status: "Open", date: "2026-10-01", partsUsed: [], notes: [] }, db);
+    return [/WO-0088/.test(html), PROPANE_PAYMENT_METHODS.includes("Cash"), INVOICE_PAYMENT_METHODS.includes("Cash"), ADVANCE_PAYMENT_METHODS.includes("Cash")];
+  });
+  assert.deepEqual(out, [true, true, true, true]);
+  await page.close();
+});
+
+test("sites: numbers are written with 4 digits, and \"20\" still finds site 0020", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [{ id: "a", number: "1" }, { id: "b", number: "20" }, { id: "c", number: "412a" }, { id: "d", number: "K1" }, { id: "e", number: "1316" }, { id: "f", number: "33" }, { id: "g", number: "0033" }, { id: "h", number: "5", siteType: "QIC Facility" }];
+    return {
+      fmt: ["1", "20", "100", "412A", "412a", "1316", "K1", "A", " 7 "].map(formatSiteNumber),
+      same: [sameSiteNumber("0020", "20"), sameSiteNumber("Site #20", "0020"), sameSiteNumber("0020", "200"), sameSiteNumber("K1", "k1")],
+      todo: sitesToFormat(sites).map((r) => `${r.site.number}>${r.after}${r.clash ? "!" : ""}`),
+      typed: (findSiteByTypedNumber([{ id: "b", number: "0020" }], "20") || {}).id
+    };
+  });
+  assert.deepEqual(out.fmt, ["0001", "0020", "0100", "0412A", "0412A", "1316", "K1", "A", "0007"]);
+  assert.deepEqual(out.same, [true, true, false, true]);
+  assert.deepEqual(out.todo, ["1>0001", "20>0020", "33>0033!", "412a>0412A"], "a clash with an existing 0033 is flagged, not changed; park facilities are left alone");
+  assert.equal(out.typed, "b");
+  await page.close();
+});
+
+test("customers: phone numbers are stored as plain digits; Tidy phone numbers fixes existing ones after review", async () => {
+  const page = await openApp(browser, "stub");
+  const fmt = await page.evaluate(() => ["613-555-0148", "(613) 555-0148", "+1 613 555 0148", "613.555.0148", "6135550148", "613-555-0148 ext 2", "", "1-613-555-0148"].map(normalizePhone));
+  assert.deepEqual(fmt, ["6135550148", "6135550148", "6135550148", "6135550148", "6135550148", "613-555-0148 ext 2", "", "6135550148"]);
+  await page.evaluate(() => {
+    window.__saved = [];
+    window.__persisted = [];
+    const db = { activityLog: [], customers: [
+      { id: "c1", name: "Anne Lee", phone: "613-555-0148", phone2: "(613) 555-0199", email: "a@x.com" },
+      { id: "c2", name: "Bo Day", phone: "6135550100" },
+      { id: "c3", name: "Cy Fox", phone: "613-555-0111 ext 4" }
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(PhoneTidyModal, { db, persist: (n) => window.__persisted.push(n), saveCustomer: async (c) => window.__saved.push(c), onClose() {} }));
+  });
+  assert.equal(await page.locator("[data-phone-tidy]").count(), 1, "only customers with something to change are listed");
+  await page.getByRole("button", { name: "Tidy 1 customer" }).click();
+  await page.waitForFunction(() => window.__saved.length === 1);
+  const saved = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual([saved.id, saved.phone, saved.phone2, saved.email], ["c1", "6135550148", "6135550199", "a@x.com"]);
+  await page.close();
+});
+
+test("customers: the form warns when a typed email is already on file for another customer", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const customers = [
+      { id: "c1", name: "Anne Lee", email: "Anne@X.com" },
+      { id: "c2", name: "Bo Day", email: "bo@y.com", matchEmails: ["bo.work@y.com"] },
+      { id: "c3", name: "Park Office", email: "service@qicampark.com" }
+    ];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CustomerForm, { initial: customers[0], sites: [], customers, onSave() {}, onCancel() {} }));
+  });
+  const note = page.getByText("is already on file for");
+  assert.equal(await note.count(), 0, "a customer's own email isn't a duplicate");
+  await page.getByLabel("Email Address").fill(" BO.work@y.com ");
+  await page.getByText('"BO.work@y.com" is already on file for Bo Day').waitFor();
+  await page.getByLabel("Email Address").fill("service@qicampark.com");
+  assert.equal(await note.count(), 0, "park addresses don't warn");
+  await page.getByLabel("Email", { exact: true }).fill("bo@y.com");
+  await page.getByText('"bo@y.com" is already on file for Bo Day').waitFor();
   await page.close();
 });
 

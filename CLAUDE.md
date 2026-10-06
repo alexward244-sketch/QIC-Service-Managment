@@ -72,6 +72,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   to a customer, even if one was saved on a customer record.
 - Zoho's `sentDateInGMT` is off by hours — use `receivedTime`.
 - No bulk delete in Correspondence; every message has its own Delete.
+- Deleting an email in the app moves its Zoho copy to Zoho's Trash
+  (`trashEmailInZoho`); an email moved to Zoho's Trash is removed from the
+  app (`zohoSentMail` checks Trash), so nobody answers it twice.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
   signature block, blank lines) — display only, stored body untouched.
 
@@ -99,10 +102,23 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   copy on a device that lost signal once wiped everyone's SKUs - don't go
   back to writing the whole list.
 
+**Sites**
+- Site numbers are written with 4 digits (1 -> 0001, 412A -> 0412A; letter
+  sites like A, K1 and QIC Facility sites unchanged) - `formatSiteNumber` on save. Compare site
+  numbers with `sameSiteNumber` / `signupSiteKey` (server: `matchSiteKey`),
+  never with `===`, so "site 20" still finds 0020.
+
 **Customers**
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".
 - No "(site)" in customer display names.
+- Phone numbers are stored as plain digits (6135550148) - `normalizePhone`
+  in `saveCustomer` and bulk add; numbers with words ("ext 2") are left as
+  typed.
+
+**Invoices**
+- Account numbers (sales/labour accounts) are kept on line items for
+  accounting but not shown on the invoice form or anything customers see.
 
 ## Ideas parked for later
 
