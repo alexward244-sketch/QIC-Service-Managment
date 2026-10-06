@@ -21653,8 +21653,53 @@ function AuthGate() {
   }
   return /* @__PURE__ */ React.createElement(CurrentUserContext.Provider, { value: user.email }, /* @__PURE__ */ React.createElement(AppContent, null));
 }
+// A tab or phone left open keeps running the version it loaded (which is
+// how two invoices once got old-style numbers hours after the new ones went
+// live). Every few minutes, and whenever the app comes back into view, this
+// re-reads the page from the server; if it has changed since this copy
+// loaded, a bar offers a reload. Nothing reloads by itself, so a half-filled
+// form is never lost.
+const APP_UPDATE_CHECK_MS = 5 * 60 * 1000;
+function pageFingerprint(text) {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = (h * 33 ^ text.charCodeAt(i)) >>> 0;
+  return `${text.length}:${h}`;
+}
+function fetchCurrentPage() {
+  if (!/^https?:$/.test(location.protocol)) return Promise.reject(new Error("not served"));
+  return fetch(location.pathname, { cache: "no-store" }).then((r) => r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`)));
+}
+function UpdateAvailableBar({ fetchPage = fetchCurrentPage, intervalMs = APP_UPDATE_CHECK_MS }) {
+  const [available, setAvailable] = useState(false);
+  const loaded = useRef(null);
+  useEffect(() => {
+    let stopped = false;
+    const check = () => fetchPage().then((text) => {
+      if (stopped) return;
+      const fp = pageFingerprint(text);
+      if (loaded.current == null) loaded.current = fp;
+      else if (fp !== loaded.current) setAvailable(true);
+    }).catch(() => {});
+    check();
+    const timer = setInterval(check, intervalMs);
+    const onVisible = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+  if (!available) return null;
+  return React.createElement(
+    "div",
+    { role: "status", className: "fixed top-2 inset-x-0 mx-auto w-fit z-[100] flex items-center gap-3 rounded-full bg-[#1E1A13] text-[#F9F5EC] text-sm pl-4 pr-1.5 py-1.5 shadow-lg max-w-[calc(100vw-1rem)]" },
+    React.createElement("span", { className: "whitespace-nowrap" }, "New version of the app ready"),
+    React.createElement("button", { type: "button", onClick: () => location.reload(), className: "rounded-full bg-[#377249] hover:bg-[#135C30] px-3 py-1 font-semibold whitespace-nowrap" }, "Reload")
+  );
+}
 function App() {
-  return /* @__PURE__ */ React.createElement(ErrorBoundary, null, /* @__PURE__ */ React.createElement(AuthGate, null));
+  return /* @__PURE__ */ React.createElement(ErrorBoundary, null, React.createElement(UpdateAvailableBar, null), /* @__PURE__ */ React.createElement(AuthGate, null));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
 
