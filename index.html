@@ -1252,7 +1252,7 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       laborHours: source.laborHours || 0,
       laborRateType: source.laborRateType || "N/A",
       shopSuppliesMode: "percent",
-      shopSuppliesPercent: (db.settings && db.settings.shopSuppliesPercent) != null ? db.settings.shopSuppliesPercent : 5,
+      shopSuppliesPercent: isPropaneWorkOrder(source, db.propaneRequests) ? 0 : (db.settings && db.settings.shopSuppliesPercent) != null ? db.settings.shopSuppliesPercent : 5,
       shopSuppliesAmount: 0,
       serviceCallType: source.serviceCallType || "None",
       serviceCall: source.serviceCall || 0,
@@ -6350,6 +6350,11 @@ function labourInvoiceLine(opt, hours) {
 function serviceCallInvoiceLine(opt) {
   return { id: uid(), kind: "serviceCall", rateType: opt.label, description: `Service call — ${opt.label}`, quantity: 1, unitPrice: Number(opt.rate) || 0, account: opt.account || "" };
 }
+// Propane fills never get shop supplies, whichever way they're invoiced.
+function isPropaneWorkOrder(wo, propaneRequests) {
+  if (!wo) return false;
+  return wo.source === "propane" || /^\s*propane fill\s*$/i.test(wo.title || "") || (propaneRequests || []).some((r) => r.workOrderId === wo.id);
+}
 function shopSuppliesInvoiceLine(percent) {
   return { id: uid(), kind: "shopSupplies", description: "Shop supplies", percent: percent != null ? percent : 5, quantity: 1, unitPrice: 0, account: "" };
 }
@@ -6358,7 +6363,10 @@ function partInvoiceLine(part, quantity) {
 }
 // The lines an invoice opens with in the form: an older invoice's labour
 // and service call fields become lines, with a blank line to type into last.
-function invoiceFormLines(initial, rateOptions, serviceCallOptions) {
+// A brand-new one (no `initial`) starts with shop supplies at
+// `newShopSuppliesPercent`. Propane and winterizing invoices are made
+// without this form, with no shop supplies.
+function invoiceFormLines(initial, rateOptions, serviceCallOptions, newShopSuppliesPercent) {
   const lines = ((initial && initial.lineItems) || []).filter((li) => li.description || Number(li.unitPrice));
   if (initial && Number(initial.laborHours) > 0) {
     const opt = rateOptions.find((r) => r.label === initial.laborRateType) || { label: initial.laborRateType || "Labour", rate: Number(initial.laborRate) || 0, account: initial.laborAccount || "" };
@@ -6371,6 +6379,7 @@ function invoiceFormLines(initial, rateOptions, serviceCallOptions) {
   if (initial && initial.shopSuppliesMode === "flat" ? Number(initial.shopSuppliesAmount) > 0 : Number(initial && initial.shopSuppliesPercent) > 0) {
     lines.push(initial.shopSuppliesMode === "flat" ? { ...shopSuppliesInvoiceLine(), percent: null, unitPrice: Number(initial.shopSuppliesAmount) } : shopSuppliesInvoiceLine(Number(initial.shopSuppliesPercent)));
   }
+  if (!initial && newShopSuppliesPercent) lines.push(shopSuppliesInvoiceLine(newShopSuppliesPercent));
   return [...lines, blankInvoiceLine()];
 }
 // What typing in a line's Description offers: parts (by name or SKU),
@@ -6459,7 +6468,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [linkedWorkOrderId, setLinkedWorkOrderId] = useState((initial == null ? void 0 : initial.sourceType) === "workOrder" ? initial.sourceId || "" : "");
   // Labour and the service call are lines too (see invoiceFormLines).
-  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions));
+  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions, defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 5));
   const [depositAmount, setDepositAmount] = useState((initial == null ? void 0 : initial.depositAmount) != null ? initial.depositAmount : "");
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
   const initialPaidMethod = initial ? invoicePaidMethod(initial, initial.taxRate != null ? initial.taxRate : taxRate) : null;
@@ -6517,13 +6526,14 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     if (!cottageId && wo.cottageId) setCottageId(wo.cottageId);
     if (!customerId && wo.customerId) setCustomerId(wo.customerId);
     // Its parts, hours and service call fill the lines, if none are typed yet.
-    if (!lineItems.some((li) => li.description.trim())) {
+    // (The shop supplies line a new invoice starts with doesn't count, and stays last.)
+    if (!lineItems.some((li) => li.kind !== "shopSupplies" && li.description.trim())) {
       const fromWo = (wo.partsUsed || []).map((pu) => {
         const part = parts.find((p) => p.id === pu.partId);
         return part ? partInvoiceLine(part, Number(pu.quantity) || 1) : { ...blankInvoiceLine(), description: "Part", quantity: Number(pu.quantity) || 1, partId: pu.partId };
       });
-      const extra = invoiceFormLines({ laborHours: wo.laborHours, laborRateType: wo.laborRateType, serviceCallType: wo.serviceCallType }, rateOptions, serviceCallOptions);
-      setLineItems([...fromWo, ...extra]);
+      const extra = invoiceFormLines({ laborHours: wo.laborHours, laborRateType: wo.laborRateType, serviceCallType: wo.serviceCallType }, rateOptions, serviceCallOptions).filter((li) => li.description);
+      setLineItems([...fromWo, ...extra, ...isPropaneWorkOrder(wo) ? [] : lineItems.filter((li) => li.kind === "shopSupplies"), blankInvoiceLine()]);
     }
   };
   const updateLine = (id, field, value) => {
@@ -7776,7 +7786,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   // Labour and the service call are lines, as on invoices (invoiceFormLines).
-  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions));
+  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions, defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 5));
   const [templateId, setTemplateId] = useState("");
   const [commentLog, setCommentLog] = useState((initial == null ? void 0 : initial.commentLog) || []);
   const [commentText, setCommentText] = useState("");
@@ -14367,6 +14377,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
     const wo = {
       id: uid(),
       title: "Propane Fill",
+      source: "propane",
       description,
       siteId: cottage ? cottage.siteId : null,
       cottageId: request.cottageId || null,
@@ -19013,6 +19024,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
     const wo = {
       id: uid(),
       title: "Propane Fill",
+      source: "propane",
       description,
       siteId: cottage ? cottage.siteId : null,
       cottageId: request.cottageId || null,

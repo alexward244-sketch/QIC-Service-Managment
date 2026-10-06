@@ -679,40 +679,43 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   });
   await page.getByRole("textbox").first().fill("Deck repair");
   const desc = () => page.getByPlaceholder(/^Description/);
-  assert.equal(await desc().count(), 1);
+  // A new invoice starts with shop supplies at the Admin default, and a blank line.
+  assert.equal(await desc().count(), 2);
+  assert.equal(await desc().nth(0).inputValue(), "Shop supplies");
+  assert.equal(await page.getByLabel("Shop supplies percent").inputValue(), "5");
 
-  await desc().nth(0).fill("labour");
+  await desc().nth(1).fill("labour");
   const opts = await page.getByRole("option").allInnerTexts();
   assert.deepEqual(opts.map((o) => o.split(/\s*\$/)[0].trim()), ["Labour — Service Tech", "Labour — Labour Tech", "Labour — Warranty"], "every labour rate, not N/A");
   await page.getByRole("option", { name: /Labour — Service Tech/ }).click();
-  assert.equal(await desc().count(), 2, "a new line opens under it");
+  assert.equal(await desc().count(), 3, "a new line opens under it");
   await page.getByLabel("Hours").fill("2");
 
-  await desc().nth(1).fill("w-12");
+  await desc().nth(2).fill("w-12");
   await page.getByRole("option", { name: /^Washer/ }).waitFor();
-  await desc().nth(1).press("Enter");
-  assert.equal(await desc().count(), 3);
-
-  await desc().nth(2).fill("service");
-  await page.getByRole("option", { name: /Service call — Tech/ }).click();
+  await desc().nth(2).press("Enter");
   assert.equal(await desc().count(), 4);
 
-  // Shop supplies: the Admin default % of parts + labour, kept up to date.
-  await desc().nth(3).fill("shop");
-  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).click();
+  await desc().nth(3).fill("service");
+  await page.getByRole("option", { name: /Service call — Tech/ }).click();
   assert.equal(await desc().count(), 5);
+
+  // Shop supplies: 5% of parts + labour, kept up to date; it can be picked by typing too.
   assert.equal(await page.locator("[data-shop-amount]").innerText(), "$12.00", "5% of $20 parts + $220 labour");
   await page.getByLabel("Hours").fill("3");
   assert.equal(await page.locator("[data-shop-amount]").innerText(), "$17.50");
   await page.getByLabel("Hours").fill("2");
+  await desc().nth(4).fill("shop");
+  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).waitFor();
+  await desc().nth(4).fill("");
   assert.equal(await page.getByText("Shop Supplies", { exact: true }).count(), 0, "no separate shop supplies box");
   assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
   assert.equal(await page.getByText("Hours Worked").count(), 0, "no separate labour fields");
 
   await page.getByRole("button", { name: "Save Invoice" }).click();
   const inv = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""], ["shopSupplies", "Shop supplies", 1, 12, ""]]);
-  assert.equal(inv.lineItems[3].percent, 5);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 12, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  assert.equal(inv.lineItems[0].percent, 5);
   assert.equal(inv.shopSuppliesPercent, 0, "shop supplies is the line, not the old field");
   const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
   // Shop supplies: 5% of parts + labour, not the service call.
@@ -742,6 +745,34 @@ test("quote form: labour and service calls are typed into lines like invoices, a
   assert.deepEqual([q.laborHours, q.serviceCall, q.shopSuppliesPercent], [0, 0, 0]);
   const t = await page.evaluate((x) => computeQuoteTotals(x, 13), q);
   assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [60, 195, 25.5, 50, 330.5], "10% of parts + labour, kept from the old quote");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("propane fills never get shop supplies: Create Invoice from a fill, or linking one on a new invoice", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { shopSuppliesPercent: 5 }, parts: [{ id: "gas", name: "Propane 100lb", price: 90 }], propaneRequests: [{ id: "r1", workOrderId: "old-fill" }] };
+    const fill = { id: "w1", title: "Propane Fill", source: "propane", partsUsed: [{ partId: "gas", quantity: 1 }] };
+    const oldFill = { id: "old-fill", title: "Fill tank", partsUsed: [] };
+    const job = { id: "w2", title: "Deck repair", partsUsed: [] };
+    const pct = (wo) => buildInvoicePrefillFromSource(wo, "workOrder", db).shopSuppliesPercent;
+    return { fill: pct(fill), oldFill: pct(oldFill), job: pct(job), byTitle: isPropaneWorkOrder({ id: "x", title: "Propane Fill" }) };
+  });
+  assert.deepEqual(out, { fill: 0, oldFill: 0, job: 5, byTitle: true }, "a propane work order (tagged, linked from its request, or titled Propane Fill) gets none; other jobs get the default");
+
+  await page.evaluate(() => {
+    window.__saved = [];
+    const parts = [{ id: "gas", name: "Propane 100lb", price: 90 }];
+    const workOrders = [{ id: "w1", title: "Propane Fill", source: "propane", workOrderNumber: "WO-0100", date: "2026-10-05", status: "Completed", partsUsed: [{ partId: "gas", quantity: 1 }] }];
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(InvoiceForm, { initial: null, sites: [], cottages: [], customers: [], parts, workOrders, invoiceNumber: "INV-26-0030", taxRate: 13, defaultShopSuppliesPercent: 5, rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (inv) => window.__saved.push(inv), onCancel() {} }));
+  });
+  assert.equal(await page.getByLabel("Shop supplies percent").count(), 1, "a new invoice starts with shop supplies");
+  await page.getByPlaceholder(/Search work orders|Search/).first().click();
+  await page.getByText(/WO-0100/).first().click();
+  await page.getByRole("button", { name: "Save Invoice" }).click();
+  const inv = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description]), [["part", "Propane 100lb"]], "linking the propane fill drops shop supplies");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
