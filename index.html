@@ -92,6 +92,13 @@ const CORRESPONDENCE_REF = db_.collection("correspondence");
 const SITES_REF = db_.collection("sites");
 const COTTAGES_REF = db_.collection("cottages");
 const HYDRO_READINGS_REF = db_.collection("hydroReadings");
+// Parts used to be one array inside campground/data, rewritten whole on
+// every save anywhere in the app - so a device with an old copy (a phone
+// that had lost signal, say) could save and wipe everyone else's part
+// edits (SKUs went missing this way). Each part is now its own document,
+// a save writes only the parts it changed, and stock taken out or put back
+// is written as an amount (FieldValue.increment), never a total.
+const PARTS_REF = db_.collection("parts");
 // Hydro readings used to be one ever-growing array inside campground/data,
 // which counts against Firestore's 1 MB per-document limit and was
 // rewritten whole on every save anywhere in the app (so two people saving
@@ -155,6 +162,15 @@ function mergeLegacyRecords(collectionList, legacyList) {
 // Readings still sitting in the old array (not moved yet, or written by a
 // device running the previous version of the app) are shown alongside
 // the collection until useDb moves them over; the collection copy wins.
+// The parts collection, plus any parts still only in the old array (until
+// they're moved). Objects are passed through as-is - persist() relies on
+// that to tell which parts a screen changed.
+function mergeParts(collectionList, legacyList) {
+  const list = collectionList || [];
+  const ids = new Set(list.map((p) => p.id));
+  const extra = (legacyList || []).filter((p) => p && p.id && !ids.has(p.id));
+  return extra.length ? [...list, ...extra] : list;
+}
 function mergeHydroReadings(collectionList, legacyList) {
   if (!legacyList || legacyList.length === 0) return collectionList || [];
   const byId = new Map((collectionList || []).map((r) => [r.id, r]));
@@ -798,12 +814,22 @@ function todayISO() {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+// A part with its stock changed by `delta`. The amount is remembered on the
+// new object (hidden, so it's never saved as a field) so the save can send
+// "take 2 away" instead of "set to 5" - two devices using stock at once
+// then both count.
+function withStockChange(p, quantity) {
+  const delta = quantity - (Number(p.quantity) || 0);
+  const next = { ...p, quantity };
+  Object.defineProperty(next, "_stockDelta", { value: (p._stockDelta || 0) + delta, enumerable: false });
+  return next;
+}
 function deductPartsUsed(parts, partsUsed) {
   if (!partsUsed || !partsUsed.length) return parts;
   return parts.map((p) => {
     const used = partsUsed.find((pu) => pu.partId === p.id);
     if (!used || p.trackQuantity === false) return p;
-    return { ...p, quantity: Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)) };
+    return withStockChange(p, Math.max(0, (Number(p.quantity) || 0) - (Number(used.quantity) || 0)));
   });
 }
 function restorePartsUsed(parts, partsUsed) {
@@ -811,8 +837,32 @@ function restorePartsUsed(parts, partsUsed) {
   return parts.map((p) => {
     const used = partsUsed.find((pu) => pu.partId === p.id);
     if (!used || p.trackQuantity === false) return p;
-    return { ...p, quantity: (Number(p.quantity) || 0) + (Number(used.quantity) || 0) };
+    return withStockChange(p, (Number(p.quantity) || 0) + (Number(used.quantity) || 0));
   });
+}
+// The writes a save needs for parts: only parts a screen created or changed
+// (anything not handed out by the database as-is), and a delete only for a
+// part moved to Trash in this same save. `seen` holds every part object the
+// database handed out; `inCollection` the ids already saved as documents.
+function partWriteOps(nextParts, nextTrash, seen, latestIds, inCollection) {
+  const ops = [];
+  if (!Array.isArray(nextParts)) return ops;
+  const nextIds = new Set();
+  nextParts.forEach((p) => {
+    if (!p || !p.id) return;
+    nextIds.add(p.id);
+    if (seen.has(p)) return;
+    if (p._stockDelta !== void 0 && inCollection.has(p.id)) {
+      if (p._stockDelta) ops.push({ type: "update", ref: PARTS_REF.doc(p.id), data: { quantity: firebase.firestore.FieldValue.increment(p._stockDelta) } });
+      return;
+    }
+    ops.push({ type: "set", ref: PARTS_REF.doc(p.id), data: p });
+  });
+  const trashed = new Set((nextTrash || []).filter((t) => t && t.type === "part" && t.data && t.data.id).map((t) => t.data.id));
+  latestIds.forEach((id) => {
+    if (!nextIds.has(id) && trashed.has(id)) ops.push({ type: "delete", ref: PARTS_REF.doc(id) });
+  });
+  return ops;
 }
 function isThisMonth(dateStr) {
   if (!dateStr) return false;
@@ -1545,6 +1595,14 @@ function useDb() {
   const [sitesList, setSitesList] = useState(null);
   const [cottagesList, setCottagesList] = useState(null);
   const [hydroList, setHydroList] = useState(null);
+  const [partsList, setPartsList] = useState(null);
+  const legacyPartsRef = useRef([]);
+  const partsMigratingRef = useRef(false);
+  // Every part object the database handed out (collection or old array),
+  // and the ids of parts saved as documents - see partWriteOps.
+  const seenPartsRef = useRef(/* @__PURE__ */ new WeakSet());
+  const partsInCollectionRef = useRef(/* @__PURE__ */ new Set());
+  const latestPartIdsRef = useRef([]);
   // null = not loaded yet; "denied" = this user's role can't read sales data.
   const [salesLists, setSalesLists] = useState(() => Object.fromEntries(SALES_KEYS.map((k) => [k, null])));
   const [pendingSignups, setPendingSignups] = useState([]);
@@ -1570,6 +1628,8 @@ function useDb() {
         const data = snap.exists ? snap.data() : null;
         const merged = migrateCottageOrderStatuses(purgeExpiredTrash({ ...emptyDb(), ...data && typeof data === "object" ? data : {} }));
         legacyHydroRef.current = merged.hydroReadings || [];
+        legacyPartsRef.current = merged.parts || [];
+        legacyPartsRef.current.forEach((p) => p && typeof p === "object" && seenPartsRef.current.add(p));
         SALES_KEYS.forEach((k) => (merged[k] || []).forEach((r) => r && typeof r === "object" && seenRecordsRef.current.add(r)));
         docMainRef.current = merged;
         setMainData(merged);
@@ -1755,6 +1815,17 @@ function useDb() {
       () => {
       }
     );
+    const unsubParts = PARTS_REF.onSnapshot(
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        list.forEach((p) => seenPartsRef.current.add(p));
+        partsInCollectionRef.current = new Set(list.map((p) => p.id));
+        setPartsList(list);
+      },
+      () => {
+      }
+    );
     return () => {
       unsub();
       unsubPending();
@@ -1769,6 +1840,7 @@ function useDb() {
       unsubSites();
       unsubCottages();
       unsubHydro();
+      unsubParts();
       unsubSales.forEach((u) => u());
     };
   }, []);
@@ -1798,6 +1870,42 @@ function useDb() {
       hydroMigratingRef.current = false;
     });
   }, [mainData, hydroList]);
+  // Moves parts out of campground/data's old parts array into the parts
+  // collection, the same way as hydro readings above: parts already in the
+  // collection are never overwritten by the array's (possibly older) copy,
+  // and the array is only removed once everything in it has been moved.
+  useEffect(() => {
+    const legacy = (mainData && mainData.parts) || [];
+    if (legacy.length === 0 || partsList === null || partsMigratingRef.current) return;
+    partsMigratingRef.current = true;
+    const inCollection = new Set(partsList.map((p) => p.id));
+    const trashed = new Set(((mainData && mainData.trash) || []).filter((t) => t && t.type === "part" && t.data).map((t) => t.data.id));
+    const toMove = legacy.filter((p) => p && p.id && !inCollection.has(p.id) && !trashed.has(p.id));
+    // Each part is created only if it doesn't exist yet, checked inside a
+    // transaction - a part someone saved (or used stock of) in the moments
+    // since the list loaded is never put back to the old array's copy.
+    const createMissing = async () => {
+      for (let i = 0; i < toMove.length; i += 200) {
+        const chunk = toMove.slice(i, i + 200);
+        await db_.runTransaction(async (tx) => {
+          const snaps = await Promise.all(chunk.map((p) => tx.get(PARTS_REF.doc(p.id))));
+          snaps.forEach((snap, j) => {
+            if (!snap.exists) tx.set(PARTS_REF.doc(chunk[j].id), firestoreSafe(chunk[j]));
+          });
+        });
+      }
+    };
+    createMissing().then(() => db_.runTransaction(async (tx) => {
+      const snap = await tx.get(DOC_REF);
+      const current = (snap.exists && snap.data().parts) || [];
+      const moved = new Set([...inCollection, ...trashed, ...toMove.map((p) => p.id)]);
+      if (current.some((p) => p && p.id && !moved.has(p.id))) return;
+      tx.update(DOC_REF, { parts: firebase.firestore.FieldValue.delete() });
+    })).catch(() => {
+    }).finally(() => {
+      partsMigratingRef.current = false;
+    });
+  }, [mainData, partsList]);
   // Moves sales records out of campground/data into their collections, the
   // same way as hydro readings above. Only a user who can read the sales
   // collections (Admin, Sales Manager) can do it, so until one of them opens
@@ -1839,7 +1947,7 @@ function useDb() {
       salesMigratingRef.current = false;
     });
   }, [mainData, salesLists]);
-  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], treeRequests: treeList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [], hydroReadings: mergeHydroReadings(hydroList, mainData.hydroReadings), ...composeSales(mainData, salesLists) } : null;
+  const db = mainData ? { ...mainData, propaneRequests: propaneList || [], treeRequests: treeList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [], hydroReadings: mergeHydroReadings(hydroList, mainData.hydroReadings), parts: mergeParts(partsList, mainData.parts), ...composeSales(mainData, salesLists) } : null;
   // Sales lists for the db object: collection records (live ones) plus any
   // not-yet-moved legacy copies, and the shared trash with each sales stub
   // given its deleted record back so Trash can show and restore it. Users
@@ -1866,7 +1974,12 @@ function useDb() {
     // moved out of the old array are written back unchanged so a save here
     // can't drop them before the move above finishes.
     const { propaneRequests, treeRequests, winterizingRequests, workOrders, customers, quotes, invoices, correspondence, sites, cottages, hydroReadings, deals, cottageOrders, consignmentListings, salesAppointments, ...docFields } = next;
-    const rest = legacyHydroRef.current.length > 0 ? { ...docFields, hydroReadings: legacyHydroRef.current } : { ...docFields };
+    // Parts: write only what this save changed, to the parts collection.
+    // Any not yet moved out of the old array are written back unchanged.
+    const { parts: nextParts, ...docFieldsNoParts } = docFields;
+    const rest = legacyHydroRef.current.length > 0 ? { ...docFieldsNoParts, hydroReadings: legacyHydroRef.current } : { ...docFieldsNoParts };
+    if (legacyPartsRef.current.length > 0) rest.parts = legacyPartsRef.current;
+    const partOps = partWriteOps(nextParts, next.trash, seenPartsRef.current, Array.from(new Set([...partsInCollectionRef.current, ...legacyPartsRef.current.map((p) => p && p.id).filter(Boolean)])), partsInCollectionRef.current);
     // Sales: write each record a screen created or changed (or restored from
     // Trash) to its collection; a newly trashed one is saved there as
     // deleted, and only a stub goes into the shared trash. Legacy arrays not
@@ -1906,6 +2019,15 @@ function useDb() {
       if ((docMain[k] || []).length > 0) rest[k] = docMain[k];
     });
     setMainData(rest);
+    if (partOps.length > 0) {
+      try {
+        await commitInChunks(partOps);
+      } catch (e) {
+        noteSaveFailure();
+        setSaveError(`Couldn't save that change to parts${(e == null ? void 0 : e.message) ? `: ${e.message}` : ""}. Try again.`);
+        return false;
+      }
+    }
     if (salesOps.length > 0) {
       try {
         await commitInChunks(salesOps);
@@ -21053,6 +21175,12 @@ function AppContent() {
         importedCorrespondence.forEach((c) => ops.push({ type: "set", ref: CORRESPONDENCE_REF.doc(c.id || uid()), data: c }));
         importedSites.forEach((s) => ops.push({ type: "set", ref: SITES_REF.doc(s.id || uid()), data: s }));
         importedCottages.forEach((c) => ops.push({ type: "set", ref: COTTAGES_REF.doc(c.id || uid()), data: c }));
+        const importedParts = next.parts || [];
+        const keepParts = new Set(importedParts.map((p) => p && p.id));
+        (await PARTS_REF.get()).forEach((d) => {
+          if (!keepParts.has(d.id)) ops.push({ type: "delete", ref: d.ref });
+        });
+        importedParts.forEach((p) => p && p.id && ops.push({ type: "set", ref: PARTS_REF.doc(p.id), data: p }));
         if (canImportHydro) {
           const existingHydroSnap = await HYDRO_READINGS_REF.get();
           const keep = new Set(importedHydro.map((r) => r.id));

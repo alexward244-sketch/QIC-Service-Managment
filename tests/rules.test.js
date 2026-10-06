@@ -26,7 +26,7 @@ async function seed() {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     await db.doc("campground/data").set({ settings: {}, userRoles: { "a@x.com": "admin" } });
-    for (const c of ["workOrders", "customers", "correspondence", "pendingSignups", "sites", "dailySummaries"]) await db.doc(`${c}/x`).set({ id: "x", note: "" });
+    for (const c of ["workOrders", "customers", "correspondence", "pendingSignups", "sites", "parts", "dailySummaries"]) await db.doc(`${c}/x`).set({ id: "x", note: "" });
     await db.doc("invoices/i1").set({ id: "i1", lineItems: [{ quantity: 1, unitPrice: 85 }], notes: "" });
     await db.doc("deals/d1").set({ id: "d1" });
     await db.doc("hydroReadings/h1").set({ id: "h1", reading: 100 });
@@ -46,12 +46,14 @@ test("staff roles can use everyday data; accounts without a role and signed-out 
     assert.ok(await allowed(role, (db) => db.doc("workOrders/new").set({ id: "new", title: "t" })), `${role} create work order`);
     assert.ok(await allowed(role, (db) => db.doc("customers/x").update({ note: "hi" })), `${role} edit customer`);
     assert.ok(await allowed(role, (db) => db.doc("campground/data").update({ settings: { a: 1 } })), `${role} save settings`);
+    assert.ok(await allowed(role, (db) => db.doc("parts/x").update({ sku: "A-1" })), `${role} edit a part`);
   }
   for (const role of ["noRole", "signedOut"]) {
-    for (const c of ["workOrders", "customers", "correspondence", "pendingSignups", "sites", "invoices", "dailySummaries"]) {
+    for (const c of ["workOrders", "customers", "correspondence", "pendingSignups", "sites", "parts", "invoices", "dailySummaries"]) {
       assert.equal(await allowed(role, (db) => db.doc(`${c}/x`).get()), false, `${role} must not read ${c}`);
     }
     assert.equal(await allowed(role, (db) => db.doc("workOrders/new").set({ id: "new" })), false, `${role} must not create work orders`);
+    assert.equal(await allowed(role, (db) => db.doc("parts/x").update({ sku: "A-1" })), false, `${role} must not edit parts`);
     assert.equal(await allowed(role, (db) => db.doc("campground/data").get()), false, `${role} must not read settings`);
   }
 });
