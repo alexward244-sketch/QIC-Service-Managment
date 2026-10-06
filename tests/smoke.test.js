@@ -777,21 +777,21 @@ test("propane fills never get shop supplies: Create Invoice from a fill, or link
   await page.close();
 });
 
-test("cottage appliances: range and fireplace types, with make, model and year", async () => {
+test("cottage appliances: range and fireplace types, with make, model, year and install date", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => {
     window.__saved = [];
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ApplianceForm, { initial: null, onSave: (a) => window.__saved.push(a), onCancel() {} }));
   });
-  const types = await page.locator("select option").allInnerTexts();
-  assert.ok(types.includes("Range") && types.includes("Fireplace"));
+  assert.deepEqual(await page.locator("select option").allInnerTexts(), ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace"]);
   await page.locator("select").selectOption("Fireplace");
   await page.getByLabel("Make").fill(" Napoleon ");
   await page.getByLabel("Model").fill("GX70");
   await page.getByLabel("Year").fill("2018");
+  await page.getByLabel("Install Date (if replaced)").fill("2026-06-15");
   await page.getByRole("button", { name: "Save" }).click();
   const a = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual([a.type, a.make, a.model, a.year], ["Fireplace", "Napoleon", "GX70", "2018"]);
+  assert.deepEqual([a.type, a.make, a.model, a.year, a.installDate], ["Fireplace", "Napoleon", "GX70", "2018", "2026-06-15"]);
   assert.equal(await page.evaluate((x) => applianceDetails(x), a), "Napoleon GX70 · 2018");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
