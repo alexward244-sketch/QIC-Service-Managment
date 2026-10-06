@@ -696,15 +696,26 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   await desc().nth(2).fill("service");
   await page.getByRole("option", { name: /Service call — Tech/ }).click();
   assert.equal(await desc().count(), 4);
+
+  // Shop supplies: the Admin default % of parts + labour, kept up to date.
+  await desc().nth(3).fill("shop");
+  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).click();
+  assert.equal(await desc().count(), 5);
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$12.00", "5% of $20 parts + $220 labour");
+  await page.getByLabel("Hours").fill("3");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$17.50");
+  await page.getByLabel("Hours").fill("2");
+  assert.equal(await page.getByText("Shop Supplies", { exact: true }).count(), 0, "no separate shop supplies box");
   assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
   assert.equal(await page.getByText("Hours Worked").count(), 0, "no separate labour fields");
 
   await page.getByRole("button", { name: "Save Invoice" }).click();
   const inv = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""], ["shopSupplies", "Shop supplies", 1, 12, ""]]);
+  assert.equal(inv.lineItems[3].percent, 5);
+  assert.equal(inv.shopSuppliesPercent, 0, "shop supplies is the line, not the old field");
   const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
-  // Shop supplies: the Admin default (5%) of parts + labour, not the service call.
-  assert.equal(inv.shopSuppliesPercent, 5);
+  // Shop supplies: 5% of parts + labour, not the service call.
   assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 12, 70, 322]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
@@ -715,22 +726,22 @@ test("quote form: labour and service calls are typed into lines like invoices, a
   await page.evaluate(() => {
     window.__saved = [];
     const parts = [{ id: "p1", name: "Washer", sku: "W-12", price: 20 }];
-    const initial = { id: "q1", title: "Deck repair", date: "2026-10-01", status: "Draft", lineItems: [{ id: "a", description: "Lumber", quantity: 4, unitPrice: 10 }], laborHours: 3, laborRate: 65, laborRateType: "Labour Tech", serviceCallType: "General", serviceCall: 50, shopSuppliesMode: "percent", shopSuppliesPercent: 0 };
+    const initial = { id: "q1", title: "Deck repair", date: "2026-10-01", status: "Draft", lineItems: [{ id: "a", description: "Lumber", quantity: 4, unitPrice: 10 }], laborHours: 3, laborRate: 65, laborRateType: "Labour Tech", serviceCallType: "General", serviceCall: 50, shopSuppliesMode: "percent", shopSuppliesPercent: 10 };
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(QuoteForm, { initial, sites: [], cottages: [], customers: [], parts, quotes: [], taxRate: 13, templates: [], rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (q) => window.__saved.push(q), onCancel() {} }));
   });
   const desc = () => page.getByPlaceholder(/^Description/);
   await desc().first().waitFor();
-  assert.equal(await desc().count(), 4, "lumber, the labour line, the service call line and a blank line");
+  assert.equal(await desc().count(), 5, "lumber, the labour, service call and shop supplies lines, and a blank line");
   assert.equal(await page.getByText("Hours Worked").count(), 0);
-  await desc().nth(3).fill("washer");
-  await desc().nth(3).press("Enter");
-  assert.equal(await desc().count(), 5);
+  await desc().nth(4).fill("washer");
+  await desc().nth(4).press("Enter");
+  assert.equal(await desc().count(), 6);
   await page.getByRole("button", { name: /Save/ }).first().click();
   const q = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual(q.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Lumber", 4, 10], ["labour", "Labour — Labour Tech", 3, 65], ["serviceCall", "Service call — General", 1, 50], ["part", "Washer", 1, 20]]);
-  assert.deepEqual([q.laborHours, q.serviceCall], [0, 0]);
+  assert.deepEqual(q.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Lumber", 4, 10], ["labour", "Labour — Labour Tech", 3, 65], ["serviceCall", "Service call — General", 1, 50], ["shopSupplies", "Shop supplies", 1, 25.5], ["part", "Washer", 1, 20]]);
+  assert.deepEqual([q.laborHours, q.serviceCall, q.shopSuppliesPercent], [0, 0, 0]);
   const t = await page.evaluate((x) => computeQuoteTotals(x, 13), q);
-  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.serviceCall, t.subtotal], [60, 195, 50, 305], "same totals as before");
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [60, 195, 25.5, 50, 330.5], "10% of parts + labour, kept from the old quote");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

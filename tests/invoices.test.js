@@ -30,7 +30,8 @@ for (const role of ["admin", "accounting"]) {
     assert.equal(inv.notes, "We replaced the kitchen tap washer.");
     assert.equal(inv.laborEntries, undefined, "the per-worker breakdown stays on the work order");
     // Hours (total only) and the service call picked at wrap-up become lines.
-    assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Washer", 2, 20], ["labour", "Labour — Labour Tech", 1.5, 65], ["serviceCall", "Service call — Tech", 1, 70]]);
+    assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Washer", 2, 20], ["labour", "Labour — Labour Tech", 1.5, 65], ["serviceCall", "Service call — Tech", 1, 70], ["shopSupplies", "Shop supplies", 1, 6.88]]);
+    assert.equal(inv.lineItems[3].percent, 5, "shop supplies at the default %, of parts + labour ($137.50)");
     assert.deepEqual([inv.laborHours, inv.serviceCall], [0, 0]);
     assert.ok(inv.invoiceNumber, "the invoice has a number");
     assert.deepEqual(page.pageErrors, []);
