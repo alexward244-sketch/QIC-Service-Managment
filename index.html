@@ -1268,7 +1268,7 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       cottageId: source.cottageId || null,
       customerId: source.customerId || null,
       notes: source.notes || "",
-      lineItems: (source.lineItems || []).length ? source.lineItems.map((li) => ({ ...li, id: uid(), account: li.partId ? ((db.parts.find((p) => p.id === li.partId) || {}).salesAccount || "") : "" })) : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }],
+      lineItems: (source.lineItems || []).length ? source.lineItems.map((li) => ({ ...li, id: uid(), account: li.partId ? ((db.parts.find((p) => p.id === li.partId) || {}).salesAccount || "") : li.kind ? li.account || "" : "" })) : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }],
       laborHours: source.laborHours || 0,
       laborRateType: source.laborRateType || "N/A",
       shopSuppliesMode: source.shopSuppliesMode || "percent",
@@ -7789,18 +7789,12 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
-  const [lineItems, setLineItems] = useState(
-    ((_a = initial == null ? void 0 : initial.lineItems) == null ? void 0 : _a.length) ? initial.lineItems : [{ id: uid(), description: "", quantity: 1, unitPrice: 0 }]
-  );
+  // Labour and the service call are lines, as on invoices (invoiceFormLines).
+  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions));
   const [templateId, setTemplateId] = useState("");
-  const [laborHours, setLaborHours] = useState((_b = initial == null ? void 0 : initial.laborHours) != null ? _b : "");
-  const [laborRateType, setLaborRateType] = useState(
-    (initial == null ? void 0 : initial.laborRateType) || ((_c = rateOptions.find((r) => r.rate === (initial == null ? void 0 : initial.laborRate))) == null ? void 0 : _c.label) || "N/A"
-  );
   const [shopSuppliesMode, setShopSuppliesMode] = useState((initial == null ? void 0 : initial.shopSuppliesMode) || "percent");
   const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_e = (_d = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _d : defaultShopSuppliesPercent) != null ? _e : 5);
   const [shopSuppliesAmount, setShopSuppliesAmount] = useState((initial == null ? void 0 : initial.shopSuppliesAmount) != null ? initial.shopSuppliesAmount : "");
-  const [serviceCallType, setServiceCallType] = useState((initial == null ? void 0 : initial.serviceCallType) || "None");
   const [commentLog, setCommentLog] = useState((initial == null ? void 0 : initial.commentLog) || []);
   const [commentText, setCommentText] = useState("");
   const isFirstRender = useRef(true);
@@ -7811,13 +7805,10 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     if (!tpl) return;
     setTitle(tpl.title || "");
     setNotes(tpl.notes || "");
-    setLineItems((tpl.lineItems || []).length ? tpl.lineItems.map((li) => ({ ...li, id: uid() })) : [{ id: uid(), description: "", quantity: 1, unitPrice: 0 }]);
-    setLaborHours(tpl.laborHours || "");
-    setLaborRateType(tpl.laborRateType || "N/A");
+    setLineItems(invoiceFormLines({ ...tpl, lineItems: (tpl.lineItems || []).map((li) => ({ ...li, id: uid() })) }, rateOptions, serviceCallOptions));
     setShopSuppliesMode(tpl.shopSuppliesMode || "percent");
     setShopSuppliesPercent(tpl.shopSuppliesPercent != null ? tpl.shopSuppliesPercent : 0);
     setShopSuppliesAmount(tpl.shopSuppliesAmount != null ? tpl.shopSuppliesAmount : "");
-    setServiceCallType(tpl.serviceCallType || "None");
   };
   useEffect(() => {
     if (isFirstRender.current) {
@@ -7825,7 +7816,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, laborHours, laborRateType, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount, serviceCallType, commentLog]);
+  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount, commentLog]);
   const addComment = () => {
     if (!commentText.trim()) return;
     const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
@@ -7833,7 +7824,6 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     setCommentText("");
   };
   const isDuplicate = title.trim() && (quotes || []).some((q) => q.id !== (initial == null ? void 0 : initial.id) && q.title.trim().toLowerCase() === title.trim().toLowerCase());
-  const laborRate = (_h = (_g = rateOptions.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : rateOptions[1].rate;
   const handleSiteChange = (val) => {
     setSiteId(val);
     if (val) {
@@ -7870,21 +7860,18 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     setLineItems((items) => items.length > 1 ? items.filter((li) => li.id !== id) : items);
   };
   const addBlankLine = () => {
-    setLineItems((items) => [...items, { id: uid(), description: "", quantity: 1, unitPrice: 0 }]);
+    setLineItems((items) => [...items, blankInvoiceLine()]);
   };
-  const addPartLine = (partId) => {
-    const part = parts.find((p) => p.id === partId);
-    if (!part) return;
-    setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, partId: part.id }]);
+  // Same as invoices: a picked part / labour / service call fills the line,
+  // and picking on the last line opens a new one under it.
+  const pickLine = (id, picked) => {
+    setLineItems((items) => {
+      const next = items.map((li) => li.id === id ? { ...picked, id } : li);
+      return next[next.length - 1].id === id ? [...next, blankInvoiceLine()] : next;
+    });
   };
-  const lineItemsSubtotal = lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
-  const laborCost = (Number(laborHours) || 0) * laborRate;
-  const shopSupplies = shopSuppliesMode === "flat" ? Number(shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(shopSuppliesPercent) || 0) / 100);
-  const serviceCallOption = serviceCallOptions.find((s) => s.label === serviceCallType);
-  const serviceCallAmt = serviceCallOption ? serviceCallOption.rate : 0;
-  const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCallAmt;
-  const tax = subtotal * (taxRate / 100);
-  const total = subtotal + tax;
+  const suggestLines = (text) => invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions);
+  const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals({ lineItems, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount }, taxRate);
   const submit = () => {
     if (!title.trim()) return;
     const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => ({
@@ -7892,7 +7879,8 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       description: li.description.trim(),
       quantity: Number(li.quantity) || 0,
       unitPrice: Number(li.unitPrice) || 0,
-      ...li.partId ? { partId: li.partId } : {}
+      ...li.partId ? { partId: li.partId } : {},
+      ...li.kind ? { kind: li.kind, rateType: li.rateType || "", account: li.account || "" } : {}
     }));
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
@@ -7904,14 +7892,15 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       customerId: customerId || null,
       notes: notes.trim(),
       lineItems: cleanItems,
-      laborHours: Number(laborHours) || 0,
-      laborRate,
-      laborRateType,
+      // Labour and the service call are lines now; these older fields are cleared.
+      laborHours: 0,
+      laborRate: 0,
+      laborRateType: "N/A",
       shopSuppliesMode,
       shopSuppliesPercent: Number(shopSuppliesPercent) || 0,
       shopSuppliesAmount: Number(shopSuppliesAmount) || 0,
-      serviceCallType,
-      serviceCall: serviceCallAmt,
+      serviceCallType: "None",
+      serviceCall: 0,
       commentLog
     });
   };
@@ -7965,24 +7954,23 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40 whitespace-nowrap"
     },
     "Add"
-  ))), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: inputCls + " flex-1",
-      value: li.description,
-      onChange: (e) => updateLine(li.id, "description", e.target.value),
-      placeholder: "Description"
-    }
-  ), /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center flex-wrap", "data-line-kind": li.kind || "part" }, React.createElement(InvoiceLineDescription, {
+    value: li.description,
+    onChange: (v) => updateLine(li.id, "description", v),
+    onPick: (picked) => pickLine(li.id, picked),
+    suggest: suggestLines,
+    placeholder: "Description \u2014 type a part, \"labour\" or \"service call\""
+  }), li.kind === "labour" && React.createElement("span", { className: "text-[11px] text-[#75716A]" }, "Hours"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
       min: "0",
-      step: "1",
-      className: inputCls + " w-16",
+      step: li.kind === "labour" ? "0.25" : "1",
+      className: inputCls.replace("w-full ", "") + " w-20",
       value: li.quantity,
       onChange: (e) => updateLine(li.id, "quantity", e.target.value),
-      placeholder: "Qty"
+      placeholder: li.kind === "labour" ? "Hrs" : "Qty",
+      "aria-label": li.kind === "labour" ? "Hours" : "Quantity"
     }
   ), /* @__PURE__ */ React.createElement(
     "input",
@@ -7990,7 +7978,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       type: "number",
       min: "0",
       step: "0.01",
-      className: inputCls + " w-24",
+      className: inputCls.replace("w-full ", "") + " w-24",
       value: li.unitPrice,
       onChange: (e) => updateLine(li.id, "unitPrice", e.target.value),
       placeholder: "Unit $"
@@ -8004,25 +7992,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"), parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "sm:ml-auto w-56" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
-    options: parts.map((p) => ({ value: p.id, label: `${p.name} (${formatPrice(p.price)})`, searchText: `${p.name} ${p.sku || ""}` })),
-    value: "",
-    onChange: (val) => {
-      if (val) addPartLine(val);
-    },
-    placeholder: "Add from parts\u2026"
-  })))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Labour & Extras"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.25",
-      className: inputCls,
-      value: laborHours,
-      onChange: (e) => setLaborHours(e.target.value),
-      placeholder: "0"
-    }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement(
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Shop Supplies"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -8060,11 +8030,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       onChange: (e) => setShopSuppliesAmount(e.target.value),
       placeholder: "0.00"
     }
-  ))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement(
-    "select",
-    { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) },
-    serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))
-  )))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
+  ))))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
 }
 
 function escapeHtml(str) {
@@ -8184,7 +8150,7 @@ function buildQuoteHtml(quote, db, taxRate) {
       <div style="display:flex; justify-content:flex-end;">
         <table style="font-size:13px;">
           ${lineItemsSubtotal ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Parts / line items</td><td style="text-align:right;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-          ${laborHours ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labour (${laborHours} hr &times; ${quote.laborRateType || "Rate"} @ ${formatPrice(laborRate)})</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
+          ${laborCost ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">${laborHours ? `Labour (${laborHours} hr &times; ${quote.laborRateType || "Rate"} @ ${formatPrice(laborRate)})` : "Labour"}</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
           ${shopSupplies ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Shop supplies</td><td style="text-align:right;">${formatPrice(shopSupplies)}</td></tr>` : ""}
           ${serviceCall ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Service call</td><td style="text-align:right;">${formatPrice(serviceCall)}</td></tr>` : ""}
           <tr><td style="padding:2px 16px 2px 0; color:#555; border-top:1px solid #ccc;">Subtotal</td><td style="text-align:right; border-top:1px solid #ccc;">${formatPrice(subtotal)}</td></tr>
@@ -8224,7 +8190,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
 
   let summaryRows = "";
   if (lineItemsSubtotal) summaryRows += summaryRow("Parts / line items", formatPrice(lineItemsSubtotal));
-  if (Number(quote.laborHours) > 0) summaryRows += summaryRow(`Labour (${escapeHtml(String(quote.laborHours))} hr \xD7 ${escapeHtml(quote.laborRateType || "Rate")})`, formatPrice(laborCost));
+  if (laborCost) summaryRows += summaryRow(Number(quote.laborHours) > 0 ? `Labour (${escapeHtml(String(quote.laborHours))} hr \xD7 ${escapeHtml(quote.laborRateType || "Rate")})` : "Labour", formatPrice(laborCost));
   if (shopSupplies) summaryRows += summaryRow("Shop supplies", formatPrice(shopSupplies));
   if (serviceCall) summaryRows += summaryRow("Service call", formatPrice(serviceCall));
   summaryRows += summaryRow("Subtotal", formatPrice(subtotal));
@@ -8723,7 +8689,7 @@ function buildExcelSheets(db) {
       Site: siteNumber(q.siteId),
       Cottage: cottageName(q.cottageId),
       Customer: customerName(q.customerId),
-      "Labour Hours": q.laborHours || "",
+      "Labour Hours": (Number(q.laborHours) || 0) + (q.lineItems || []).filter((li) => li.kind === "labour").reduce((sum, li) => sum + (Number(li.quantity) || 0), 0) || "",
       "Rate Type": q.laborRateType || "",
       "Shop Supplies %": q.shopSuppliesMode === "flat" ? "" : q.shopSuppliesPercent || "",
       "Shop Supplies $": q.shopSuppliesMode === "flat" ? q.shopSuppliesAmount || "" : "",

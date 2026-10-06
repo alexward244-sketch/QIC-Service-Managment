@@ -708,6 +708,31 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   await page.close();
 });
 
+test("quote form: labour and service calls are typed into lines like invoices, and an older quote's hours become a line", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = [];
+    const parts = [{ id: "p1", name: "Washer", sku: "W-12", price: 20 }];
+    const initial = { id: "q1", title: "Deck repair", date: "2026-10-01", status: "Draft", lineItems: [{ id: "a", description: "Lumber", quantity: 4, unitPrice: 10 }], laborHours: 3, laborRate: 65, laborRateType: "Labour Tech", serviceCallType: "General", serviceCall: 50, shopSuppliesMode: "percent", shopSuppliesPercent: 0 };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(QuoteForm, { initial, sites: [], cottages: [], customers: [], parts, quotes: [], taxRate: 13, templates: [], rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (q) => window.__saved.push(q), onCancel() {} }));
+  });
+  const desc = () => page.getByPlaceholder(/^Description/);
+  await desc().first().waitFor();
+  assert.equal(await desc().count(), 4, "lumber, the labour line, the service call line and a blank line");
+  assert.equal(await page.getByText("Hours Worked").count(), 0);
+  await desc().nth(3).fill("washer");
+  await desc().nth(3).press("Enter");
+  assert.equal(await desc().count(), 5);
+  await page.getByRole("button", { name: /Save/ }).first().click();
+  const q = await page.evaluate(() => window.__saved[0]);
+  assert.deepEqual(q.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice]), [["part", "Lumber", 4, 10], ["labour", "Labour — Labour Tech", 3, 65], ["serviceCall", "Service call — General", 1, 50], ["part", "Washer", 1, 20]]);
+  assert.deepEqual([q.laborHours, q.serviceCall], [0, 0]);
+  const t = await page.evaluate((x) => computeQuoteTotals(x, 13), q);
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.serviceCall, t.subtotal], [60, 195, 50, 305], "same totals as before");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("customers: tidy names takes the site number off the end, only after review", async () => {
   const page = await openApp(browser, "stub");
   const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));
