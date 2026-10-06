@@ -76,6 +76,7 @@ test("Invoices: the email column keeps where it was sent (or why it didn't send)
   assert.equal(await row.getByRole("button", { name: "Mark Paid in Full" }).count(), 0);
   await row.getByTitle("Mark as paid").click();
   assert.equal(await row.getByRole("button", { name: "Accounting" }).count(), 1);
+  assert.equal(await row.getByRole("button", { name: "Store" }).count(), 0, "Square is the store");
   await row.getByRole("button", { name: "Cash" }).click();
   await row.getByText("Paid — Cash").waitFor();
   inv = await waitFor(() => findIn("invoices", (i) => i.id === "i1" && i.paidMethod === "Cash"), "the paid invoice");
