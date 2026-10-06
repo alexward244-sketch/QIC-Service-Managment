@@ -13963,7 +13963,7 @@ function WinterizingOverview({ db, all, shown, today, notSignedUp, chip, setChip
     )
   );
 }
-function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSignedUpCount, onOpen, onSchedule, readOnly, onShowNotSigned, onSaveSeason, onAutoPlan, onRainDay, onBlockDay, onUnblockDay }) {
+function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSignedUpCount, onOpen, onSchedule, readOnly, onShowNotSigned, onSaveSeason, onAutoPlan, onRainDay, onBlockDay, onUnblockDay, onPrintDay }) {
   const [over, setOver] = useState(null);
   const season = winterSeason(db);
   const weekEnd = winterAddDays(weekStart, 6);
@@ -14016,7 +14016,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       },
       className: `rounded-xl p-2.5 border-t-4 w-[210px] flex-none ${opts.accent || "border-[#E2DED5]"} ${over === key ? "bg-[#DDF1E1] ring-2 ring-[#377249]/30" : "bg-[#F1EEE9]"}`
     },
-    React.createElement("div", { className: "px-1 mb-2" }, React.createElement("div", { className: "flex justify-between items-baseline gap-2" }, React.createElement("span", { className: "text-sm font-semibold" }, title), opts.limit ? React.createElement("span", { "data-day-count": true, className: `text-xs font-semibold ${list.length > opts.limit ? "text-[#a8532a]" : list.length >= opts.limit ? "text-[#9A6B1F]" : "text-[#75716A]"}` }, `${list.length} / ${opts.limit}`) : React.createElement("span", { className: "text-xs text-[#75716A]" }, list.length)), React.createElement("div", { className: "text-[11px] text-[#75716A] mt-0.5 min-h-[16px]" }, sub), opts.blocked != null && React.createElement("div", { "data-blocked-day": true, className: "mt-1.5 rounded-md bg-[#E4EEF2] border border-[#B9D3DF] px-2 py-1 text-[11px] text-[#2E6E8E]" }, React.createElement("span", { className: "font-semibold" }, "Blocked"), opts.blocked ? `: ${opts.blocked}` : "", opts.onUnblock && React.createElement("button", { type: "button", onClick: opts.onUnblock, className: "ml-1.5 underline" }, "Unblock")), React.createElement("div", { className: "flex gap-3" }, opts.onRain && React.createElement("button", { type: "button", onClick: opts.onRain, className: "text-[11px] text-[#2E6E8E] hover:underline mt-0.5", title: "Rain day: move this day and everything after it back one weekday" }, "\u2614 Push back a day"), opts.onBlock && React.createElement("button", { type: "button", onClick: opts.onBlock, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Keep this day free of sign-ups (e.g. for Pebble Beach)" }, "Block day"))),
+    React.createElement("div", { className: "px-1 mb-2" }, React.createElement("div", { className: "flex justify-between items-baseline gap-2" }, React.createElement("span", { className: "text-sm font-semibold" }, title), opts.limit ? React.createElement("span", { "data-day-count": true, className: `text-xs font-semibold ${list.length > opts.limit ? "text-[#a8532a]" : list.length >= opts.limit ? "text-[#9A6B1F]" : "text-[#75716A]"}` }, `${list.length} / ${opts.limit}`) : React.createElement("span", { className: "text-xs text-[#75716A]" }, list.length)), React.createElement("div", { className: "text-[11px] text-[#75716A] mt-0.5 min-h-[16px]" }, sub), opts.blocked != null && React.createElement("div", { "data-blocked-day": true, className: "mt-1.5 rounded-md bg-[#E4EEF2] border border-[#B9D3DF] px-2 py-1 text-[11px] text-[#2E6E8E]" }, React.createElement("span", { className: "font-semibold" }, "Blocked"), opts.blocked ? `: ${opts.blocked}` : "", opts.onUnblock && React.createElement("button", { type: "button", onClick: opts.onUnblock, className: "ml-1.5 underline" }, "Unblock")), React.createElement("div", { className: "flex gap-3" }, opts.onRain && React.createElement("button", { type: "button", onClick: opts.onRain, className: "text-[11px] text-[#2E6E8E] hover:underline mt-0.5", title: "Rain day: move this day and everything after it back one weekday" }, "\u2614 Push back a day"), opts.onBlock && React.createElement("button", { type: "button", onClick: opts.onBlock, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Keep this day free of sign-ups (e.g. for Pebble Beach)" }, "Block day"), opts.onPrint && React.createElement("button", { type: "button", onClick: opts.onPrint, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Print the forms for every cottage on this day" }, "\uD83D\uDDA8 Print"))),
     React.createElement("div", { className: "max-h-[62vh] overflow-y-auto pr-0.5" }, list.length ? list.map((r) => card(r, opts.poolLabel && opts.poolLabel(r))) : React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, opts.empty || "Nothing planned"))
   );
   return React.createElement(
@@ -14063,7 +14063,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       days.map((d) => {
         const list = todo.filter((r) => winterPlannedDate(r) === d).sort(winterSiteSort(db));
         const isToday = d === today;
-        return column(d, `${isToday ? "Today · " : ""}${winterShortDate(d, { weekday: "short", month: "short", day: "numeric" })}`, winterExtrasSummary(list), list, { dropDate: d, limit: season.blocked[d] != null ? 0 : season.limit, blocked: season.blocked[d], onUnblock: !readOnly ? () => onUnblockDay(d) : null, onBlock: !readOnly && season.blocked[d] == null && d >= today ? () => onBlockDay(d) : null, onRain: !readOnly && d >= today && list.length ? () => onRainDay(d) : null, accent: season.blocked[d] != null ? "border-[#2E6E8E]" : list.length > season.limit ? "border-[#a8532a]" : isToday ? "border-[#E9C46A]" : d < today ? "border-[#E2DED5] opacity-80" : "border-[#E2DED5]" });
+        return column(d, `${isToday ? "Today · " : ""}${winterShortDate(d, { weekday: "short", month: "short", day: "numeric" })}`, winterExtrasSummary(list), list, { dropDate: d, onPrint: onPrintDay && list.length ? () => onPrintDay(list, d) : null, limit: season.blocked[d] != null ? 0 : season.limit, blocked: season.blocked[d], onUnblock: !readOnly ? () => onUnblockDay(d) : null, onBlock: !readOnly && season.blocked[d] == null && d >= today ? () => onBlockDay(d) : null, onRain: !readOnly && d >= today && list.length ? () => onRainDay(d) : null, accent: season.blocked[d] != null ? "border-[#2E6E8E]" : list.length > season.limit ? "border-[#a8532a]" : isToday ? "border-[#E9C46A]" : d < today ? "border-[#E2DED5] opacity-80" : "border-[#E2DED5]" });
       }),
       column("done", "Winterized these days", winterExtrasSummary(doneWeek), doneWeek, { accent: "border-[#377249]/40", empty: "None yet" })
     )
@@ -14609,7 +14609,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       initial: { siteId: info.site ? info.site.id : null, cottageId: problemFor.cottageId || null, customerId: problemFor.customerId || null, title: `Found while winterizing \u2014 ${info.cottage ? info.cottage.name : "cottage"}`, description: "" }
     });
   })();
-  const content = activeView === "plan" ? React.createElement(React.Fragment, null, carryNotice && React.createElement("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-4 py-2 mb-3 text-sm text-[#4B4740] flex justify-between gap-3", "data-carry-notice": true }, React.createElement("span", null, carryNotice), React.createElement("button", { type: "button", onClick: () => setCarryNotice(""), className: "text-xs text-[#75716A] hover:underline" }, "Dismiss")), React.createElement(WinterizingPlanBoard, { db, all: requests, today, weekStart, setWeekStart, notSignedUpCount: notSignedUp.length, onOpen: setPanelId, onSchedule: dropOnDay, readOnly, onShowNotSigned: () => setView("notsigned"), onSaveSeason: saveSeason, onAutoPlan: () => setAutoPlanOpen(true), onRainDay: setRainDay, onBlockDay: (d) => setBlockDay({ date: d, label: "" }), onUnblockDay: unblock })) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
+  const content = activeView === "plan" ? React.createElement(React.Fragment, null, carryNotice && React.createElement("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-4 py-2 mb-3 text-sm text-[#4B4740] flex justify-between gap-3", "data-carry-notice": true }, React.createElement("span", null, carryNotice), React.createElement("button", { type: "button", onClick: () => setCarryNotice(""), className: "text-xs text-[#75716A] hover:underline" }, "Dismiss")), React.createElement(WinterizingPlanBoard, { db, all: requests, today, weekStart, setWeekStart, notSignedUpCount: notSignedUp.length, onOpen: setPanelId, onSchedule: dropOnDay, readOnly, onShowNotSigned: () => setView("notsigned"), onSaveSeason: saveSeason, onAutoPlan: () => setAutoPlanOpen(true), onRainDay: setRainDay, onBlockDay: (d) => setBlockDay({ date: d, label: "" }), onUnblockDay: unblock, onPrintDay: (list, d) => downloadPrintableItems(list, (r) => buildWinterizingHtml(r, db), `winterizing-${d}`) })) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
   const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
   const autoPlan = autoPlanOpen ? autoPlanWinter(requests, db, { today, byArea: autoByArea, replanAll: autoReplanAll }) : [];
   const autoDays = autoPlan.reduce((m, p) => ({ ...m, [p.date]: (m[p.date] || 0) + 1 }), {});
@@ -16207,6 +16207,15 @@ function hydroBillParts(db, reading) {
   const meter = reading.billMeter || { previousReading: reading.previousReading, previousDate: null, currentReading: reading.reading, currentDate: reading.date, rolledOver: reading.rolledOver };
   return { site, owner: hydroBillTo(db, reading), usage, rate: reading.rate, subtotal, taxAmount, total, taxRate, meter };
 }
+// A hydro bill on paper - the same bill the customer is emailed, one per
+// page (colours kept, so the heading prints), for the customer's file.
+function buildHydroBillPrintHtml(reading, db) {
+  const p = hydroBillParts(db, reading);
+  return `<div class="wo" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;">${buildHydroInvoiceEmailText(p.site, p.owner, p.usage, p.rate, p.subtotal, p.taxAmount, p.total, p.taxRate, db, p.meter, reading.invoiceNumber)}</div>`;
+}
+function printHydroBills(readings, db) {
+  downloadPrintableItems(readings, (r) => buildHydroBillPrintHtml(r, db), readings.length === 1 ? `hydro-${readings[0].invoiceNumber || "bill"}` : `hydro-bills-${todayISO()}`);
+}
 // Sends a hydro bill (customer + accounting copy) and returns what to
 // record on the reading: emailStatus "sent", "failed" or "no-email".
 async function sendHydroBillEmails(db, reading, toEmail) {
@@ -16917,6 +16926,7 @@ function HydroSentBills({ db, setToast }) {
       React.createElement("input", { type: "text", value: q, onChange: (e) => setQ(e.target.value), placeholder: "Search HYD #, site or customer…", className: inputCls + " max-w-xs" }),
       React.createElement("label", { className: "flex items-center gap-1.5 text-sm text-[#4B4740]" }, React.createElement("input", { type: "checkbox", checked: onlyUnsent, onChange: (e) => setOnlyUnsent(e.target.checked) }), "Only ones that didn't send"),
       React.createElement("span", { className: "flex-1" }),
+      rows.length > 0 && React.createElement("button", { type: "button", onClick: () => printHydroBills(rows.map((x) => x.r), db), className: "px-3 py-1.5 text-sm rounded-md border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]" }, `Print ${rows.length === 1 ? "bill" : `${rows.length} bills`}`),
       all.length > 0 && React.createElement("button", { type: "button", onClick: exportCsv, className: "px-3 py-1.5 text-sm rounded-md border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]" }, "Export CSV")
     ),
     rows.length === 0 ? React.createElement("p", { className: "text-sm text-[#9A968D] italic" }, all.length === 0 ? "No hydro bills sent yet." : onlyUnsent && !q ? "Every hydro bill reached the customer." : "Nothing matches.") : React.createElement(
@@ -16948,7 +16958,7 @@ function HydroSentBills({ db, setToast }) {
                 resend(r, sel ? sel.value : emails[0]);
               }, className: "px-2 py-1 rounded bg-[#377249] text-white text-xs font-medium disabled:opacity-40" }, "Send"),
               React.createElement("button", { type: "button", onClick: () => setResendTo(null), className: "px-2 py-1 text-xs text-[#75716A]" }, "Cancel")
-            ) : React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, "Resend"))
+            ) : React.createElement("span", { className: "inline-flex items-center gap-3" }, React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-medium text-[#75716A] hover:underline" }, "Print"), React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, "Resend")))
           );
         }))
       )
@@ -16964,6 +16974,9 @@ function HydroReviewView({ db, persist }) {
   const [toast, setToast] = useState(null);
   const [edits, setEdits] = useState({});
   const [pendingConfirm, setPendingConfirm] = useState(null);
+  // After a bill goes out: print a copy for the customer's file? (Asked,
+  // since printing has to start from a click.)
+  const [printAsk, setPrintAsk] = useState(null);
   const taxRate = (db.settings && db.settings.taxRate != null) ? db.settings.taxRate : 13;
   const rate = getHydroRate(db);
   const pending = (db.hydroReadings || []).filter((r) => r.status === "pending").slice().sort((a, b) => (a.flagged === b.flagged ? 0 : a.flagged ? -1 : 1) || (a.date < b.date ? -1 : 1));
@@ -17066,6 +17079,7 @@ function HydroReviewView({ db, persist }) {
     invoiced = { ...invoiced, ...result };
     saveHydroReading(invoiced).catch(() => {
     });
+    setPrintAsk({ reading: invoiced, siteNumber: site.number });
     if (result.emailStatus === "no-email") logSystemError(db, persist, "Hydro invoice email", `No customer email on file for site ${site.number} \u2014 invoice ${invoiceNumber} recorded but not emailed`);
     setToast(result.emailStatus === "sent" ? `Invoice ${invoiceNumber} sent for site ${site.number}` : `Invoice ${invoiceNumber} for site ${site.number} was saved but the email ${result.emailStatus === "no-email" ? "had no address to go to" : "didn't send"} \u2014 see Sent bills to resend it`);
   };
@@ -17082,7 +17096,10 @@ function HydroReviewView({ db, persist }) {
     const owner = hydroBillTo(db, r);
     const currentOwner = getSiteOwner(db, r.siteId);
     return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r), billedFrom: billedBefore(r) });
-  }))), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro invoice \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
+  }))), printAsk && React.createElement(Modal, { title: "Print a copy for the file?", onClose: () => setPrintAsk(null) }, React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} ${printAsk.reading.emailStatus === "sent" ? `was emailed to ${printAsk.reading.emailedTo}` : "wasn't emailed"}. Print a copy for the customer's file, in case they'd rather pay at the office?`), React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setPrintAsk(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not now"), React.createElement("button", { type: "button", onClick: () => {
+    printHydroBills([printAsk.reading], db);
+    setPrintAsk(null);
+  }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print"))), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro invoice \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
 }
 function getConsignmentTransferInfo(db, cottage, site) {
   if (!cottage || !site) return { buyer: null, seller: null };

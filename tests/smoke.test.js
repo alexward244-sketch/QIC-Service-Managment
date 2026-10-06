@@ -541,6 +541,13 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
     await page.getByRole("button", { name: "Block day" }).last().click();
     await page.locator("[data-blocked-day]").first().getByText(/Pebble Beach/).waitFor();
   }
+  // Print a day's forms in one click.
+  await page.evaluate(() => {
+    window.__printed = "";
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed += h; }, close() {} } });
+  });
+  await col.getByRole("button", { name: /Print/ }).click();
+  assert.match(await page.evaluate(() => window.__printed), /Willow/);
   await page.getByRole("button", { name: "Auto-plan…" }).click();
   await page.getByText("Auto-plan winterizing").waitFor();
   await page.getByRole("button", { name: /^Plan \d+ cottage/ }).click();
