@@ -553,7 +553,8 @@ function paymentStatusLabel(value) {
   return match ? match.label : value || "";
 }
 const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho", "Cash"];
-const INVOICE_PAYMENT_METHODS = ["Accounting", "Zoho", "RMS", "Store", "Cash"];
+// How an invoice was paid - picked from the checkmark on the invoice.
+const INVOICE_PAYMENT_METHODS = ["Accounting", "Cash", "Square", "Zoho", "RMS", "Store"];
 const ADVANCE_PAYMENT_METHODS = ["Zoho", "RMS", "Square", "Cash"];
 const SQUARE_LOCATIONS = ["Waterfront Store", "Snack Bar", "Quinte's Isle Campark", "Dockside GC"];
 const SQUARE_FIELD_GROUPS = [
@@ -1170,6 +1171,56 @@ function isInvoicePaidInFull(invoice, taxRate) {
   if (invoice.paidInFullDate) return true;
   const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
   return total > 0 && (Number(invoice.depositAmount) || 0) >= total;
+}
+// How a paid invoice was paid ("" when paid without a method on record),
+// or null when it isn't paid.
+function invoicePaidMethod(invoice, taxRate) {
+  if (!isInvoicePaidInFull(invoice, taxRate)) return null;
+  return invoice.paidMethod || invoice.paidInAdvanceMethod || "";
+}
+// The invoice marked paid by `method`, or not paid (method null).
+function invoiceWithPayment(invoice, method, taxRate) {
+  const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
+  if (!method) {
+    return { ...invoice, paidMethod: null, paidInFullDate: null, paidInAdvanceMethod: null, paidInAdvanceDate: null, depositAmount: (Number(invoice.depositAmount) || 0) >= total ? 0 : Number(invoice.depositAmount) || 0 };
+  }
+  return {
+    ...invoice,
+    depositAmount: total,
+    paidInFullDate: invoice.paidInFullDate || todayISO(),
+    paidMethod: method,
+    ...(invoice.paidInAdvanceMethod ? { paidInAdvanceMethod: method } : {})
+  };
+}
+// Emails an invoice to the customer (and a copy to accounting). Resolves -
+// never rejects - with the invoice updated to say where it went, or that
+// it didn't send and why, so the list can keep showing it.
+function sendInvoiceEmail(invoice, customer, toEmail, db, taxRate) {
+  const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
+  const message = buildInvoiceEmailText(invoice, db, taxRate);
+  const toCustomer = sendEmail({ toEmail, toName: customer.name, subject: `Invoice ${invoice.invoiceNumber}`, message, department: "service", source: "Invoice email" });
+  if (accountingEmail) {
+    // A failed copy to accounting is logged by sendEmail; the customer's
+    // send decides what the invoice shows.
+    sendEmail({ toEmail: accountingEmail, toName: "Accounting", subject: `Invoice ${invoice.invoiceNumber} \u2014 ${customer.name}`, message, department: "service", source: "Invoice email" }).catch(() => {});
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  return toCustomer.then(
+    () => ({ ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || now, emailStatus: "sent", emailedTo: toEmail, emailedAt: now, emailError: null }),
+    (e) => ({ ...invoice, emailStatus: "failed", emailedTo: toEmail, emailedAt: now, emailError: (e && (e.text || e.message)) || "The email service didn't accept it." })
+  );
+}
+// Where an invoice was emailed, kept on the list until it's sent again.
+function InvoiceEmailStatus({ inv, sending }) {
+  const when = (iso) => iso ? new Date(iso).toLocaleDateString(void 0, { month: "short", day: "numeric" }) : "";
+  if (sending) return React.createElement("span", { className: "text-xs text-[#75716A]" }, "Sending\u2026");
+  if (inv.emailStatus === "failed") {
+    return React.createElement("div", { className: "text-xs text-[#a8532a]", "data-invoice-email": "failed" }, React.createElement("div", { className: "font-semibold" }, "\u2715 Didn't send to ", inv.emailedTo), React.createElement("div", { className: "text-[11px]" }, inv.emailError, " \xB7 ", when(inv.emailedAt)));
+  }
+  if (inv.emailedTo || inv.sentDate) {
+    return React.createElement("div", { className: "text-xs text-[#28633C]", "data-invoice-email": "sent" }, React.createElement("div", { className: "font-semibold" }, "\u2713 Sent", inv.emailedTo ? ` to ${inv.emailedTo}` : ""), React.createElement("div", { className: "text-[11px] text-[#75716A]" }, when(inv.emailedAt || inv.sentAt) || inv.sentDate));
+  }
+  return React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Not sent");
 }
 function invoiceStatus(invoice, taxRate) {
   if (isInvoicePaidInFull(invoice, taxRate)) return "Paid";
@@ -2499,15 +2550,31 @@ function PaymentMethodModal({ title, summary, methods, initialMethod, onConfirm,
   const [method, setMethod] = useState(initialMethod || methods[0]);
   return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, summary && /* @__PURE__ */ React.createElement("p", { className: "text-[13.5px] leading-relaxed text-[#4B4740] mb-4" }, summary), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] overflow-hidden mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5 text-sm border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment date"), /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, todayISO())), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#75716A]" }, "Method"), /* @__PURE__ */ React.createElement("select", { className: "text-sm font-semibold border border-[#E2DED5] rounded-md px-2 py-1 text-[#1E1A13]", value: method, onChange: (e) => setMethod(e.target.value), autoFocus: AUTO_FOCUS }, methods.map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onConfirm(method), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Confirm")));
 }
-function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compactLabel }) {
+function PaidCheckToggle({ isPaid, method, options, onSelect, onClear, showLabel, compactLabel }) {
   const [open, setOpen] = useState(false);
+  // Fixed to the window so a table's scroll box can't clip the menu; it
+  // opens upwards near the bottom of the screen.
+  const [menuPos, setMenuPos] = useState(null);
+  const toggleOpen = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const roomBelow = window.innerHeight - r.bottom;
+    setMenuPos(roomBelow < 260 ? { left: r.left, bottom: window.innerHeight - r.top + 4 } : { left: r.left, top: r.bottom + 4 });
+    setOpen((o) => !o);
+  };
   const wrapperRef = useRef(null);
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false);
     };
+    // The menu is fixed in place, so close it rather than leave it behind
+    // when the page or a pop-up scrolls.
+    const close = () => setOpen(false);
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("scroll", close, true);
+    };
   }, []);
   const pick = (m) => {
     onSelect(m);
@@ -2517,12 +2584,12 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compact
     "button",
     {
       type: "button",
-      onClick: () => setOpen((o) => !o),
-      title: isPaid ? `Paid in Advance \u2014 ${method}` : "Mark as Paid in Advance",
+      onClick: toggleOpen,
+      title: isPaid ? `Paid${method ? ` \u2014 ${method}` : ""}` : "Mark as paid",
       className: `w-6 h-6 flex-shrink-0 rounded-full flex items-center justify-center border-2 transition ${isPaid ? "bg-[#377249] border-[#377249] text-[#F9F5EC]" : "bg-white border-[#C7C2B8] text-transparent hover:border-[#377249]"}`
     },
     /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))
-  ), showLabel && (isPaid || !compactLabel) && /* @__PURE__ */ React.createElement("span", { className: isPaid ? "text-xs font-medium text-[#28633C]" : "text-xs text-[#9A968D]" }, isPaid ? `Paid in Advance \u2014 ${method}` : "Not paid in advance"), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 top-full left-0 w-32 rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg overflow-hidden" }, options.map((m) => /* @__PURE__ */ React.createElement(
+  ), showLabel && (isPaid || !compactLabel) && /* @__PURE__ */ React.createElement("span", { className: isPaid ? "text-xs font-medium text-[#28633C]" : "text-xs text-[#9A968D]" }, isPaid ? `Paid${method ? ` \u2014 ${method}` : ""}` : "Not paid"), open && /* @__PURE__ */ React.createElement("div", { className: "fixed z-50 w-36 rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg overflow-hidden", style: menuPos || {} }, options.map((m) => /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -2531,7 +2598,7 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compact
       className: `w-full text-left px-3 py-2 text-sm hover:bg-[#F1EEE9] ${isPaid && method === m ? "text-[#377249] font-semibold" : "text-[#1E1A13]"}`
     },
     m
-  ))));
+  )), isPaid && onClear && React.createElement("button", { type: "button", onClick: () => { onClear(); setOpen(false); }, className: "w-full text-left px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F1EEE9] border-t border-[#EEEBE5]" }, "Not paid")));
 }
 function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
   const emailOptions = [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean);
@@ -6294,7 +6361,8 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   const [serviceCallType, setServiceCallType] = useState((initial == null ? void 0 : initial.serviceCallType) || "None");
   const [depositAmount, setDepositAmount] = useState((initial == null ? void 0 : initial.depositAmount) != null ? initial.depositAmount : "");
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
-  const [paidInAdvanceMethod, setPaidInAdvanceMethod] = useState((initial == null ? void 0 : initial.paidInAdvanceMethod) || null);
+  const initialPaidMethod = initial ? invoicePaidMethod(initial, initial.taxRate != null ? initial.taxRate : taxRate) : null;
+  const [paidMethod, setPaidMethod] = useState(initialPaidMethod);
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -6411,24 +6479,27 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       serviceCallType,
       serviceCall,
       taxRate,
-      depositAmount: paidInAdvanceMethod ? total : depositAmount === "" ? 0 : Number(depositAmount),
+      // Ticked paid: the whole total is in. Unticked after being paid:
+      // only a real (partial) deposit stays.
+      depositAmount: paidMethod != null ? total : initialPaidMethod != null && (depositAmount === "" ? 0 : Number(depositAmount)) >= total ? 0 : depositAmount === "" ? 0 : Number(depositAmount),
       depositDate,
-      paidInAdvanceMethod,
-      paidInAdvanceDate: paidInAdvanceMethod ? (initial == null ? void 0 : initial.paidInAdvanceDate) || todayISO() : null,
+      paidInAdvanceMethod: paidMethod && (initial == null ? void 0 : initial.paidInAdvanceMethod) ? paidMethod : null,
+      paidInAdvanceDate: paidMethod && (initial == null ? void 0 : initial.paidInAdvanceMethod) ? initial.paidInAdvanceDate || null : null,
       sentDate: (initial == null ? void 0 : initial.sentDate) || null,
-      paidInFullDate: paidInAdvanceMethod ? (initial == null ? void 0 : initial.paidInFullDate) || todayISO() : (initial == null ? void 0 : initial.paidInFullDate) || null,
-      paidMethod: paidInAdvanceMethod ? paidInAdvanceMethod : (initial == null ? void 0 : initial.paidMethod) || null,
+      paidInFullDate: paidMethod != null ? (initial == null ? void 0 : initial.paidInFullDate) || todayISO() : null,
+      paidMethod: paidMethod || null,
       createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
     });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
   } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Invoice #"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber)), /* @__PURE__ */ React.createElement(PaidCheckToggle, {
-    isPaid: !!paidInAdvanceMethod,
-    method: paidInAdvanceMethod,
-    options: ADVANCE_PAYMENT_METHODS,
+    isPaid: paidMethod != null,
+    method: paidMethod,
+    options: INVOICE_PAYMENT_METHODS,
     showLabel: true,
-    onSelect: (m) => setPaidInAdvanceMethod(paidInAdvanceMethod === m ? null : m)
+    onSelect: (m) => setPaidMethod(m),
+    onClear: () => setPaidMethod(null)
   })), workOrders && workOrders.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Link to Work Order (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: workOrders.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((w) => {
       const site = w.siteId ? sites.find((s) => s.id === w.siteId) : null;
@@ -6538,30 +6609,28 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
 }
 
-function InvoiceCard({ inv, db, taxRate, emailStatus, onView, onEdit, onPrint, onInfoSheet, onEmail, onMarkPaidInFull, onMarkPaidInAdvance, onDelete }) {
+function InvoiceCard({ inv, db, taxRate, emailStatus, onView, onEdit, onPrint, onInfoSheet, onEmail, onSetPaid, onDelete }) {
   const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
   const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
   const { total } = computeQuoteTotals(inv, effectiveTaxRate);
   const balance = total - (Number(inv.depositAmount) || 0);
   const status = invoiceStatus(inv, taxRate);
-  const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
-  const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
   const es = emailStatus[inv.id];
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("button", { className: "font-semibold text-[#1E1A13] hover:underline text-left", onClick: () => onView(inv) }, inv.invoiceNumber), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
-    isPaid: !!inv.paidInAdvanceMethod,
-    method: inv.paidInAdvanceMethod,
-    options: ADVANCE_PAYMENT_METHODS,
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("button", { className: "font-semibold text-[#1E1A13] hover:underline text-left", onClick: () => onView(inv) }, inv.invoiceNumber), React.createElement(InvoiceEmailStatus, { inv, sending: es === "sending" })), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+    isPaid: status === "Paid",
+    method: invoicePaidMethod(inv, taxRate),
+    options: INVOICE_PAYMENT_METHODS,
     showLabel: true,
-    compactLabel: true,
-    onSelect: (m) => onMarkPaidInAdvance(inv, m)
-  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Total ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(total))), status !== "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Balance ", /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, formatPrice(balance)))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, status !== "Paid" && /* @__PURE__ */ React.createElement("button", { onClick: () => onMarkPaidInFull(inv), className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap" }, "Mark Paid in Full"), EMAIL_ENABLED && (customer == null ? void 0 : customer.email) && /* @__PURE__ */ React.createElement(
+    onSelect: (m) => onSetPaid(inv, m),
+    onClear: () => onSetPaid(inv, null)
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Total ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(total))), status !== "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Balance ", /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, formatPrice(balance)))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, EMAIL_ENABLED && (customer == null ? void 0 : customer.email) && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onEmail(inv),
       disabled: es === "sending",
       className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap disabled:opacity-50"
     },
-    es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
+    es === "sending" ? "Sending\u2026" : inv.emailStatus === "failed" ? "Try again" : inv.emailedTo || inv.sentDate ? "Resend" : "Email"
   ), /* @__PURE__ */ React.createElement("button", { onClick: () => onView(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "View"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onInfoSheet(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Info Sheet"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(inv), className: "text-[#a8532a] hover:underline text-xs py-2" }, "Delete")));
 }
 function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, onInfoSheet, onViewWorkOrder }) {
@@ -6573,12 +6642,11 @@ function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, o
   const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
   const totals = computeQuoteTotals(invoice, effectiveTaxRate);
   const status = invoiceStatus(invoice, taxRate);
-  const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
-  const statusLabel = status === "Paid" && invoice.paidMethod ? `Paid — ${invoice.paidMethod}` : status;
   const balance = totals.total - (Number(invoice.depositAmount) || 0);
+  const paidMethod = invoicePaidMethod(invoice, taxRate);
   const badges = [
-    /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${statusTone}` }, statusLabel),
-    invoice.paidInAdvanceMethod && /* @__PURE__ */ React.createElement("span", { key: "a", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, `Paid in Advance — ${invoice.paidInAdvanceMethod}`)
+    /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${paidMethod != null ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#F1EEE9] text-[#75716A]"}` }, paidMethod != null ? `Paid${paidMethod ? ` — ${paidMethod}` : ""}` : "Not paid"),
+    invoice.emailStatus === "failed" ? /* @__PURE__ */ React.createElement("span", { key: "e", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#F8E3DA] text-[#a8532a]" }, `Didn't send to ${invoice.emailedTo}`) : invoice.emailedTo || invoice.sentDate ? /* @__PURE__ */ React.createElement("span", { key: "e", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#FBEEDA] text-[#9A6B1F]" }, invoice.emailedTo ? `Sent to ${invoice.emailedTo}` : "Sent") : null
   ].filter(Boolean);
   const lineItems = invoice.lineItems || [];
   return /* @__PURE__ */ React.createElement(
@@ -6639,7 +6707,6 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
   const [filter, setFilter] = useState("");
   const [emailStatus, setEmailStatus] = useState({});
   const [sendConfirm, setSendConfirm] = useState(null);
-  const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
@@ -6671,60 +6738,21 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     deleteInvoice(id);
     confirm.clear();
   };
-  const markPaidInFull = (invoice, paidMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = { ...invoice, depositAmount: total, paidInFullDate: todayISO(), paidMethod };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Full via ${paidMethod}`);
+  const setPaid = (invoice, method) => {
+    const activityLog = addLog(db, actor, method ? `Invoice ${invoice.invoiceNumber} marked paid \u2014 ${method}` : `Invoice ${invoice.invoiceNumber} marked not paid`);
     persist({ ...db, activityLog });
-    saveInvoice(updated);
-  };
-  const setPaidInAdvance = (invoice, paidInAdvanceMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = {
-      ...invoice,
-      paidInAdvanceMethod,
-      paidInAdvanceDate: todayISO(),
-      depositAmount: total,
-      paidInFullDate: invoice.paidInFullDate || todayISO(),
-      paidMethod: paidInAdvanceMethod
-    };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Advance via ${paidInAdvanceMethod} (also marked Paid in Full)`);
-    persist({ ...db, activityLog });
-    saveInvoice(updated);
+    saveInvoice(invoiceWithPayment(invoice, method, taxRate));
   };
   const sendInvoice = (invoice, toEmail) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
     const recipientEmail = toEmail || (customer == null ? void 0 : customer.email);
     if (!customer || !recipientEmail) return;
-    const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
     setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
-    const sends = [sendEmail({
-      toEmail: recipientEmail,
-      toName: customer.name,
-      subject: `Invoice ${invoice.invoiceNumber}`,
-      message: buildInvoiceEmailText(invoice, db, taxRate),
-      department: "service",
-      source: "Invoice email"
-    })];
-    if (accountingEmail) {
-      sends.push(sendEmail({
-        toEmail: accountingEmail,
-        toName: "Accounting",
-        subject: `Invoice ${invoice.invoiceNumber} \u2014 ${customer.name}`,
-        message: buildInvoiceEmailText(invoice, db, taxRate),
-        department: "service",
-        source: "Invoice email"
-      }));
-    }
-    Promise.all(sends).then(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
-      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || (/* @__PURE__ */ new Date()).toISOString() };
-      const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
+    sendInvoiceEmail(invoice, customer, recipientEmail, db, taxRate).then((updated) => {
+      setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 }));
+      const activityLog = addLog(db, actor, updated.emailStatus === "sent" ? `Emailed invoice ${invoice.invoiceNumber} to ${customer.name} (${recipientEmail})` : `Invoice ${invoice.invoiceNumber} didn't send to ${recipientEmail}: ${updated.emailError}`);
       persist({ ...db, activityLog });
       saveInvoice(updated);
-      setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
-    }).catch(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
     });
   };
   const filtered = invoices.filter((inv) => {
@@ -6753,23 +6781,21 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
   const desktopTable = invoices.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, {
     text: "No invoices yet.",
     action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Create an invoice")
-  }) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No invoices match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Invoice #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Paid in Advance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Total"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Balance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-56" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((inv) => {
+  }) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No invoices match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Invoice #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Paid"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Emailed"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Total"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Balance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-56" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((inv) => {
     const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
     const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
     const { total } = computeQuoteTotals(inv, effectiveTaxRate);
     const balance = total - (Number(inv.depositAmount) || 0);
     const status = invoiceStatus(inv, taxRate);
-    const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
-    const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
     const es = emailStatus[inv.id];
-    return /* @__PURE__ */ React.createElement("tr", { key: inv.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailInvoice(inv) }, inv.invoiceNumber)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
-      isPaid: !!inv.paidInAdvanceMethod,
-      method: inv.paidInAdvanceMethod,
-      options: ADVANCE_PAYMENT_METHODS,
+    return /* @__PURE__ */ React.createElement("tr", { key: inv.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13] whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailInvoice(inv) }, inv.invoiceNumber)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+      isPaid: status === "Paid",
+      method: invoicePaidMethod(inv, taxRate),
+      options: INVOICE_PAYMENT_METHODS,
       showLabel: true,
-      compactLabel: true,
-      onSelect: (m) => setPaidInAdvance(inv, m)
-    })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, customer ? customer.name : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, inv.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, status === "Paid" ? "\u2014" : formatPrice(balance)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailInvoice(inv) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: inv }) }, "Edit"), /* @__PURE__ */ React.createElement("button", {
+      onSelect: (m) => setPaid(inv, m),
+      onClear: () => setPaid(inv, null)
+    })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, customer ? customer.name : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, inv.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, React.createElement(InvoiceEmailStatus, { inv, sending: es === "sending" })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, status === "Paid" ? "\u2014" : formatPrice(balance)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailInvoice(inv) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: inv }) }, "Edit"), /* @__PURE__ */ React.createElement("button", {
       className: "text-[#75716A] hover:underline",
       onClick: () => downloadPrintableItems([inv], (i) => buildInvoiceHtml(i, db, taxRate, false), `invoice-${inv.invoiceNumber}`)
     }, "Print"), /* @__PURE__ */ React.createElement("button", {
@@ -6782,8 +6808,8 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
         disabled: es === "sending",
         onClick: () => setSendConfirm(inv)
       },
-      es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
-    ), status !== "Paid" && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => setPaidMethodPrompt(inv) }, "Mark Paid in Full"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(inv.id) }, "Delete"))));
+      es === "sending" ? "Sending\u2026" : inv.emailStatus === "failed" ? "Try again" : inv.emailedTo || inv.sentDate ? "Resend" : "Email"
+    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(inv.id) }, "Delete"))));
   }))));
   const mobileCards = invoices.length === 0 || filtered.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "sm:hidden space-y-3" }, filtered.map((inv) => /* @__PURE__ */ React.createElement(InvoiceCard, {
     key: inv.id,
@@ -6796,8 +6822,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
     onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
     onEmail: (i) => setSendConfirm(i),
-    onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
-    onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
+    onSetPaid: setPaid,
     onDelete: (i) => confirm.ask(i.id)
   })));
   const table = /* @__PURE__ */ React.createElement(React.Fragment, null, desktopTable, mobileCards);
@@ -6830,16 +6855,6 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     },
     onCancel: () => setSendConfirm(null)
   }) : null;
-  const paidMethodEl = paidMethodPrompt ? /* @__PURE__ */ React.createElement(PaymentMethodModal, {
-    title: "Mark this invoice as paid?",
-    summary: `${formatPrice(computeQuoteTotals(paidMethodPrompt, paidMethodPrompt.taxRate != null ? paidMethodPrompt.taxRate : taxRate).total)} from ${customerName(paidMethodPrompt.customerId) || "this customer"} will be recorded as received today and the overdue flag will clear.`,
-    methods: INVOICE_PAYMENT_METHODS,
-    onConfirm: (method) => {
-      markPaidInFull(paidMethodPrompt, method);
-      setPaidMethodPrompt(null);
-    },
-    onCancel: () => setPaidMethodPrompt(null)
-  }) : null;
   const detailEl = detailInvoice ? /* @__PURE__ */ React.createElement(InvoiceDetailDrawer, {
     invoice: invoices.find((i) => i.id === detailInvoice.id) || detailInvoice,
     db,
@@ -6854,7 +6869,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     onViewWorkOrder: (wo) => setViewingWO(wo)
   }) : null;
   const viewingWOEl = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" });
-  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl, paidMethodEl, detailEl, viewingWOEl);
+  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl, detailEl, viewingWOEl);
 }
 
 // Decided: no view drawer here — the table (Name/SKU/Price/Price+tax/Qty, low-stock
@@ -19854,7 +19869,6 @@ function FieldQuotesScreen({ db, persist, actor, saveQuote, saveWorkOrder, onBac
 function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, onBack, setToast }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
-  const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
   const [sendConfirm, setSendConfirm] = useState(null);
@@ -19869,61 +19883,21 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     setModal(null);
     setToast(exists ? "Invoice updated" : "Invoice created");
   };
-  const markPaidInFull = (invoice, paidMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = { ...invoice, depositAmount: total, paidInFullDate: todayISO(), paidMethod };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Full via ${paidMethod}`);
+  const setPaid = (invoice, method) => {
+    const activityLog = addLog(db, actor, method ? `Invoice ${invoice.invoiceNumber} marked paid \u2014 ${method}` : `Invoice ${invoice.invoiceNumber} marked not paid`);
     persist({ ...db, activityLog });
-    saveInvoice(updated);
-    setToast("Marked paid in full");
-  };
-  const setPaidInAdvance = (invoice, paidInAdvanceMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = {
-      ...invoice,
-      paidInAdvanceMethod,
-      paidInAdvanceDate: todayISO(),
-      depositAmount: total,
-      paidInFullDate: invoice.paidInFullDate || todayISO(),
-      paidMethod: paidInAdvanceMethod
-    };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Advance via ${paidInAdvanceMethod} (also marked Paid in Full)`);
-    persist({ ...db, activityLog });
-    saveInvoice(updated);
+    saveInvoice(invoiceWithPayment(invoice, method, taxRate));
   };
   const sendInvoice = (invoice, toEmail) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
     const recipientEmail = toEmail || (customer == null ? void 0 : customer.email);
     if (!customer || !recipientEmail) return;
-    const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
     setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
-    const sends = [sendEmail({
-      toEmail: recipientEmail,
-      toName: customer.name,
-      subject: `Invoice ${invoice.invoiceNumber}`,
-      message: buildInvoiceEmailText(invoice, db, taxRate),
-      department: "service",
-      source: "Invoice email"
-    })];
-    if (accountingEmail) {
-      sends.push(sendEmail({
-        toEmail: accountingEmail,
-        toName: "Accounting",
-        subject: `Invoice ${invoice.invoiceNumber} — ${customer.name}`,
-        message: buildInvoiceEmailText(invoice, db, taxRate),
-        department: "service",
-        source: "Invoice email"
-      }));
-    }
-    Promise.all(sends).then(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
-      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || (/* @__PURE__ */ new Date()).toISOString() };
-      const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
+    sendInvoiceEmail(invoice, customer, recipientEmail, db, taxRate).then((updated) => {
+      setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 }));
+      const activityLog = addLog(db, actor, updated.emailStatus === "sent" ? `Emailed invoice ${invoice.invoiceNumber} to ${customer.name} (${recipientEmail})` : `Invoice ${invoice.invoiceNumber} didn't send to ${recipientEmail}: ${updated.emailError}`);
       persist({ ...db, activityLog });
       saveInvoice(updated);
-      setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
-    }).catch(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
     });
   };
   const remove = (id) => {
@@ -19962,15 +19936,6 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
         onCancel: () => setModal(null)
       })
     ),
-    paidMethodPrompt && React.createElement(PaymentMethodModal, {
-      title: `Mark invoice ${paidMethodPrompt.invoiceNumber} paid in full`,
-      methods: INVOICE_PAYMENT_METHODS,
-      onConfirm: (method) => {
-        markPaidInFull(paidMethodPrompt, method);
-        setPaidMethodPrompt(null);
-      },
-      onCancel: () => setPaidMethodPrompt(null)
-    }),
     confirmDeleteId && React.createElement(ConfirmDeleteModal, {
       label: `invoice ${((invoices.find((i) => i.id === confirmDeleteId) || {}).invoiceNumber) || ""}`,
       onConfirm: () => remove(confirmDeleteId),
@@ -20000,8 +19965,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
       onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
       onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
       onEmail: (i) => setSendConfirm(i),
-      onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
-      onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
+      onSetPaid: setPaid,
       onDelete: (i) => setConfirmDeleteId(i.id)
     }))
   );

@@ -38,3 +38,54 @@ for (const role of ["admin", "accounting"]) {
     await page.close();
   });
 }
+
+test("Invoices: the email column keeps where it was sent (or why it didn't send), and the checkmark records how it was paid", async () => {
+  await resetData({
+    "campground/data": { settings: { taxRate: 13 }, activityLog: [], staff: [], workOrderTemplates: [], parts: [] },
+    "customers/c1": { id: "c1", name: "Robert Smith", email: "rsmith@x.com", siteIds: [] },
+    "invoices/i1": { id: "i1", invoiceNumber: "INV-26-0001", customerId: "c1", date: "2026-10-01", lineItems: [{ id: "l1", description: "Washer", quantity: 1, unitPrice: 100 }], laborHours: 0, laborRate: 0, taxRate: 13, depositAmount: 0 }
+  });
+  const page = await openApp(browser, "emulator", { role: "admin" });
+  await page.evaluate(() => { window.__sent = []; window.sendEmail = async (e) => { window.__sent.push(e.toEmail); return {}; }; });
+  await mountWithDb(page, `(api) => React.createElement(InvoicesView, { db: api.db, persist: api.persist, saveInvoice: api.saveInvoice, deleteInvoice: api.deleteInvoice, saveWorkOrder: api.saveWorkOrder, saveCorrespondence: api.saveCorrespondence })`, "(api) => api.db.invoices.length === 1 && api.db.customers.length === 1");
+  const row = page.locator("tr", { hasText: "INV-26-0001" });
+  await row.getByText("Not sent").waitFor({ timeout: 20000 });
+  assert.equal(await page.getByRole("columnheader", { name: "Status" }).count(), 0, "no Status column");
+
+  // Sent: says where, and stays.
+  await row.getByRole("button", { name: "Email" }).click();
+  await page.getByRole("button", { name: "Yes, send" }).click();
+  await row.getByText("✓ Sent to rsmith@x.com").waitFor();
+  let inv = await waitFor(() => findIn("invoices", (i) => i.id === "i1" && i.emailStatus === "sent"), "the sent invoice");
+  assert.equal(inv.emailedTo, "rsmith@x.com");
+  assert.ok(inv.sentDate);
+  await page.waitForTimeout(3500);
+  assert.equal(await row.getByText("✓ Sent to rsmith@x.com").count(), 1, "the confirmation doesn't go away");
+
+  // Didn't send: says so, with the reason, until it's sent again.
+  await page.evaluate(() => { window.sendEmail = async () => { throw new Error("Mailbox unavailable"); }; });
+  await row.getByRole("button", { name: "Resend" }).click();
+  await page.getByRole("button", { name: "Yes, send" }).click();
+  await row.getByText("✕ Didn't send to rsmith@x.com").waitFor();
+  await row.getByText(/Mailbox unavailable/).waitFor();
+  inv = await waitFor(() => findIn("invoices", (i) => i.id === "i1" && i.emailStatus === "failed"), "the failed send");
+  assert.equal(inv.emailError, "Mailbox unavailable");
+  assert.ok(await row.getByRole("button", { name: "Try again" }).count());
+
+  // Paid: the checkmark, with how it was paid (Cash and Accounting are options); and back to not paid.
+  assert.equal(await row.getByRole("button", { name: "Mark Paid in Full" }).count(), 0);
+  await row.getByTitle("Mark as paid").click();
+  assert.equal(await row.getByRole("button", { name: "Accounting" }).count(), 1);
+  await row.getByRole("button", { name: "Cash" }).click();
+  await row.getByText("Paid — Cash").waitFor();
+  inv = await waitFor(() => findIn("invoices", (i) => i.id === "i1" && i.paidMethod === "Cash"), "the paid invoice");
+  assert.equal(inv.depositAmount, 113);
+  assert.ok(inv.paidInFullDate);
+  await row.getByTitle("Paid — Cash").click();
+  await row.getByRole("button", { name: "Not paid" }).click();
+  inv = await waitFor(() => findIn("invoices", (i) => i.id === "i1" && !i.paidMethod), "the unpaid invoice");
+  assert.equal(inv.depositAmount, 0);
+  assert.equal(inv.paidInFullDate, null);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
