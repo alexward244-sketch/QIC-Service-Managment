@@ -43,14 +43,22 @@ test("Invoices: the email column keeps where it was sent (or why it didn't send)
   await resetData({
     "campground/data": { settings: { taxRate: 13 }, activityLog: [], staff: [], workOrderTemplates: [], parts: [] },
     "customers/c1": { id: "c1", name: "Robert Smith", email: "rsmith@x.com", siteIds: [] },
-    "invoices/i1": { id: "i1", invoiceNumber: "INV-26-0001", customerId: "c1", date: "2026-10-01", lineItems: [{ id: "l1", description: "Washer", quantity: 1, unitPrice: 100 }], laborHours: 0, laborRate: 0, taxRate: 13, depositAmount: 0 }
+    "sites/s9": { id: "s9", number: "0020" },
+    "invoices/i1": { id: "i1", invoiceNumber: "INV-26-0001", customerId: "c1", siteId: "s9", date: "2026-10-01", lineItems: [{ id: "l1", description: "Washer", quantity: 1, unitPrice: 100 }], laborHours: 0, laborRate: 0, taxRate: 13, depositAmount: 0 }
   });
   const page = await openApp(browser, "emulator", { role: "admin" });
   await page.evaluate(() => { window.__sent = []; window.sendEmail = async (e) => { window.__sent.push(e.toEmail); return {}; }; });
-  await mountWithDb(page, `(api) => React.createElement(InvoicesView, { db: api.db, persist: api.persist, saveInvoice: api.saveInvoice, deleteInvoice: api.deleteInvoice, saveWorkOrder: api.saveWorkOrder, saveCorrespondence: api.saveCorrespondence })`, "(api) => api.db.invoices.length === 1 && api.db.customers.length === 1");
+  await mountWithDb(page, `(api) => React.createElement(InvoicesView, { db: api.db, persist: api.persist, saveInvoice: api.saveInvoice, deleteInvoice: api.deleteInvoice, saveWorkOrder: api.saveWorkOrder, saveCorrespondence: api.saveCorrespondence })`, "(api) => api.db.invoices.length === 1 && api.db.customers.length === 1 && api.db.sites.length === 1");
   const row = page.locator("tr", { hasText: "INV-26-0001" });
   await row.getByText("Not sent").waitFor({ timeout: 20000 });
   assert.equal(await page.getByRole("columnheader", { name: "Status" }).count(), 0, "no Status column");
+  // The site shows beside the customer, and the list can be searched by it ("20" finds 0020).
+  assert.equal(await row.locator("[data-site-tag]").innerText(), "Site 0020");
+  await page.getByPlaceholder("Search invoices…").fill("20");
+  assert.equal(await page.locator("tr", { hasText: "INV-26-0001" }).count(), 1);
+  await page.getByPlaceholder("Search invoices…").fill("Nobody");
+  assert.equal(await page.locator("tr", { hasText: "INV-26-0001" }).count(), 0);
+  await page.getByPlaceholder("Search invoices…").fill("");
 
   // Sent: says where, and stays.
   await row.getByRole("button", { name: "Email" }).click();
