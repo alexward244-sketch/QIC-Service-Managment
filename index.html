@@ -552,9 +552,10 @@ function paymentStatusLabel(value) {
   const match = PAYMENT_STATUS.find((p) => p.value === value);
   return match ? match.label : value || "";
 }
-const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho"];
-const INVOICE_PAYMENT_METHODS = ["Accounting", "Zoho", "RMS", "Store"];
-const ADVANCE_PAYMENT_METHODS = ["Zoho", "RMS", "Square"];
+const PROPANE_PAYMENT_METHODS = ["Square", "RMS", "Zoho", "Cash"];
+// How an invoice was paid - picked from the checkmark on the invoice.
+const INVOICE_PAYMENT_METHODS = ["Accounting", "Cash", "Square", "Zoho", "RMS"];
+const ADVANCE_PAYMENT_METHODS = ["Zoho", "RMS", "Square", "Cash"];
 const SQUARE_LOCATIONS = ["Waterfront Store", "Snack Bar", "Quinte's Isle Campark", "Dockside GC"];
 const SQUARE_FIELD_GROUPS = [
   { title: "Gross Sales", fields: [{ key: "items", label: "Items" }, { key: "serviceCharges", label: "Service Charges" }] },
@@ -674,7 +675,11 @@ function formatCustomerAddress(addr) {
   ].filter(Boolean);
   return lines.join(", ");
 }
-const APPLIANCE_TYPES = ["AC Unit", "Hot Water Tank", "Furnace"];
+const APPLIANCE_TYPES = ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace"];
+// "Whirlpool WFE505 · 2019" - what identifies an appliance at a glance.
+function applianceDetails(a) {
+  return [[a.make, a.model].filter(Boolean).join(" "), a.year].filter(Boolean).join(" \xB7 ");
+}
 function applianceWarrantyStatus(appliance) {
   if (!appliance || !appliance.warrantyExpiration) return "none";
   const today = todayISO();
@@ -880,6 +885,19 @@ async function requestWorkOrderSummary(rawNotes) {
   });
   const data = await resp.json();
   return { resp, data };
+}
+// Site numbers are written with 4 digits: 1 -> 0001, 20 -> 0020,
+// 412A -> 0412A. Letter sites (A, K1) are left as they are, and so are
+// park facilities (QIC Facility sites).
+function formatSiteNumber(value) {
+  const t = String(value == null ? "" : value).trim();
+  const m = /^(\d+)([A-Za-z]?)$/.exec(t);
+  return m && m[1].length < 4 ? `${m[1].padStart(4, "0")}${m[2].toUpperCase()}` : t;
+}
+// Same site, however it's written ("20", "0020", "Site #20").
+function sameSiteNumber(a, b) {
+  const ka = signupSiteKey(a);
+  return Boolean(ka) && ka === signupSiteKey(b);
 }
 function signupSiteKey(value) {
   return (value || "").toString().trim().toLowerCase().replace(/^(site|lot|unit|no\.?)\s*/, "").replace(/[#\s-]/g, "").replace(/^0+(?=\w)/, "");
@@ -1158,6 +1176,56 @@ function isInvoicePaidInFull(invoice, taxRate) {
   const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
   return total > 0 && (Number(invoice.depositAmount) || 0) >= total;
 }
+// How a paid invoice was paid ("" when paid without a method on record),
+// or null when it isn't paid.
+function invoicePaidMethod(invoice, taxRate) {
+  if (!isInvoicePaidInFull(invoice, taxRate)) return null;
+  return invoice.paidMethod || invoice.paidInAdvanceMethod || "";
+}
+// The invoice marked paid by `method`, or not paid (method null).
+function invoiceWithPayment(invoice, method, taxRate) {
+  const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
+  if (!method) {
+    return { ...invoice, paidMethod: null, paidInFullDate: null, paidInAdvanceMethod: null, paidInAdvanceDate: null, depositAmount: (Number(invoice.depositAmount) || 0) >= total ? 0 : Number(invoice.depositAmount) || 0 };
+  }
+  return {
+    ...invoice,
+    depositAmount: total,
+    paidInFullDate: invoice.paidInFullDate || todayISO(),
+    paidMethod: method,
+    ...(invoice.paidInAdvanceMethod ? { paidInAdvanceMethod: method } : {})
+  };
+}
+// Emails an invoice to the customer (and a copy to accounting). Resolves -
+// never rejects - with the invoice updated to say where it went, or that
+// it didn't send and why, so the list can keep showing it.
+function sendInvoiceEmail(invoice, customer, toEmail, db, taxRate) {
+  const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
+  const message = buildInvoiceEmailText(invoice, db, taxRate);
+  const toCustomer = sendEmail({ toEmail, toName: customer.name, subject: `Invoice ${invoice.invoiceNumber}`, message, department: "service", source: "Invoice email" });
+  if (accountingEmail) {
+    // A failed copy to accounting is logged by sendEmail; the customer's
+    // send decides what the invoice shows.
+    sendEmail({ toEmail: accountingEmail, toName: "Accounting", subject: `Invoice ${invoice.invoiceNumber} \u2014 ${customer.name}`, message, department: "service", source: "Invoice email" }).catch(() => {});
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  return toCustomer.then(
+    () => ({ ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || now, emailStatus: "sent", emailedTo: toEmail, emailedAt: now, emailError: null }),
+    (e) => ({ ...invoice, emailStatus: "failed", emailedTo: toEmail, emailedAt: now, emailError: (e && (e.text || e.message)) || "The email service didn't accept it." })
+  );
+}
+// Where an invoice was emailed, kept on the list until it's sent again.
+function InvoiceEmailStatus({ inv, sending }) {
+  const when = (iso) => iso ? new Date(iso).toLocaleDateString(void 0, { month: "short", day: "numeric" }) : "";
+  if (sending) return React.createElement("span", { className: "text-xs text-[#75716A]" }, "Sending\u2026");
+  if (inv.emailStatus === "failed") {
+    return React.createElement("div", { className: "text-xs text-[#a8532a]", "data-invoice-email": "failed" }, React.createElement("div", { className: "font-semibold" }, "\u2715 Didn't send to ", inv.emailedTo), React.createElement("div", { className: "text-[11px]" }, inv.emailError, " \xB7 ", when(inv.emailedAt)));
+  }
+  if (inv.emailedTo || inv.sentDate) {
+    return React.createElement("div", { className: "text-xs text-[#28633C]", "data-invoice-email": "sent" }, React.createElement("div", { className: "font-semibold" }, "\u2713 Sent", inv.emailedTo ? ` to ${inv.emailedTo}` : ""), React.createElement("div", { className: "text-[11px] text-[#75716A]" }, when(inv.emailedAt || inv.sentAt) || inv.sentDate));
+  }
+  return React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Not sent");
+}
 function invoiceStatus(invoice, taxRate) {
   if (isInvoicePaidInFull(invoice, taxRate)) return "Paid";
   if (invoice.sentDate) return "Sent";
@@ -1188,7 +1256,7 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       laborHours: source.laborHours || 0,
       laborRateType: source.laborRateType || "N/A",
       shopSuppliesMode: "percent",
-      shopSuppliesPercent: (db.settings && db.settings.shopSuppliesPercent) != null ? db.settings.shopSuppliesPercent : 5,
+      shopSuppliesPercent: isPropaneWorkOrder(source, db.propaneRequests) ? 0 : (db.settings && db.settings.shopSuppliesPercent) != null ? db.settings.shopSuppliesPercent : 5,
       shopSuppliesAmount: 0,
       serviceCallType: source.serviceCallType || "None",
       serviceCall: source.serviceCall || 0,
@@ -1204,7 +1272,7 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       cottageId: source.cottageId || null,
       customerId: source.customerId || null,
       notes: source.notes || "",
-      lineItems: (source.lineItems || []).length ? source.lineItems.map((li) => ({ ...li, id: uid(), account: li.partId ? ((db.parts.find((p) => p.id === li.partId) || {}).salesAccount || "") : "" })) : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }],
+      lineItems: (source.lineItems || []).length ? source.lineItems.map((li) => ({ ...li, id: uid(), account: li.partId ? ((db.parts.find((p) => p.id === li.partId) || {}).salesAccount || "") : li.kind ? li.account || "" : "" })) : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }],
       laborHours: source.laborHours || 0,
       laborRateType: source.laborRateType || "N/A",
       shopSuppliesMode: source.shopSuppliesMode || "percent",
@@ -2005,7 +2073,8 @@ function useDb() {
       return false;
     }
   }, []);
-  const saveCustomer = useCallback(async (customer) => {
+  const saveCustomer = useCallback(async (customerIn) => {
+    const customer = withNormalizedPhones(customerIn);
     const attempt = () => CUSTOMERS_REF.doc(customer.id).set(firestoreSafe(customer));
     lastAttempt.current = attempt;
     try {
@@ -2485,15 +2554,31 @@ function PaymentMethodModal({ title, summary, methods, initialMethod, onConfirm,
   const [method, setMethod] = useState(initialMethod || methods[0]);
   return /* @__PURE__ */ React.createElement(Modal, { title, onClose: onCancel }, summary && /* @__PURE__ */ React.createElement("p", { className: "text-[13.5px] leading-relaxed text-[#4B4740] mb-4" }, summary), /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] overflow-hidden mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5 text-sm border-b border-[#F1EEE9]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Payment date"), /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, todayISO())), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between px-3.5 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "text-sm text-[#75716A]" }, "Method"), /* @__PURE__ */ React.createElement("select", { className: "text-sm font-semibold border border-[#E2DED5] rounded-md px-2 py-1 text-[#1E1A13]", value: method, onChange: (e) => setMethod(e.target.value), autoFocus: AUTO_FOCUS }, methods.map((m) => /* @__PURE__ */ React.createElement("option", { key: m, value: m }, m))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onConfirm(method), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Confirm")));
 }
-function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compactLabel }) {
+function PaidCheckToggle({ isPaid, method, options, onSelect, onClear, showLabel, compactLabel }) {
   const [open, setOpen] = useState(false);
+  // Fixed to the window so a table's scroll box can't clip the menu; it
+  // opens upwards near the bottom of the screen.
+  const [menuPos, setMenuPos] = useState(null);
+  const toggleOpen = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const roomBelow = window.innerHeight - r.bottom;
+    setMenuPos(roomBelow < 260 ? { left: r.left, bottom: window.innerHeight - r.top + 4 } : { left: r.left, top: r.bottom + 4 });
+    setOpen((o) => !o);
+  };
   const wrapperRef = useRef(null);
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false);
     };
+    // The menu is fixed in place, so close it rather than leave it behind
+    // when the page or a pop-up scrolls.
+    const close = () => setOpen(false);
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("scroll", close, true);
+    };
   }, []);
   const pick = (m) => {
     onSelect(m);
@@ -2503,12 +2588,12 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compact
     "button",
     {
       type: "button",
-      onClick: () => setOpen((o) => !o),
-      title: isPaid ? `Paid in Advance \u2014 ${method}` : "Mark as Paid in Advance",
+      onClick: toggleOpen,
+      title: isPaid ? `Paid${method ? ` \u2014 ${method}` : ""}` : "Mark as paid",
       className: `w-6 h-6 flex-shrink-0 rounded-full flex items-center justify-center border-2 transition ${isPaid ? "bg-[#377249] border-[#377249] text-[#F9F5EC]" : "bg-white border-[#C7C2B8] text-transparent hover:border-[#377249]"}`
     },
     /* @__PURE__ */ React.createElement("svg", { viewBox: "0 0 20 20", className: "w-3.5 h-3.5", fill: "none", stroke: "currentColor", strokeWidth: 3, strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "4,10 8,14 16,6" }))
-  ), showLabel && (isPaid || !compactLabel) && /* @__PURE__ */ React.createElement("span", { className: isPaid ? "text-xs font-medium text-[#28633C]" : "text-xs text-[#9A968D]" }, isPaid ? `Paid in Advance \u2014 ${method}` : "Not paid in advance"), open && /* @__PURE__ */ React.createElement("div", { className: "absolute z-20 mt-1 top-full left-0 w-32 rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg overflow-hidden" }, options.map((m) => /* @__PURE__ */ React.createElement(
+  ), showLabel && (isPaid || !compactLabel) && /* @__PURE__ */ React.createElement("span", { className: isPaid ? "text-xs font-medium text-[#28633C]" : "text-xs text-[#9A968D]" }, isPaid ? `Paid${method ? ` \u2014 ${method}` : ""}` : "Not paid"), open && /* @__PURE__ */ React.createElement("div", { className: "fixed z-50 w-36 rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg overflow-hidden", style: menuPos || {} }, options.map((m) => /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -2517,7 +2602,7 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, showLabel, compact
       className: `w-full text-left px-3 py-2 text-sm hover:bg-[#F1EEE9] ${isPaid && method === m ? "text-[#377249] font-semibold" : "text-[#1E1A13]"}`
     },
     m
-  ))));
+  )), isPaid && onClear && React.createElement("button", { type: "button", onClick: () => { onClear(); setOpen(false); }, className: "w-full text-left px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F1EEE9] border-t border-[#EEEBE5]" }, "Not paid")));
 }
 function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
   const emailOptions = [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean);
@@ -2640,7 +2725,12 @@ function TrashModal({ db, persist, savePropaneRequest, saveTreeRequest, saveWint
     persist({ ...purgeTrashItem(db, entry.id), activityLog });
   };
   const trash = (db.trash || []).slice().sort((a, b) => a.deletedAt < b.deletedAt ? 1 : -1);
-  return /* @__PURE__ */ React.createElement(Modal, { title: "Trash", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Deleted items sit here for ", TRASH_RETENTION_DAYS, " days before they're gone for good \u2014 plenty of time to undo a mistake."), trash.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "Trash is empty." }) : /* @__PURE__ */ React.createElement("div", { className: "max-h-96 overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, trash.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 px-4 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.label), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, labelFor(entry.type), " \xB7 Deleted ", new Date(entry.deletedAt).toLocaleDateString())), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => restore(entry) }, "Restore"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => purge(entry) }, "Delete Forever"))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
+  const [viewingId, setViewingId] = useState(null);
+  // A deleted email can be read here before restoring it.
+  const emailDetails = (c) => React.createElement("div", { className: "mt-2 rounded-md border border-[#E2DED5] bg-[#FFFDFA] px-3 py-2 text-xs text-[#4B4740]", "data-trash-email": true },
+    React.createElement("div", { className: "text-[#75716A] mb-1" }, c.direction === "out" ? `To ${c.toEmail || "\u2014"}` : `From ${c.fromEmail || "\u2014"}`, c.receivedAt ? ` \xB7 ${new Date(c.receivedAt).toLocaleString()}` : ""),
+    React.createElement("div", { className: "whitespace-pre-wrap max-h-48 overflow-y-auto" }, displayEmailBody(c.body || "") || "(no message)"));
+  return /* @__PURE__ */ React.createElement(Modal, { title: "Trash", onClose, wide: true }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Deleted items sit here for ", TRASH_RETENTION_DAYS, " days before they're gone for good \u2014 plenty of time to undo a mistake."), trash.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "Trash is empty." }) : /* @__PURE__ */ React.createElement("div", { className: "max-h-96 overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5]" }, trash.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "flex items-center justify-between gap-3 px-4 py-2.5" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.label), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A]" }, labelFor(entry.type), entry.deletedIn ? ` \xB7 Deleted in ${entry.deletedIn}` : " \xB7 Deleted", " ", new Date(entry.deletedAt).toLocaleDateString()), entry.type === "correspondence" && entry.data && viewingId === entry.id && emailDetails(entry.data)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs flex-shrink-0 self-start" }, entry.type === "correspondence" && entry.data && React.createElement("button", { className: "text-[#4B4740] hover:underline", onClick: () => setViewingId(viewingId === entry.id ? null : entry.id) }, viewingId === entry.id ? "Hide" : "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => restore(entry) }, "Restore"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => purge(entry) }, "Delete Forever"))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")));
 }
 
 function useConfirm() {
@@ -2919,6 +3009,8 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
   const [expandedSections, setExpandedSections] = useState(() => /* @__PURE__ */ new Set());
   const [typeFilter, setTypeFilter] = useState(null);
   const [typeSetupOpen, setTypeSetupOpen] = useState(false);
+  const [numberFormatOpen, setNumberFormatOpen] = useState(false);
+  const sitesNeedingFormat = sitesToFormat(db.sites).filter((r) => !r.clash).length;
   const unsetTypeCount = db.sites.filter((x) => !SITE_TYPES.includes(x.siteType)).length;
   useEffect(() => {
     if (filterPrefill) setFilter(filterPrefill.term);
@@ -2941,13 +3033,13 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
     setModal(null);
   };
   const bulkAdd = (numbers) => {
-    const existingNumbers = new Set(db.sites.map((s) => s.number.trim().toLowerCase()));
+    const existingNumbers = new Set(db.sites.map((s) => signupSiteKey(s.number)));
     const newSites = [];
     numbers.forEach((n) => {
-      const trimmed = n.trim();
+      const trimmed = formatSiteNumber(n);
       if (!trimmed) return;
-      if (existingNumbers.has(trimmed.toLowerCase())) return;
-      existingNumbers.add(trimmed.toLowerCase());
+      if (existingNumbers.has(signupSiteKey(trimmed))) return;
+      existingNumbers.add(signupSiteKey(trimmed));
       newSites.push({ id: uid(), number: trimmed, section: "", hookups: "", notes: "" });
     });
     if (newSites.length === 0) {
@@ -3038,7 +3130,12 @@ function SitesView({ db, persist, saveWorkOrder, saveSite, deleteSite, saveCotta
     { className: "flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e8d7b4] bg-[#FBEEDA] px-4 py-2.5 mb-3 text-sm text-[#7A5418]" },
     React.createElement("span", null, `${unsetTypeCount} site${unsetTypeCount === 1 ? " doesn't" : "s don't"} have a site type yet (Seasonal, 4 Season, Transient, Rental Cottage or QIC Facility). Until then it's guessed from tags.`),
     React.createElement("button", { type: "button", onClick: () => setTypeSetupOpen(true), className: "px-3 py-1.5 rounded-md bg-[#9A6B1F] text-white text-xs font-semibold whitespace-nowrap" }, "Review site types")
-  ), db.sites.length > 0 && React.createElement(
+  ), db.sites.length > 0 && !readOnly && sitesNeedingFormat > 0 && React.createElement(
+    "div",
+    { className: "flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e8d7b4] bg-[#FBEEDA] px-4 py-2.5 mb-3 text-sm text-[#7A5418]" },
+    React.createElement("span", null, `${sitesNeedingFormat} site number${sitesNeedingFormat === 1 ? " isn't" : "s aren't"} 4 digits yet (e.g. 20 → 0020).`),
+    React.createElement("button", { type: "button", onClick: () => setNumberFormatOpen(true), className: "px-3 py-1.5 rounded-md bg-[#9A6B1F] text-white text-xs font-semibold whitespace-nowrap" }, "Change to 4 digits")
+  ), numberFormatOpen && React.createElement(SiteNumberFormatModal, { db, persist, bulkWriteSites, onClose: () => setNumberFormatOpen(false) }), db.sites.length > 0 && React.createElement(
     "div",
     { className: "flex items-center gap-2 flex-wrap mb-4" },
     [null, ...SITE_TYPES].map((t) => {
@@ -3865,13 +3962,13 @@ function SiteForm({ initial, sites, onSave, onCancel }) {
   const [meterDigits, setMeterDigits] = useState((initial == null ? void 0 : initial.meterDigits) ? String(initial.meterDigits) : "");
   const [siteType, setSiteType] = useState(() => initial ? siteTypeOf(initial) : "Seasonal");
   const [rmsSiteId, setRmsSiteId] = useState((initial == null ? void 0 : initial.rmsSiteId) || "");
-  const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && s.number.trim().toLowerCase() === number.trim().toLowerCase());
+  const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && sameSiteNumber(s.number, number));
   const submit = () => {
     if (!number.trim()) return;
     const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
     // Spread the original so fields this form doesn't show (seasonal fee
     // history, map position...) aren't lost when a site is edited.
-    onSave({ ...initial || {}, id: (initial == null ? void 0 : initial.id) || uid(), number: number.trim(), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null, siteType, rmsSiteId: rmsSiteId.trim() || null });
+    onSave({ ...initial || {}, id: (initial == null ? void 0 : initial.id) || uid(), number: siteType === "QIC Facility" ? number.trim() : formatSiteNumber(number), section: section.trim(), hookups: hookups.trim(), notes: notes.trim(), tags, meterDigits: meterDigits ? Number(meterDigits) : null, siteType, rmsSiteId: rmsSiteId.trim() || null });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
@@ -4284,12 +4381,21 @@ function ApplianceTransferModal({ appliance, cottage, cottages, db, persist, sav
 }
 function ApplianceForm({ initial, onSave, onCancel }) {
   const [type, setType] = useState((initial == null ? void 0 : initial.type) || APPLIANCE_TYPES[0]);
+  const [make, setMake] = useState((initial == null ? void 0 : initial.make) || "");
+  const [model, setModel] = useState((initial == null ? void 0 : initial.model) || "");
+  const [year, setYear] = useState((initial == null ? void 0 : initial.year) || "");
+  // For when one is replaced on an existing cottage.
+  const [installDate, setInstallDate] = useState((initial == null ? void 0 : initial.installDate) || "");
   const [serialNumber, setSerialNumber] = useState((initial == null ? void 0 : initial.serialNumber) || "");
   const [warrantyExpiration, setWarrantyExpiration] = useState((initial == null ? void 0 : initial.warrantyExpiration) || "");
   const submit = () => {
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
       type,
+      make: make.trim(),
+      model: model.trim(),
+      year: String(year).trim(),
+      installDate,
       serialNumber: serialNumber.trim(),
       warrantyExpiration,
       serviceLog: (initial == null ? void 0 : initial.serviceLog) || [],
@@ -4298,7 +4404,7 @@ function ApplianceForm({ initial, onSave, onCancel }) {
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value) }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-114829", autoFocus: AUTO_FOCUS })), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save")));
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value) }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, React.createElement(Field, { label: "Make" }, React.createElement("input", { className: inputCls, value: make, onChange: (e) => setMake(e.target.value), placeholder: "e.g. Whirlpool", autoFocus: AUTO_FOCUS })), React.createElement(Field, { label: "Model" }, React.createElement("input", { className: inputCls, value: model, onChange: (e) => setModel(e.target.value), placeholder: "e.g. WFE505W0HS" }))), React.createElement("div", { className: "grid grid-cols-2 gap-x-3" }, React.createElement(Field, { label: "Year" }, React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019", inputMode: "numeric" })), React.createElement(Field, { label: "Install Date (if replaced)" }, React.createElement("input", { type: "date", className: inputCls, value: installDate, onChange: (e) => setInstallDate(e.target.value) }))), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-114829" })), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save")));
 }
 function ApplianceLogForm({ cottage, db, initial, onSave, onCancel }) {
   const cottageWorkOrders = db.workOrders.filter((w) => w.cottageId === cottage.id);
@@ -4348,7 +4454,7 @@ function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onT
   const status = applianceWarrantyStatus(appliance);
   const statusBadge = status === "expired" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Warranty Expired") : status === "expiring" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Warranty Expiring Soon") : status === "ok" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under Warranty") : null;
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
+  return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, React.createElement("div", null, "Make / model: ", [appliance.make, appliance.model].filter(Boolean).join(" ") || "\u2014"), React.createElement("div", null, "Year: ", appliance.year || "\u2014"), appliance.installDate && React.createElement("div", null, "Installed: ", appliance.installDate), /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
 }
 function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence, readOnly, canTransfer, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
@@ -4440,7 +4546,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
         onClick: () => setViewingApplianceId(a.id),
         className: "w-full flex items-center justify-between gap-2 text-sm py-1.5 border-b border-[#EEEBE5] last:border-0 hover:bg-[#F1EEE9] text-left px-1 rounded"
       },
-      /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, a.type, a.serialNumber ? ` \u2014 ${a.serialNumber}` : ""),
+      /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, a.type, applianceDetails(a) ? React.createElement("span", { className: "text-[#75716A]" }, ` \u2014 ${applianceDetails(a)}`) : a.serialNumber ? ` \u2014 ${a.serialNumber}` : ""),
       status !== "none" && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${statusTone}` }, status === "expired" ? "Warranty Expired" : status === "expiring" ? "Expiring Soon" : "Under Warranty")
     );
   }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), (canTransfer != null ? canTransfer : !readOnly) && site && /* @__PURE__ */ React.createElement(
@@ -4775,6 +4881,53 @@ function CoupleNamesModal({ db, persist, saveCustomer, onClose }) {
     )
   );
 }
+// Phone numbers are stored as plain digits: 613-555-0148, (613) 555-0148
+// and +1 613 555 0148 all become 6135550148. Anything with words in it
+// ("613-555-0148 ext 2", "cell 613...") is left as typed.
+function normalizePhone(value) {
+  const t = String(value == null ? "" : value).trim();
+  if (!t || !/^[\d\s().+\-]+$/.test(t)) return t;
+  let d = t.replace(/\D/g, "");
+  if (d.length === 11 && d[0] === "1") d = d.slice(1);
+  return d;
+}
+function withNormalizedPhones(c) {
+  if (!c) return c;
+  const out = { ...c };
+  ["phone", "phone2"].forEach((k) => {
+    if (out[k]) out[k] = normalizePhone(out[k]);
+  });
+  return out;
+}
+function PhoneTidyModal({ db, persist, saveCustomer, onClose }) {
+  const actor = useCurrentActor();
+  const [rows] = useState(() => (db.customers || []).map((c) => ({ c, after: withNormalizedPhones(c) })).filter((x) => x.after.phone !== x.c.phone || x.after.phone2 !== x.c.phone2).sort((a, b) => String(a.c.name).localeCompare(String(b.c.name))));
+  const [saving, setSaving] = useState(false);
+  const apply = async () => {
+    setSaving(true);
+    await Promise.all(rows.map((x) => saveCustomer(x.after)));
+    persist({ ...db, activityLog: addLog(db, actor, `Took the dashes out of ${rows.length} customer phone number${rows.length === 1 ? "" : "s"}`) });
+    setSaving(false);
+    onClose();
+  };
+  const show = (c) => [c.phone, c.phone2].filter(Boolean).join(" / ");
+  return React.createElement(
+    Modal,
+    { title: "Tidy phone numbers", onClose, wide: true },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${rows.length} customer${rows.length === 1 ? "" : "s"} will have their phone numbers written as plain digits (613-555-0148 → 6135550148). Numbers with words in them, like "ext 2", are left as they are.`),
+    React.createElement(
+      "div",
+      { className: "max-h-[50vh] overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-4 text-sm" },
+      rows.map((x) => React.createElement("div", { key: x.c.id, "data-phone-tidy": x.c.id, className: "flex gap-3 px-3 py-1.5" }, React.createElement("span", { className: "w-1/3 truncate text-[#4B4740]" }, x.c.name), React.createElement("span", { className: "text-[#75716A]" }, show(x.c)), React.createElement("span", { className: "text-[#9A968D]" }, "→"), React.createElement("b", { className: "text-[#1E1A13]" }, show(x.after))))
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      rows.length > 0 && React.createElement("button", { type: "button", disabled: saving, onClick: apply, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Tidy ${rows.length} customer${rows.length === 1 ? "" : "s"}`)
+    )
+  );
+}
 function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -4785,6 +4938,8 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
   const [detailId, setDetailId] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [tidyOpen, setTidyOpen] = useState(false);
+  const [phoneTidyOpen, setPhoneTidyOpen] = useState(false);
+  const phonesToTidy = (db.customers || []).filter((c) => normalizePhone(c.phone) !== (c.phone || "").toString() && c.phone || normalizePhone(c.phone2) !== (c.phone2 || "").toString() && c.phone2).length;
   const [coupleOpen, setCoupleOpen] = useState(false);
   const coupleCount = coupleNameSuggestions(db).length;
   const namesToTidy = (db.customers || []).filter((c) => {
@@ -4815,7 +4970,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
     }));
     const activityLog = addLog(db, actor, `Bulk-added ${newCustomers.length} customer${newCustomers.length === 1 ? "" : "s"}`);
     persist({ ...db, activityLog });
-    commitInChunks(newCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: c }))).catch(() => {
+    commitInChunks(newCustomers.map((c) => ({ type: "set", ref: CUSTOMERS_REF.doc(c.id), data: withNormalizedPhones(c) }))).catch(() => {
     });
     setBulkOpen(false);
   };
@@ -4861,7 +5016,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
     },
     "Bulk Add"
-  ), coupleCount > 0 && React.createElement("button", { type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
+  ), coupleCount > 0 && React.createElement("button", { type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), phonesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setPhoneTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${phonesToTidy} phone number${phonesToTidy === 1 ? "" : "s"}`), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setModal({ mode: "new" }),
@@ -4886,7 +5041,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       return (_a2 = db.sites.find((s) => s.id === id)) == null ? void 0 : _a2.number;
     }).filter(Boolean);
     return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("button", { className: "text-left block font-semibold text-[#1E1A13] hover:underline", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "text-left block font-normal text-xs text-[#75716A] hover:underline mt-0.5", onClick: () => setDetailId(c.id) }, c.name2), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 space-y-0.5" }, c.phone && /* @__PURE__ */ React.createElement("div", null, c.phone), c.email && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.email), c.address && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.address), linkedSiteNumbers.length > 0 && /* @__PURE__ */ React.createElement("div", null, "Site ", linkedSiteNumbers.join(", "))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 mt-3 text-sm" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1", onClick: () => confirm.ask(c.id) }, "Delete")));
-  }))), coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
+  }))), coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), phoneTidyOpen && React.createElement(PhoneTidyModal, { db, persist, saveCustomer, onClose: () => setPhoneTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
     CustomerDetailModal,
     {
       customer: db.customers.find((c) => c.id === detailId),
@@ -5196,8 +5351,7 @@ function correspondencePrefill(db, item, customerId, kind) {
   if (!t) return base;
   const out = { ...base };
   if (!out.siteId && t.siteNumber) {
-    const norm = (v) => String(v || "").trim().toLowerCase().replace(/^(site|lot)\s*#?\s*/, "");
-    const site = (db.sites || []).find((st) => norm(st.number) === norm(t.siteNumber));
+    const site = (db.sites || []).find((st) => sameSiteNumber(st.number, t.siteNumber));
     const customer = customerId ? (db.customers || []).find((c) => c.id === customerId) : null;
     const siteFitsCustomer = site && (!customer || customerSiteIds(customer).includes(site.id));
     if (siteFitsCustomer) {
@@ -5285,6 +5439,7 @@ function QuickInvoiceModal({ db, initial, saveInvoice, onClose, onViewWorkOrder 
     workOrders: db.workOrders,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
+    defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
     rateOptions: getLaborRateOptions(db),
     serviceCallOptions: getServiceCallOptions(db),
     onSave: save,
@@ -5857,6 +6012,9 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
   const [shippingAddress, setShippingAddress] = useState((initial == null ? void 0 : initial.shippingAddress) || emptyCustomerAddress());
   const [siteIds, setSiteIds] = useState(customerSiteIds(initial));
   const isDuplicate = name.trim() && (customers || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
+  const emailOwner = customerWithEmail(customers, email, initial == null ? void 0 : initial.id);
+  const email2Owner = customerWithEmail(customers, email2, initial == null ? void 0 : initial.id);
+  const emailInUseNote = (typed, owner) => owner && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, '"', typed.trim(), '" is already on file for ', owner.name || "another customer", " \u2014 double check before saving.");
   const removeSite = (id) => {
     setSiteIds((ids) => ids.filter((sId) => sId !== id));
   };
@@ -5905,7 +6063,7 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
       className: `px-3 py-1.5 rounded-md text-sm font-medium border ${customerType === "Individual" ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9]"}`
     },
     "Individual"
-  ))), /* @__PURE__ */ React.createElement(Field, { label: "Salutation" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: salutation, onChange: (e) => setSalutation(e.target.value) }, SALUTATION_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "First Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: firstName, onChange: (e) => setFirstName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Last Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: lastName, onChange: (e) => setLastName(e.target.value) }))), customerType === "Business" && /* @__PURE__ */ React.createElement(Field, { label: "Company Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: companyName, onChange: (e) => setCompanyName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Display Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: phoneType, onChange: (e) => setPhoneType(e.target.value) }, PHONE_TYPE_OPTIONS.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))))), /* @__PURE__ */ React.createElement(Field, { label: "Customer Language" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: customerLanguage, onChange: (e) => setCustomerLanguage(e.target.value) }, CUSTOMER_LANGUAGE_OPTIONS.map((l) => /* @__PURE__ */ React.createElement("option", { key: l, value: l }, l)))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Billing Address"), /* @__PURE__ */ React.createElement(AddressFields, { values: billingAddress, onChange: setBillingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 flex items-center justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Shipping Address"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: shippingSameAsBilling, onChange: (e) => setShippingSameAsBilling(e.target.checked), className: "accent-[#377249]" }), "Copy billing address")), !shippingSameAsBilling && /* @__PURE__ */ React.createElement(AddressFields, { values: shippingAddress, onChange: setShippingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Sites" }, siteIds.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, siteIds.map((sId) => {
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Salutation" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: salutation, onChange: (e) => setSalutation(e.target.value) }, SALUTATION_OPTIONS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s || "\u2014")))), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "First Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: firstName, onChange: (e) => setFirstName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Last Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: lastName, onChange: (e) => setLastName(e.target.value) }))), customerType === "Business" && /* @__PURE__ */ React.createElement(Field, { label: "Company Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: companyName, onChange: (e) => setCompanyName(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Display Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A customer named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Email Address" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email, onChange: (e) => setEmail(e.target.value) })), emailInUseNote(email, emailOwner), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 gap-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone, onChange: (e) => setPhone(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: phoneType, onChange: (e) => setPhoneType(e.target.value) }, PHONE_TYPE_OPTIONS.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))))), /* @__PURE__ */ React.createElement(Field, { label: "Customer Language" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: customerLanguage, onChange: (e) => setCustomerLanguage(e.target.value) }, CUSTOMER_LANGUAGE_OPTIONS.map((l) => /* @__PURE__ */ React.createElement("option", { key: l, value: l }, l)))), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Billing Address"), /* @__PURE__ */ React.createElement(AddressFields, { values: billingAddress, onChange: setBillingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-2 flex items-center justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Shipping Address"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: shippingSameAsBilling, onChange: (e) => setShippingSameAsBilling(e.target.checked), className: "accent-[#377249]" }), "Copy billing address")), !shippingSameAsBilling && /* @__PURE__ */ React.createElement(AddressFields, { values: shippingAddress, onChange: setShippingAddress }), /* @__PURE__ */ React.createElement("div", { className: "mt-3 mb-1 text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Additional Contact (optional)"), /* @__PURE__ */ React.createElement(Field, { label: "Name" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name2, onChange: (e) => setName2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Phone" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: phone2, onChange: (e) => setPhone2(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Email" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: email2, onChange: (e) => setEmail2(e.target.value) })), emailInUseNote(email2, email2Owner), /* @__PURE__ */ React.createElement(Field, { label: "Sites" }, siteIds.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap gap-1.5 mb-2" }, siteIds.map((sId) => {
     const s = sites.find((x) => x.id === sId);
     return /* @__PURE__ */ React.createElement("span", { key: sId, className: "inline-flex items-center gap-1 text-xs bg-[#DDF1E1] text-[#28633C] rounded-full pl-2.5 pr-1 py-1" }, "Site ", s ? s.number : "?", /* @__PURE__ */ React.createElement(
       "button",
@@ -5937,7 +6095,7 @@ function BulkAddCustomersForm({ sites, onSave, onCancel }) {
   };
   const parsed = text.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
     const [name, phone, email, address, siteNumber] = parseLine(line);
-    const matchedSite = siteNumber ? sites.find((s) => s.number.toLowerCase() === siteNumber.toLowerCase()) : null;
+    const matchedSite = siteNumber ? sites.find((s) => sameSiteNumber(s.number, siteNumber)) : null;
     return {
       name: name || "",
       phone: phone || "",
@@ -6197,7 +6355,123 @@ function PaymentInstructionsControl({ db, persist }) {
   ));
 }
 
-function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, invoiceNumber, taxRate, rateOptions, serviceCallOptions, onSave, onCancel }) {
+// ---- Invoice line items: parts, labour and service calls in one list ----
+const blankInvoiceLine = () => ({ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" });
+function labourInvoiceLine(opt, hours) {
+  return { id: uid(), kind: "labour", rateType: opt.label, description: `Labour — ${opt.label}`, quantity: hours != null ? hours : 1, unitPrice: Number(opt.rate) || 0, account: opt.account || "" };
+}
+function serviceCallInvoiceLine(opt) {
+  return { id: uid(), kind: "serviceCall", rateType: opt.label, description: `Service call — ${opt.label}`, quantity: 1, unitPrice: Number(opt.rate) || 0, account: opt.account || "" };
+}
+// Propane fills never get shop supplies, whichever way they're invoiced.
+function isPropaneWorkOrder(wo, propaneRequests) {
+  if (!wo) return false;
+  return wo.source === "propane" || /^\s*propane fill\s*$/i.test(wo.title || "") || (propaneRequests || []).some((r) => r.workOrderId === wo.id);
+}
+function shopSuppliesInvoiceLine(percent) {
+  return { id: uid(), kind: "shopSupplies", description: "Shop supplies", percent: percent != null ? percent : 5, quantity: 1, unitPrice: 0, account: "" };
+}
+function partInvoiceLine(part, quantity) {
+  return { id: uid(), description: part.name, quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+}
+// The lines an invoice opens with in the form: an older invoice's labour
+// and service call fields become lines, with a blank line to type into last.
+// A brand-new one (no `initial`) starts with shop supplies at
+// `newShopSuppliesPercent`. Propane and winterizing invoices are made
+// without this form, with no shop supplies.
+function invoiceFormLines(initial, rateOptions, serviceCallOptions, newShopSuppliesPercent) {
+  const lines = ((initial && initial.lineItems) || []).filter((li) => li.description || Number(li.unitPrice));
+  if (initial && Number(initial.laborHours) > 0) {
+    const opt = rateOptions.find((r) => r.label === initial.laborRateType) || { label: initial.laborRateType || "Labour", rate: Number(initial.laborRate) || 0, account: initial.laborAccount || "" };
+    lines.push({ ...labourInvoiceLine(opt, Number(initial.laborHours)), unitPrice: initial.laborRate != null ? Number(initial.laborRate) : Number(opt.rate) || 0 });
+  }
+  if (initial && initial.serviceCallType && initial.serviceCallType !== "None") {
+    const opt = serviceCallOptions.find((o) => o.label === initial.serviceCallType) || { label: initial.serviceCallType, rate: Number(initial.serviceCall) || 0 };
+    lines.push({ ...serviceCallInvoiceLine(opt), unitPrice: initial.serviceCall != null ? Number(initial.serviceCall) : Number(opt.rate) || 0 });
+  }
+  if (initial && initial.shopSuppliesMode === "flat" ? Number(initial.shopSuppliesAmount) > 0 : Number(initial && initial.shopSuppliesPercent) > 0) {
+    lines.push(initial.shopSuppliesMode === "flat" ? { ...shopSuppliesInvoiceLine(), percent: null, unitPrice: Number(initial.shopSuppliesAmount) } : shopSuppliesInvoiceLine(Number(initial.shopSuppliesPercent)));
+  }
+  if (!initial && newShopSuppliesPercent) lines.push(shopSuppliesInvoiceLine(newShopSuppliesPercent));
+  return [...lines, blankInvoiceLine()];
+}
+// What typing in a line's Description offers: parts (by name or SKU),
+// labour at each rate, and service calls.
+function invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions, shopSuppliesPercent) {
+  const q = (text || "").trim().toLowerCase();
+  if (!q) return [];
+  const words = q.split(/\s+/);
+  const hit = (hay) => words.every((w) => hay.toLowerCase().includes(w));
+  const labour = rateOptions.filter((r) => r.label !== "N/A" && hit(`labour labor hours ${r.label}`)).map((r) => ({ key: `labour:${r.label}`, label: `Labour — ${r.label}`, detail: `${formatPrice(r.rate)}/hr`, line: () => labourInvoiceLine(r) }));
+  const calls = serviceCallOptions.filter((o) => o.label !== "None" && hit(`service call ${o.label}`)).map((o) => ({ key: `call:${o.label}`, label: `Service call — ${o.label}`, detail: formatPrice(o.rate), line: () => serviceCallInvoiceLine(o) }));
+  const pct = shopSuppliesPercent != null ? shopSuppliesPercent : 5;
+  const shop = hit("shop supplies") ? [{ key: "shop", label: "Shop supplies", detail: `${pct}% of parts + labour`, line: () => shopSuppliesInvoiceLine(pct) }] : [];
+  const partHits = (parts || []).filter((p) => hit(`${p.name || ""} ${p.sku || ""}`)).slice(0, 8).map((p) => ({ key: `part:${p.id}`, label: p.name, detail: [p.sku, formatPrice(p.price)].filter(Boolean).join(" · "), line: () => partInvoiceLine(p) }));
+  return [...labour, ...calls, ...shop, ...partHits];
+}
+// A line's Description box: type to search, pick with the mouse or
+// arrow keys + Enter. Anything typed that isn't picked stays as typed.
+// The quantity and price boxes of a line. A shop supplies line shows its
+// percent and the amount it works out to instead.
+function InvoiceLineAmounts({ li, partsAndLabour, updateLine }) {
+  const narrow = inputCls.replace("w-full ", "");
+  if (li.kind === "shopSupplies" && li.percent != null) {
+    return React.createElement(React.Fragment, null,
+      React.createElement("input", { type: "number", min: "0", step: "0.5", className: narrow + " w-20", value: li.percent, onChange: (e) => updateLine(li.id, "percent", e.target.value), "aria-label": "Shop supplies percent" }),
+      React.createElement("span", { className: "text-xs text-[#75716A]" }, "%"),
+      React.createElement("span", { className: "w-24 text-sm text-right text-[#1E1A13]", "data-shop-amount": true }, formatPrice(shopSuppliesLineAmount(li, partsAndLabour))));
+  }
+  return React.createElement(React.Fragment, null,
+    li.kind === "labour" && React.createElement("span", { className: "text-[11px] text-[#75716A]" }, "Hours"),
+    React.createElement("input", { type: "number", min: "0", step: li.kind === "labour" ? "0.25" : "1", className: narrow + " w-20", value: li.quantity, onChange: (e) => updateLine(li.id, "quantity", e.target.value), placeholder: li.kind === "labour" ? "Hrs" : "Qty", "aria-label": li.kind === "labour" ? "Hours" : "Quantity" }),
+    React.createElement("input", { type: "number", min: "0", step: "0.01", className: narrow + " w-24", value: li.unitPrice, onChange: (e) => updateLine(li.id, "unitPrice", e.target.value), placeholder: "Unit $", "aria-label": "Unit price" }));
+}
+// Saved form of a form line (shop supplies keeps its percent and the
+// amount it came to).
+function cleanInvoiceLine(li, partsAndLabour) {
+  const base = { id: li.id, description: li.description.trim(), quantity: Number(li.quantity) || 0, unitPrice: Number(li.unitPrice) || 0, account: (li.account || "").trim() };
+  if (li.partId) base.partId = li.partId;
+  if (li.kind) Object.assign(base, { kind: li.kind, rateType: li.rateType || "" });
+  if (li.kind === "shopSupplies" && li.percent != null && li.percent !== "") Object.assign(base, { percent: Number(li.percent) || 0, quantity: 1, unitPrice: shopSuppliesLineAmount(li, partsAndLabour) });
+  return base;
+}
+function InvoiceLineDescription({ value, onChange, onPick, suggest, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const items = open ? suggest(value) : [];
+  const pick = (item) => {
+    setOpen(false);
+    onPick(item.line());
+  };
+  const onKeyDown = (e) => {
+    if (!items.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(a + 1, items.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pick(items[Math.min(active, items.length - 1)]); }
+    else if (e.key === "Escape") { e.stopPropagation(); setOpen(false); }
+  };
+  return React.createElement("div", { className: "relative flex-1 min-w-[12rem]" },
+    React.createElement("input", {
+      className: inputCls,
+      value,
+      placeholder,
+      onChange: (e) => { onChange(e.target.value); setOpen(true); setActive(0); },
+      onFocus: () => setOpen(true),
+      onBlur: () => setTimeout(() => setOpen(false), 150),
+      onKeyDown
+    }),
+    items.length > 0 && React.createElement("div", { className: "absolute z-30 left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto rounded-md border border-[#E2DED5] bg-[#FFFDFA] shadow-lg", role: "listbox" },
+      items.map((item, i) => React.createElement("button", {
+        key: item.key,
+        type: "button",
+        role: "option",
+        "aria-selected": i === active,
+        onMouseDown: (e) => { e.preventDefault(); pick(item); },
+        onMouseEnter: () => setActive(i),
+        className: `w-full flex items-center justify-between gap-3 px-3 py-2 text-left text-sm ${i === active ? "bg-[#F1EEE9]" : ""}`
+      }, React.createElement("span", { className: "text-[#1E1A13]" }, item.label), React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.detail)))));
+}
+function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, invoiceNumber, taxRate, defaultShopSuppliesPercent, rateOptions, serviceCallOptions, onSave, onCancel }) {
   var _a, _b, _c, _d;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || todayISO());
@@ -6206,18 +6480,12 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [linkedWorkOrderId, setLinkedWorkOrderId] = useState((initial == null ? void 0 : initial.sourceType) === "workOrder" ? initial.sourceId || "" : "");
-  const [lineItems, setLineItems] = useState(
-    ((_a = initial == null ? void 0 : initial.lineItems) == null ? void 0 : _a.length) ? initial.lineItems : [{ id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }]
-  );
-  const [laborHours, setLaborHours] = useState((_b = initial == null ? void 0 : initial.laborHours) != null ? _b : "");
-  const [laborRateType, setLaborRateType] = useState((initial == null ? void 0 : initial.laborRateType) || "N/A");
-  const [shopSuppliesMode, setShopSuppliesMode] = useState((initial == null ? void 0 : initial.shopSuppliesMode) || "percent");
-  const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_c = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _c : 0);
-  const [shopSuppliesAmount, setShopSuppliesAmount] = useState((initial == null ? void 0 : initial.shopSuppliesAmount) != null ? initial.shopSuppliesAmount : "");
-  const [serviceCallType, setServiceCallType] = useState((initial == null ? void 0 : initial.serviceCallType) || "None");
+  // Labour and the service call are lines too (see invoiceFormLines).
+  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions, defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 5));
   const [depositAmount, setDepositAmount] = useState((initial == null ? void 0 : initial.depositAmount) != null ? initial.depositAmount : "");
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
-  const [paidInAdvanceMethod, setPaidInAdvanceMethod] = useState((initial == null ? void 0 : initial.paidInAdvanceMethod) || null);
+  const initialPaidMethod = initial ? invoicePaidMethod(initial, initial.taxRate != null ? initial.taxRate : taxRate) : null;
+  const [paidMethod, setPaidMethod] = useState(initialPaidMethod);
   const pickSite = (val) => {
     setSiteId(val);
     if (val) {
@@ -6270,14 +6538,15 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     if (!siteId && wo.siteId) setSiteId(wo.siteId);
     if (!cottageId && wo.cottageId) setCottageId(wo.cottageId);
     if (!customerId && wo.customerId) setCustomerId(wo.customerId);
-    if (!Number(laborHours) && Number(wo.laborHours) > 0) setLaborHours(wo.laborHours);
-    if (laborRateType === "N/A" && wo.laborRateType) setLaborRateType(wo.laborRateType);
-    if (serviceCallType === "None" && wo.serviceCallType) setServiceCallType(wo.serviceCallType);
-    if (lineItems.length === 1 && !lineItems[0].description.trim() && (wo.partsUsed || []).length) {
-      setLineItems((wo.partsUsed || []).map((pu) => {
+    // Its parts, hours and service call fill the lines, if none are typed yet.
+    // (The shop supplies line a new invoice starts with doesn't count, and stays last.)
+    if (!lineItems.some((li) => li.kind !== "shopSupplies" && li.description.trim())) {
+      const fromWo = (wo.partsUsed || []).map((pu) => {
         const part = parts.find((p) => p.id === pu.partId);
-        return { id: uid(), description: part ? part.name : "Part", quantity: Number(pu.quantity) || 1, unitPrice: part ? Number(part.price) || 0 : 0, account: part ? part.salesAccount || "" : "", partId: pu.partId };
-      }));
+        return part ? partInvoiceLine(part, Number(pu.quantity) || 1) : { ...blankInvoiceLine(), description: "Part", quantity: Number(pu.quantity) || 1, partId: pu.partId };
+      });
+      const extra = invoiceFormLines({ laborHours: wo.laborHours, laborRateType: wo.laborRateType, serviceCallType: wo.serviceCallType }, rateOptions, serviceCallOptions).filter((li) => li.description);
+      setLineItems([...fromWo, ...extra, ...isPropaneWorkOrder(wo) ? [] : lineItems.filter((li) => li.kind === "shopSupplies"), blankInvoiceLine()]);
     }
   };
   const updateLine = (id, field, value) => {
@@ -6287,31 +6556,24 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     setLineItems((items) => items.length > 1 ? items.filter((li) => li.id !== id) : items);
   };
   const addBlankLine = () => {
-    setLineItems((items) => [...items, { id: uid(), description: "", quantity: 1, unitPrice: 0, account: "" }]);
+    setLineItems((items) => [...items, blankInvoiceLine()]);
   };
-  const addPartLine = (partId) => {
-    const part = parts.find((p) => p.id === partId);
-    if (!part) return;
-    setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id }]);
+  // A part, labour or service call picked from a line's suggestions fills
+  // that line; picking on the last line opens a new blank one under it.
+  const pickLine = (id, picked) => {
+    setLineItems((items) => {
+      const next = items.map((li) => li.id === id ? { ...picked, id } : li);
+      return next[next.length - 1].id === id ? [...next, blankInvoiceLine()] : next;
+    });
   };
-  const laborRateOption = rateOptions.find((r) => r.label === laborRateType);
-  const laborRate = laborRateOption ? laborRateOption.rate : 0;
-  const laborAccount = laborRateOption ? laborRateOption.account : "";
-  const serviceCallOption = serviceCallOptions.find((s) => s.label === serviceCallType);
-  const serviceCall = serviceCallOption ? serviceCallOption.rate : 0;
-  const totalsInput = { lineItems, laborHours, laborRate, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount, serviceCall };
+  const shopPct = defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 5;
+  const suggestLines = (text) => invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions, shopPct);
+  const totalsInput = { lineItems };
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals(totalsInput, taxRate);
   const balance = total - (Number(depositAmount) || 0);
   const submit = () => {
     if (!title.trim()) return;
-    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => ({
-      id: li.id,
-      description: li.description.trim(),
-      quantity: Number(li.quantity) || 0,
-      unitPrice: Number(li.unitPrice) || 0,
-      account: (li.account || "").trim(),
-      ...li.partId ? { partId: li.partId } : {}
-    }));
+    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost));
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
       invoiceNumber: (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber,
@@ -6324,34 +6586,39 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       customerId: customerId || null,
       notes: notes.trim(),
       lineItems: cleanItems,
-      laborHours: Number(laborHours) || 0,
-      laborRate,
-      laborRateType,
-      laborAccount,
-      shopSuppliesMode,
-      shopSuppliesPercent: Number(shopSuppliesPercent) || 0,
-      shopSuppliesAmount: Number(shopSuppliesAmount) || 0,
-      serviceCallType,
-      serviceCall,
+      // Labour and the service call are lines now; these older fields are cleared.
+      laborHours: 0,
+      laborRate: 0,
+      laborRateType: "N/A",
+      laborAccount: "",
+      // Shop supplies is a line now too.
+      shopSuppliesMode: "percent",
+      shopSuppliesPercent: 0,
+      shopSuppliesAmount: 0,
+      serviceCallType: "None",
+      serviceCall: 0,
       taxRate,
-      depositAmount: paidInAdvanceMethod ? total : depositAmount === "" ? 0 : Number(depositAmount),
+      // Ticked paid: the whole total is in. Unticked after being paid:
+      // only a real (partial) deposit stays.
+      depositAmount: paidMethod != null ? total : initialPaidMethod != null && (depositAmount === "" ? 0 : Number(depositAmount)) >= total ? 0 : depositAmount === "" ? 0 : Number(depositAmount),
       depositDate,
-      paidInAdvanceMethod,
-      paidInAdvanceDate: paidInAdvanceMethod ? (initial == null ? void 0 : initial.paidInAdvanceDate) || todayISO() : null,
+      paidInAdvanceMethod: paidMethod && (initial == null ? void 0 : initial.paidInAdvanceMethod) ? paidMethod : null,
+      paidInAdvanceDate: paidMethod && (initial == null ? void 0 : initial.paidInAdvanceMethod) ? initial.paidInAdvanceDate || null : null,
       sentDate: (initial == null ? void 0 : initial.sentDate) || null,
-      paidInFullDate: paidInAdvanceMethod ? (initial == null ? void 0 : initial.paidInFullDate) || todayISO() : (initial == null ? void 0 : initial.paidInFullDate) || null,
-      paidMethod: paidInAdvanceMethod ? paidInAdvanceMethod : (initial == null ? void 0 : initial.paidMethod) || null,
+      paidInFullDate: paidMethod != null ? (initial == null ? void 0 : initial.paidInFullDate) || todayISO() : null,
+      paidMethod: paidMethod || null,
       createdAt: (initial == null ? void 0 : initial.createdAt) || (/* @__PURE__ */ new Date()).toISOString()
     });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
   } }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-3 flex-wrap gap-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "Invoice #"), /* @__PURE__ */ React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber)), /* @__PURE__ */ React.createElement(PaidCheckToggle, {
-    isPaid: !!paidInAdvanceMethod,
-    method: paidInAdvanceMethod,
-    options: ADVANCE_PAYMENT_METHODS,
+    isPaid: paidMethod != null,
+    method: paidMethod,
+    options: INVOICE_PAYMENT_METHODS,
     showLabel: true,
-    onSelect: (m) => setPaidInAdvanceMethod(paidInAdvanceMethod === m ? null : m)
+    onSelect: (m) => setPaidMethod(m),
+    onClear: () => setPaidMethod(null)
   })), workOrders && workOrders.length > 0 && /* @__PURE__ */ React.createElement(Field, { label: "Link to Work Order (optional)" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
     options: workOrders.slice().sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((w) => {
       const site = w.siteId ? sites.find((s) => s.id === w.siteId) : null;
@@ -6381,33 +6648,13 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     value: customerId,
     onChange: pickCustomer,
     placeholder: "Search customers\u2026"
-  }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Shown on the invoice." }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, "This will appear on the invoice sent to the customer.")), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center flex-wrap" }, /* @__PURE__ */ React.createElement("input", {
-    className: inputCls + " flex-1 min-w-[10rem]",
+  }))), /* @__PURE__ */ React.createElement(Field, { label: "Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "Shown on the invoice." }), /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, "This will appear on the invoice sent to the customer.")), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center flex-wrap", "data-line-kind": li.kind || "part" }, React.createElement(InvoiceLineDescription, {
     value: li.description,
-    onChange: (e) => updateLine(li.id, "description", e.target.value),
-    placeholder: "Description"
-  }), /* @__PURE__ */ React.createElement("input", {
-    type: "number",
-    min: "0",
-    step: "1",
-    className: inputCls + " w-16",
-    value: li.quantity,
-    onChange: (e) => updateLine(li.id, "quantity", e.target.value),
-    placeholder: "Qty"
-  }), /* @__PURE__ */ React.createElement("input", {
-    type: "number",
-    min: "0",
-    step: "0.01",
-    className: inputCls + " w-24",
-    value: li.unitPrice,
-    onChange: (e) => updateLine(li.id, "unitPrice", e.target.value),
-    placeholder: "Unit $"
-  }), /* @__PURE__ */ React.createElement("input", {
-    className: inputCls + " w-24",
-    value: li.account || "",
-    onChange: (e) => updateLine(li.id, "account", e.target.value),
-    placeholder: "Account"
-  }), /* @__PURE__ */ React.createElement(
+    onChange: (v) => updateLine(li.id, "description", v),
+    onPick: (picked) => pickLine(li.id, picked),
+    suggest: suggestLines,
+    placeholder: "Description \u2014 type a part, \"labour\" or \"service call\""
+  }), React.createElement(InvoiceLineAmounts, { li, partsAndLabour: lineItemsSubtotal + laborCost, updateLine }), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -6416,46 +6663,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"), parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "sm:ml-auto w-56" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
-    options: parts.map((p) => ({ value: p.id, label: `${p.name} (${formatPrice(p.price)})`, searchText: `${p.name} ${p.sku || ""}` })),
-    value: "",
-    onChange: (val) => {
-      if (val) addPartLine(val);
-    },
-    placeholder: "Add from parts\u2026"
-  })))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Labour & Extras"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, /* @__PURE__ */ React.createElement("input", {
-    type: "number",
-    min: "0",
-    step: "0.25",
-    className: inputCls,
-    value: laborHours,
-    onChange: (e) => setLaborHours(e.target.value),
-    placeholder: "0"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement("button", {
-    type: "button",
-    onClick: () => setShopSuppliesMode("percent"),
-    className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]")
-  }, "%"), /* @__PURE__ */ React.createElement("button", {
-    type: "button",
-    onClick: () => setShopSuppliesMode("flat"),
-    className: "px-2 text-xs font-medium " + (shopSuppliesMode === "flat" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]")
-  }, "$")), shopSuppliesMode === "percent" ? /* @__PURE__ */ React.createElement("input", {
-    type: "number",
-    min: "0",
-    step: "0.1",
-    className: inputCls,
-    value: shopSuppliesPercent,
-    onChange: (e) => setShopSuppliesPercent(e.target.value),
-    placeholder: "0"
-  }) : /* @__PURE__ */ React.createElement("input", {
-    type: "number",
-    min: "0",
-    step: "0.01",
-    className: inputCls,
-    value: shopSuppliesAmount,
-    onChange: (e) => setShopSuppliesAmount(e.target.value),
-    placeholder: "0.00"
-  }))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) }, serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")")))))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
     step: "0.01",
@@ -6463,33 +6671,31 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     value: depositAmount,
     onChange: (e) => setDepositAmount(e.target.value),
     placeholder: "0.00"
-  })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
+  })), /* @__PURE__ */ React.createElement(Field, { label: "Deposit Date" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: depositDate, onChange: (e) => setDepositDate(e.target.value) })))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total))), Number(depositAmount) > 0 && /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#75716A]" }, "Balance Owing"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(balance)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Invoice")));
 }
 
-function InvoiceCard({ inv, db, taxRate, emailStatus, onView, onEdit, onPrint, onInfoSheet, onEmail, onMarkPaidInFull, onMarkPaidInAdvance, onDelete }) {
+function InvoiceCard({ inv, db, taxRate, emailStatus, onView, onEdit, onPrint, onInfoSheet, onEmail, onSetPaid, onDelete }) {
   const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
   const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
   const { total } = computeQuoteTotals(inv, effectiveTaxRate);
   const balance = total - (Number(inv.depositAmount) || 0);
   const status = invoiceStatus(inv, taxRate);
-  const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
-  const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
   const es = emailStatus[inv.id];
-  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("button", { className: "font-semibold text-[#1E1A13] hover:underline text-left", onClick: () => onView(inv) }, inv.invoiceNumber), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
-    isPaid: !!inv.paidInAdvanceMethod,
-    method: inv.paidInAdvanceMethod,
-    options: ADVANCE_PAYMENT_METHODS,
+  return /* @__PURE__ */ React.createElement("div", { className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("button", { className: "font-semibold text-[#1E1A13] hover:underline text-left", onClick: () => onView(inv) }, inv.invoiceNumber), React.createElement(InvoiceEmailStatus, { inv, sending: es === "sending" })), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-1" }, customer ? customer.name : "\u2014", " \xB7 ", inv.date), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+    isPaid: status === "Paid",
+    method: invoicePaidMethod(inv, taxRate),
+    options: INVOICE_PAYMENT_METHODS,
     showLabel: true,
-    compactLabel: true,
-    onSelect: (m) => onMarkPaidInAdvance(inv, m)
-  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Total ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(total))), status !== "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Balance ", /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, formatPrice(balance)))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, status !== "Paid" && /* @__PURE__ */ React.createElement("button", { onClick: () => onMarkPaidInFull(inv), className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap" }, "Mark Paid in Full"), EMAIL_ENABLED && (customer == null ? void 0 : customer.email) && /* @__PURE__ */ React.createElement(
+    onSelect: (m) => onSetPaid(inv, m),
+    onClear: () => onSetPaid(inv, null)
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-4 text-sm mb-3" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Total ", /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, formatPrice(total))), status !== "Paid" && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Balance ", /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, formatPrice(balance)))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center gap-2" }, EMAIL_ENABLED && (customer == null ? void 0 : customer.email) && /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => onEmail(inv),
       disabled: es === "sending",
       className: "min-h-[38px] flex items-center justify-center px-3.5 py-2 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 font-semibold text-xs whitespace-nowrap disabled:opacity-50"
     },
-    es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
+    es === "sending" ? "Sending\u2026" : inv.emailStatus === "failed" ? "Try again" : inv.emailedTo || inv.sentDate ? "Resend" : "Email"
   ), /* @__PURE__ */ React.createElement("button", { onClick: () => onView(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "View"), /* @__PURE__ */ React.createElement("button", { onClick: () => onEdit(inv), className: "text-[#377249] hover:underline text-xs py-2" }, "Edit"), /* @__PURE__ */ React.createElement("button", { onClick: () => onPrint(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Print"), /* @__PURE__ */ React.createElement("button", { onClick: () => onInfoSheet(inv), className: "text-[#75716A] hover:underline text-xs py-2" }, "Info Sheet"), /* @__PURE__ */ React.createElement("button", { onClick: () => onDelete(inv), className: "text-[#a8532a] hover:underline text-xs py-2" }, "Delete")));
 }
 function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, onInfoSheet, onViewWorkOrder }) {
@@ -6501,14 +6707,15 @@ function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, o
   const effectiveTaxRate = invoice.taxRate != null ? invoice.taxRate : taxRate;
   const totals = computeQuoteTotals(invoice, effectiveTaxRate);
   const status = invoiceStatus(invoice, taxRate);
-  const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
-  const statusLabel = status === "Paid" && invoice.paidMethod ? `Paid — ${invoice.paidMethod}` : status;
   const balance = totals.total - (Number(invoice.depositAmount) || 0);
+  const paidMethod = invoicePaidMethod(invoice, taxRate);
   const badges = [
-    /* @__PURE__ */ React.createElement("span", { key: "s", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${statusTone}` }, statusLabel),
-    invoice.paidInAdvanceMethod && /* @__PURE__ */ React.createElement("span", { key: "a", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, `Paid in Advance — ${invoice.paidInAdvanceMethod}`)
+    /* @__PURE__ */ React.createElement("span", { key: "p", className: `text-[10.5px] font-semibold px-2 py-0.5 rounded-full ${paidMethod != null ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#F1EEE9] text-[#75716A]"}` }, paidMethod != null ? `Paid${paidMethod ? ` — ${paidMethod}` : ""}` : "Not paid"),
+    invoice.emailStatus === "failed" ? /* @__PURE__ */ React.createElement("span", { key: "e", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#F8E3DA] text-[#a8532a]" }, `Didn't send to ${invoice.emailedTo}`) : invoice.emailedTo || invoice.sentDate ? /* @__PURE__ */ React.createElement("span", { key: "e", className: "text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#FBEEDA] text-[#9A6B1F]" }, invoice.emailedTo ? `Sent to ${invoice.emailedTo}` : "Sent") : null
   ].filter(Boolean);
   const lineItems = invoice.lineItems || [];
+  // Shop supplies on a line is listed with the lines already.
+  const shopNotALine = !lineItems.some((li) => li.kind === "shopSupplies");
   return /* @__PURE__ */ React.createElement(
     DrawerShell,
     { title: `Invoice ${invoice.invoiceNumber}`, eyebrow: invoice.title ? `Invoice · ${invoice.title}` : "Invoice", badges, onClose },
@@ -6532,12 +6739,12 @@ function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, o
         /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0)))
       ))
     ),
-    (Number(invoice.laborHours) > 0 || totals.shopSupplies > 0 || totals.serviceCall > 0) && /* @__PURE__ */ React.createElement(
+    (Number(invoice.laborHours) > 0 || shopNotALine && totals.shopSupplies > 0 || Number(invoice.serviceCall) > 0) && /* @__PURE__ */ React.createElement(
       "div",
       { className: "mb-4 space-y-1 text-sm" },
       Number(invoice.laborHours) > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, `Labor — ${invoice.laborHours} hrs × ${formatPrice(invoice.laborRate || 0)}`), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.laborCost))),
-      totals.shopSupplies > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Shop Supplies"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.shopSupplies))),
-      totals.serviceCall > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.serviceCall)))
+      shopNotALine && totals.shopSupplies > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Shop Supplies"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(totals.shopSupplies))),
+      Number(invoice.serviceCall) > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex justify-between" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Service Call"), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice(Number(invoice.serviceCall))))
     ),
     /* @__PURE__ */ React.createElement(
       "div",
@@ -6567,7 +6774,6 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
   const [filter, setFilter] = useState("");
   const [emailStatus, setEmailStatus] = useState({});
   const [sendConfirm, setSendConfirm] = useState(null);
-  const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const taxRate = (_b = (_a = db.settings) == null ? void 0 : _a.taxRate) != null ? _b : 13;
@@ -6599,60 +6805,21 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     deleteInvoice(id);
     confirm.clear();
   };
-  const markPaidInFull = (invoice, paidMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = { ...invoice, depositAmount: total, paidInFullDate: todayISO(), paidMethod };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Full via ${paidMethod}`);
+  const setPaid = (invoice, method) => {
+    const activityLog = addLog(db, actor, method ? `Invoice ${invoice.invoiceNumber} marked paid \u2014 ${method}` : `Invoice ${invoice.invoiceNumber} marked not paid`);
     persist({ ...db, activityLog });
-    saveInvoice(updated);
-  };
-  const setPaidInAdvance = (invoice, paidInAdvanceMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = {
-      ...invoice,
-      paidInAdvanceMethod,
-      paidInAdvanceDate: todayISO(),
-      depositAmount: total,
-      paidInFullDate: invoice.paidInFullDate || todayISO(),
-      paidMethod: paidInAdvanceMethod
-    };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Advance via ${paidInAdvanceMethod} (also marked Paid in Full)`);
-    persist({ ...db, activityLog });
-    saveInvoice(updated);
+    saveInvoice(invoiceWithPayment(invoice, method, taxRate));
   };
   const sendInvoice = (invoice, toEmail) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
     const recipientEmail = toEmail || (customer == null ? void 0 : customer.email);
     if (!customer || !recipientEmail) return;
-    const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
     setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
-    const sends = [sendEmail({
-      toEmail: recipientEmail,
-      toName: customer.name,
-      subject: `Invoice ${invoice.invoiceNumber}`,
-      message: buildInvoiceEmailText(invoice, db, taxRate),
-      department: "service",
-      source: "Invoice email"
-    })];
-    if (accountingEmail) {
-      sends.push(sendEmail({
-        toEmail: accountingEmail,
-        toName: "Accounting",
-        subject: `Invoice ${invoice.invoiceNumber} \u2014 ${customer.name}`,
-        message: buildInvoiceEmailText(invoice, db, taxRate),
-        department: "service",
-        source: "Invoice email"
-      }));
-    }
-    Promise.all(sends).then(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
-      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || (/* @__PURE__ */ new Date()).toISOString() };
-      const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
+    sendInvoiceEmail(invoice, customer, recipientEmail, db, taxRate).then((updated) => {
+      setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 }));
+      const activityLog = addLog(db, actor, updated.emailStatus === "sent" ? `Emailed invoice ${invoice.invoiceNumber} to ${customer.name} (${recipientEmail})` : `Invoice ${invoice.invoiceNumber} didn't send to ${recipientEmail}: ${updated.emailError}`);
       persist({ ...db, activityLog });
       saveInvoice(updated);
-      setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
-    }).catch(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
     });
   };
   const filtered = invoices.filter((inv) => {
@@ -6681,23 +6848,21 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
   const desktopTable = invoices.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, {
     text: "No invoices yet.",
     action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Create an invoice")
-  }) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No invoices match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Invoice #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Paid in Advance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Status"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Total"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Balance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-56" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((inv) => {
+  }) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No invoices match your search." }) : /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Invoice #"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Paid"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Customer"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Date"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Emailed"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Total"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Balance"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-56" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((inv) => {
     const customer = inv.customerId ? db.customers.find((c) => c.id === inv.customerId) : null;
     const effectiveTaxRate = inv.taxRate != null ? inv.taxRate : taxRate;
     const { total } = computeQuoteTotals(inv, effectiveTaxRate);
     const balance = total - (Number(inv.depositAmount) || 0);
     const status = invoiceStatus(inv, taxRate);
-    const statusTone = status === "Paid" ? "bg-[#DDF1E1] text-[#28633C]" : status === "Sent" ? "bg-[#FBEEDA] text-[#9A6B1F]" : "bg-[#F1EEE9] text-[#75716A]";
-    const statusLabel = status === "Paid" && inv.paidMethod ? `Paid \u2014 ${inv.paidMethod}` : status;
     const es = emailStatus[inv.id];
-    return /* @__PURE__ */ React.createElement("tr", { key: inv.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailInvoice(inv) }, inv.invoiceNumber)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
-      isPaid: !!inv.paidInAdvanceMethod,
-      method: inv.paidInAdvanceMethod,
-      options: ADVANCE_PAYMENT_METHODS,
+    return /* @__PURE__ */ React.createElement("tr", { key: inv.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13] whitespace-nowrap" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailInvoice(inv) }, inv.invoiceNumber)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement(PaidCheckToggle, {
+      isPaid: status === "Paid",
+      method: invoicePaidMethod(inv, taxRate),
+      options: INVOICE_PAYMENT_METHODS,
       showLabel: true,
-      compactLabel: true,
-      onSelect: (m) => setPaidInAdvance(inv, m)
-    })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, customer ? customer.name : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, inv.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, statusLabel)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, status === "Paid" ? "\u2014" : formatPrice(balance)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailInvoice(inv) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: inv }) }, "Edit"), /* @__PURE__ */ React.createElement("button", {
+      onSelect: (m) => setPaid(inv, m),
+      onClear: () => setPaid(inv, null)
+    })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, customer ? customer.name : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, inv.date), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, React.createElement(InvoiceEmailStatus, { inv, sending: es === "sending" })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, formatPrice(total)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, status === "Paid" ? "\u2014" : formatPrice(balance)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end items-center text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailInvoice(inv) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: inv }) }, "Edit"), /* @__PURE__ */ React.createElement("button", {
       className: "text-[#75716A] hover:underline",
       onClick: () => downloadPrintableItems([inv], (i) => buildInvoiceHtml(i, db, taxRate, false), `invoice-${inv.invoiceNumber}`)
     }, "Print"), /* @__PURE__ */ React.createElement("button", {
@@ -6710,8 +6875,8 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
         disabled: es === "sending",
         onClick: () => setSendConfirm(inv)
       },
-      es === "sending" ? "Sending\u2026" : es === "sent" ? "Sent \u2713" : es === "error" ? "Failed \u2014 retry" : "Email"
-    ), status !== "Paid" && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline font-medium", onClick: () => setPaidMethodPrompt(inv) }, "Mark Paid in Full"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(inv.id) }, "Delete"))));
+      es === "sending" ? "Sending\u2026" : inv.emailStatus === "failed" ? "Try again" : inv.emailedTo || inv.sentDate ? "Resend" : "Email"
+    ), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(inv.id) }, "Delete"))));
   }))));
   const mobileCards = invoices.length === 0 || filtered.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "sm:hidden space-y-3" }, filtered.map((inv) => /* @__PURE__ */ React.createElement(InvoiceCard, {
     key: inv.id,
@@ -6724,8 +6889,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
     onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
     onEmail: (i) => setSendConfirm(i),
-    onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
-    onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
+    onSetPaid: setPaid,
     onDelete: (i) => confirm.ask(i.id)
   })));
   const table = /* @__PURE__ */ React.createElement(React.Fragment, null, desktopTable, mobileCards);
@@ -6738,6 +6902,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     workOrders: db.workOrders,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
+    defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
     rateOptions: getLaborRateOptions(db),
     serviceCallOptions: getServiceCallOptions(db),
     onSave: save,
@@ -6758,16 +6923,6 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     },
     onCancel: () => setSendConfirm(null)
   }) : null;
-  const paidMethodEl = paidMethodPrompt ? /* @__PURE__ */ React.createElement(PaymentMethodModal, {
-    title: "Mark this invoice as paid?",
-    summary: `${formatPrice(computeQuoteTotals(paidMethodPrompt, paidMethodPrompt.taxRate != null ? paidMethodPrompt.taxRate : taxRate).total)} from ${customerName(paidMethodPrompt.customerId) || "this customer"} will be recorded as received today and the overdue flag will clear.`,
-    methods: INVOICE_PAYMENT_METHODS,
-    onConfirm: (method) => {
-      markPaidInFull(paidMethodPrompt, method);
-      setPaidMethodPrompt(null);
-    },
-    onCancel: () => setPaidMethodPrompt(null)
-  }) : null;
   const detailEl = detailInvoice ? /* @__PURE__ */ React.createElement(InvoiceDetailDrawer, {
     invoice: invoices.find((i) => i.id === detailInvoice.id) || detailInvoice,
     db,
@@ -6782,7 +6937,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     onViewWorkOrder: (wo) => setViewingWO(wo)
   }) : null;
   const viewingWOEl = viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" });
-  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl, paidMethodEl, detailEl, viewingWOEl);
+  return /* @__PURE__ */ React.createElement("div", null, header, stats, table, modalEl, confirmEl, sendConfirmEl, detailEl, viewingWOEl);
 }
 
 // Decided: no view drawer here — the table (Name/SKU/Price/Price+tax/Qty, low-stock
@@ -7643,18 +7798,9 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
-  const [lineItems, setLineItems] = useState(
-    ((_a = initial == null ? void 0 : initial.lineItems) == null ? void 0 : _a.length) ? initial.lineItems : [{ id: uid(), description: "", quantity: 1, unitPrice: 0 }]
-  );
+  // Labour and the service call are lines, as on invoices (invoiceFormLines).
+  const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions, defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 5));
   const [templateId, setTemplateId] = useState("");
-  const [laborHours, setLaborHours] = useState((_b = initial == null ? void 0 : initial.laborHours) != null ? _b : "");
-  const [laborRateType, setLaborRateType] = useState(
-    (initial == null ? void 0 : initial.laborRateType) || ((_c = rateOptions.find((r) => r.rate === (initial == null ? void 0 : initial.laborRate))) == null ? void 0 : _c.label) || "N/A"
-  );
-  const [shopSuppliesMode, setShopSuppliesMode] = useState((initial == null ? void 0 : initial.shopSuppliesMode) || "percent");
-  const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_e = (_d = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _d : defaultShopSuppliesPercent) != null ? _e : 5);
-  const [shopSuppliesAmount, setShopSuppliesAmount] = useState((initial == null ? void 0 : initial.shopSuppliesAmount) != null ? initial.shopSuppliesAmount : "");
-  const [serviceCallType, setServiceCallType] = useState((initial == null ? void 0 : initial.serviceCallType) || "None");
   const [commentLog, setCommentLog] = useState((initial == null ? void 0 : initial.commentLog) || []);
   const [commentText, setCommentText] = useState("");
   const isFirstRender = useRef(true);
@@ -7665,13 +7811,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     if (!tpl) return;
     setTitle(tpl.title || "");
     setNotes(tpl.notes || "");
-    setLineItems((tpl.lineItems || []).length ? tpl.lineItems.map((li) => ({ ...li, id: uid() })) : [{ id: uid(), description: "", quantity: 1, unitPrice: 0 }]);
-    setLaborHours(tpl.laborHours || "");
-    setLaborRateType(tpl.laborRateType || "N/A");
-    setShopSuppliesMode(tpl.shopSuppliesMode || "percent");
-    setShopSuppliesPercent(tpl.shopSuppliesPercent != null ? tpl.shopSuppliesPercent : 0);
-    setShopSuppliesAmount(tpl.shopSuppliesAmount != null ? tpl.shopSuppliesAmount : "");
-    setServiceCallType(tpl.serviceCallType || "None");
+    setLineItems(invoiceFormLines({ ...tpl, lineItems: (tpl.lineItems || []).map((li) => ({ ...li, id: uid() })) }, rateOptions, serviceCallOptions));
   };
   useEffect(() => {
     if (isFirstRender.current) {
@@ -7679,7 +7819,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       return;
     }
     if (onDirtyChange) onDirtyChange(true);
-  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, laborHours, laborRateType, shopSuppliesMode, shopSuppliesPercent, shopSuppliesAmount, serviceCallType, commentLog]);
+  }, [title, date, status, siteId, cottageId, customerId, notes, lineItems, commentLog]);
   const addComment = () => {
     if (!commentText.trim()) return;
     const entry = { id: uid(), text: commentText.trim(), author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
@@ -7687,7 +7827,6 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     setCommentText("");
   };
   const isDuplicate = title.trim() && (quotes || []).some((q) => q.id !== (initial == null ? void 0 : initial.id) && q.title.trim().toLowerCase() === title.trim().toLowerCase());
-  const laborRate = (_h = (_g = rateOptions.find((r) => r.label === laborRateType)) == null ? void 0 : _g.rate) != null ? _h : rateOptions[1].rate;
   const handleSiteChange = (val) => {
     setSiteId(val);
     if (val) {
@@ -7724,30 +7863,22 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     setLineItems((items) => items.length > 1 ? items.filter((li) => li.id !== id) : items);
   };
   const addBlankLine = () => {
-    setLineItems((items) => [...items, { id: uid(), description: "", quantity: 1, unitPrice: 0 }]);
+    setLineItems((items) => [...items, blankInvoiceLine()]);
   };
-  const addPartLine = (partId) => {
-    const part = parts.find((p) => p.id === partId);
-    if (!part) return;
-    setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, partId: part.id }]);
+  // Same as invoices: a picked part / labour / service call fills the line,
+  // and picking on the last line opens a new one under it.
+  const pickLine = (id, picked) => {
+    setLineItems((items) => {
+      const next = items.map((li) => li.id === id ? { ...picked, id } : li);
+      return next[next.length - 1].id === id ? [...next, blankInvoiceLine()] : next;
+    });
   };
-  const lineItemsSubtotal = lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
-  const laborCost = (Number(laborHours) || 0) * laborRate;
-  const shopSupplies = shopSuppliesMode === "flat" ? Number(shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(shopSuppliesPercent) || 0) / 100);
-  const serviceCallOption = serviceCallOptions.find((s) => s.label === serviceCallType);
-  const serviceCallAmt = serviceCallOption ? serviceCallOption.rate : 0;
-  const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCallAmt;
-  const tax = subtotal * (taxRate / 100);
-  const total = subtotal + tax;
+  const shopPct = defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 5;
+  const suggestLines = (text) => invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions, shopPct);
+  const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals({ lineItems }, taxRate);
   const submit = () => {
     if (!title.trim()) return;
-    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => ({
-      id: li.id,
-      description: li.description.trim(),
-      quantity: Number(li.quantity) || 0,
-      unitPrice: Number(li.unitPrice) || 0,
-      ...li.partId ? { partId: li.partId } : {}
-    }));
+    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost));
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
       title: title.trim(),
@@ -7758,14 +7889,16 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       customerId: customerId || null,
       notes: notes.trim(),
       lineItems: cleanItems,
-      laborHours: Number(laborHours) || 0,
-      laborRate,
-      laborRateType,
-      shopSuppliesMode,
-      shopSuppliesPercent: Number(shopSuppliesPercent) || 0,
-      shopSuppliesAmount: Number(shopSuppliesAmount) || 0,
-      serviceCallType,
-      serviceCall: serviceCallAmt,
+      // Labour and the service call are lines now; these older fields are cleared.
+      laborHours: 0,
+      laborRate: 0,
+      laborRateType: "N/A",
+      // Shop supplies is a line now too.
+      shopSuppliesMode: "percent",
+      shopSuppliesPercent: 0,
+      shopSuppliesAmount: 0,
+      serviceCallType: "None",
+      serviceCall: 0,
       commentLog
     });
   };
@@ -7819,37 +7952,13 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       className: "px-3 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40 whitespace-nowrap"
     },
     "Add"
-  ))), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: inputCls + " flex-1",
-      value: li.description,
-      onChange: (e) => updateLine(li.id, "description", e.target.value),
-      placeholder: "Description"
-    }
-  ), /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "1",
-      className: inputCls + " w-16",
-      value: li.quantity,
-      onChange: (e) => updateLine(li.id, "quantity", e.target.value),
-      placeholder: "Qty"
-    }
-  ), /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.01",
-      className: inputCls + " w-24",
-      value: li.unitPrice,
-      onChange: (e) => updateLine(li.id, "unitPrice", e.target.value),
-      placeholder: "Unit $"
-    }
-  ), /* @__PURE__ */ React.createElement(
+  ))), /* @__PURE__ */ React.createElement("div", { className: "mt-4" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Line Items"), /* @__PURE__ */ React.createElement("div", { className: "space-y-2" }, lineItems.map((li) => /* @__PURE__ */ React.createElement("div", { key: li.id, className: "flex gap-2 items-center flex-wrap", "data-line-kind": li.kind || "part" }, React.createElement(InvoiceLineDescription, {
+    value: li.description,
+    onChange: (v) => updateLine(li.id, "description", v),
+    onPick: (picked) => pickLine(li.id, picked),
+    suggest: suggestLines,
+    placeholder: "Description \u2014 type a part, \"labour\" or \"service call\""
+  }), React.createElement(InvoiceLineAmounts, { li, partsAndLabour: lineItemsSubtotal + laborCost, updateLine }), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -7858,67 +7967,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"), parts.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "sm:ml-auto w-56" }, /* @__PURE__ */ React.createElement(SearchableSelect, {
-    options: parts.map((p) => ({ value: p.id, label: `${p.name} (${formatPrice(p.price)})`, searchText: `${p.name} ${p.sku || ""}` })),
-    value: "",
-    onChange: (val) => {
-      if (val) addPartLine(val);
-    },
-    placeholder: "Add from parts\u2026"
-  })))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Labour & Extras"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Hours Worked" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.25",
-      className: inputCls,
-      value: laborHours,
-      onChange: (e) => setLaborHours(e.target.value),
-      placeholder: "0"
-    }
-  )), /* @__PURE__ */ React.createElement(Field, { label: "Rate Type" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: laborRateType, onChange: (e) => setLaborRateType(e.target.value) }, rateOptions.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.label, value: r.label }, r.label, " ($", r.rate.toFixed(2), "/hr)")))), /* @__PURE__ */ React.createElement(Field, { label: "Shop Supplies" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1.5" }, /* @__PURE__ */ React.createElement("div", { className: "flex rounded-md border border-[#E2DED5] overflow-hidden shrink-0" }, /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: () => setShopSuppliesMode("percent"),
-      className: "px-2 text-xs font-medium " + (shopSuppliesMode === "percent" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]")
-    },
-    "%"
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      type: "button",
-      onClick: () => setShopSuppliesMode("flat"),
-      className: "px-2 text-xs font-medium " + (shopSuppliesMode === "flat" ? "bg-[#377249] text-[#F9F5EC]" : "bg-white text-[#75716A]")
-    },
-    "$"
-  )), shopSuppliesMode === "percent" ? /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.1",
-      className: inputCls,
-      value: shopSuppliesPercent,
-      onChange: (e) => setShopSuppliesPercent(e.target.value),
-      placeholder: "0"
-    }
-  ) : /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      type: "number",
-      min: "0",
-      step: "0.01",
-      className: inputCls,
-      value: shopSuppliesAmount,
-      onChange: (e) => setShopSuppliesAmount(e.target.value),
-      placeholder: "0.00"
-    }
-  ))), /* @__PURE__ */ React.createElement(Field, { label: "Service Call" }, /* @__PURE__ */ React.createElement(
-    "select",
-    { className: inputCls, value: serviceCallType, onChange: (e) => setServiceCallType(e.target.value) },
-    serviceCallOptions.map((s) => /* @__PURE__ */ React.createElement("option", { key: s.label, value: s.label }, s.label, " ($", s.rate.toFixed(2), ")"))
-  )))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour (", laborRateType, ")"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
+  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
 }
 
 function escapeHtml(str) {
@@ -7945,6 +7994,7 @@ function buildWorkOrderHtml(wo, db) {
           <h1>${escapeHtml(wo.title)}</h1>
         </div>
         <div class="meta">
+          ${wo.workOrderNumber ? `<div style="font-weight:700;font-size:14px;color:#1E1A13;">${escapeHtml(wo.workOrderNumber)}</div>` : ""}
           <div>Date: ${escapeHtml(wo.date)}</div>
           <div>Status: ${escapeHtml(wo.status)}</div>
           ${wo.priority ? `<div>Priority: ${escapeHtml(wo.priority)}</div>` : ""}
@@ -7970,14 +8020,26 @@ function buildWorkOrderHtml(wo, db) {
     </div>`;
 }
 
+// Line items can be parts (no kind), labour ("labour": quantity = hours)
+// or a service call ("serviceCall"); older invoices and quotes keep labour
+// and the service call in their own fields instead. Either way they add up
+// the same, and shop supplies are a share of parts + labour only.
 function computeQuoteTotals(quote, taxRate) {
-  const lineItemsSubtotal = quote.lineItems.reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
-  const laborCost = (Number(quote.laborHours) || 0) * (Number(quote.laborRate) || 0);
-  const shopSupplies = quote.shopSuppliesMode === "flat" ? Number(quote.shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(quote.shopSuppliesPercent) || 0) / 100);
-  const serviceCall = Number(quote.serviceCall) || 0;
+  const lineTotal = (kind) => (quote.lineItems || []).filter((li) => (li.kind || "part") === kind).reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
+  const lineItemsSubtotal = lineTotal("part");
+  const laborCost = (Number(quote.laborHours) || 0) * (Number(quote.laborRate) || 0) + lineTotal("labour");
+  // A shop supplies line ("shopSupplies") is a percent of parts + labour,
+  // or a flat amount when it has no percent.
+  const shopLines = (quote.lineItems || []).filter((li) => li.kind === "shopSupplies").reduce((sum, li) => sum + shopSuppliesLineAmount(li, lineItemsSubtotal + laborCost), 0);
+  const shopSupplies = shopLines + (quote.shopSuppliesMode === "flat" ? Number(quote.shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(quote.shopSuppliesPercent) || 0) / 100));
+  const serviceCall = (Number(quote.serviceCall) || 0) + lineTotal("serviceCall");
   const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCall;
   const tax = subtotal * (taxRate / 100);
   return { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total: subtotal + tax };
+}
+function shopSuppliesLineAmount(li, partsAndLabour) {
+  if (li.percent != null && li.percent !== "") return Math.round(partsAndLabour * (Number(li.percent) || 0)) / 100;
+  return (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0);
 }
 function buildQuoteHtml(quote, db, taxRate) {
   const site = db.sites.find((s) => s.id === quote.siteId);
@@ -8032,7 +8094,7 @@ function buildQuoteHtml(quote, db, taxRate) {
       <div style="display:flex; justify-content:flex-end;">
         <table style="font-size:13px;">
           ${lineItemsSubtotal ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Parts / line items</td><td style="text-align:right;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-          ${laborHours ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labour (${laborHours} hr &times; ${quote.laborRateType || "Rate"} @ ${formatPrice(laborRate)})</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
+          ${laborCost ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">${laborHours ? `Labour (${laborHours} hr &times; ${quote.laborRateType || "Rate"} @ ${formatPrice(laborRate)})` : "Labour"}</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
           ${shopSupplies ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Shop supplies</td><td style="text-align:right;">${formatPrice(shopSupplies)}</td></tr>` : ""}
           ${serviceCall ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Service call</td><td style="text-align:right;">${formatPrice(serviceCall)}</td></tr>` : ""}
           <tr><td style="padding:2px 16px 2px 0; color:#555; border-top:1px solid #ccc;">Subtotal</td><td style="text-align:right; border-top:1px solid #ccc;">${formatPrice(subtotal)}</td></tr>
@@ -8072,7 +8134,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
 
   let summaryRows = "";
   if (lineItemsSubtotal) summaryRows += summaryRow("Parts / line items", formatPrice(lineItemsSubtotal));
-  if (Number(quote.laborHours) > 0) summaryRows += summaryRow(`Labour (${escapeHtml(String(quote.laborHours))} hr \xD7 ${escapeHtml(quote.laborRateType || "Rate")})`, formatPrice(laborCost));
+  if (laborCost) summaryRows += summaryRow(Number(quote.laborHours) > 0 ? `Labour (${escapeHtml(String(quote.laborHours))} hr \xD7 ${escapeHtml(quote.laborRateType || "Rate")})` : "Labour", formatPrice(laborCost));
   if (shopSupplies) summaryRows += summaryRow("Shop supplies", formatPrice(shopSupplies));
   if (serviceCall) summaryRows += summaryRow("Service call", formatPrice(serviceCall));
   summaryRows += summaryRow("Subtotal", formatPrice(subtotal));
@@ -8337,7 +8399,7 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
   const summaryTable = infoSheet ? "" : `<div style="display:flex; justify-content:flex-end;">
         <table style="font-size:13px;">
           ${lineItemsSubtotal ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Parts / line items</td><td style="text-align:right;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-          ${laborHours ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labour</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
+          ${laborCost ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Labour</td><td style="text-align:right;">${formatPrice(laborCost)}</td></tr>` : ""}
           ${shopSupplies ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Shop supplies</td><td style="text-align:right;">${formatPrice(shopSupplies)}</td></tr>` : ""}
           ${serviceCall ? `<tr><td style="padding:2px 16px 2px 0; color:#555;">Service call</td><td style="text-align:right;">${formatPrice(serviceCall)}</td></tr>` : ""}
           <tr><td style="padding:2px 16px 2px 0; color:#555; border-top:1px solid #ccc;">Subtotal</td><td style="text-align:right; border-top:1px solid #ccc;">${formatPrice(subtotal)}</td></tr>
@@ -8437,7 +8499,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
       ${itemsTable}
       <table style="width:100%;font-size:14px;">
         ${lineItemsSubtotal ? `<tr><td style="padding:2px 0;color:#75716A;">Parts / line items</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(lineItemsSubtotal)}</td></tr>` : ""}
-        ${laborHours ? `<tr><td style="padding:2px 0;color:#75716A;">Labour</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(laborCost)}</td></tr>` : ""}
+        ${laborCost ? `<tr><td style="padding:2px 0;color:#75716A;">Labour</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(laborCost)}</td></tr>` : ""}
         ${shopSupplies ? `<tr><td style="padding:2px 0;color:#75716A;">Shop supplies</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(shopSupplies)}</td></tr>` : ""}
         ${serviceCall ? `<tr><td style="padding:2px 0;color:#75716A;">Service call</td><td style="padding:2px 0;text-align:right;color:#1E1A13;">${formatPrice(serviceCall)}</td></tr>` : ""}
         <tr><td style="padding:4px 0;color:#75716A;border-top:1px solid #E2DED5;">Subtotal</td><td style="padding:4px 0;text-align:right;color:#1E1A13;border-top:1px solid #E2DED5;">${formatPrice(subtotal)}</td></tr>
@@ -8571,7 +8633,7 @@ function buildExcelSheets(db) {
       Site: siteNumber(q.siteId),
       Cottage: cottageName(q.cottageId),
       Customer: customerName(q.customerId),
-      "Labour Hours": q.laborHours || "",
+      "Labour Hours": (Number(q.laborHours) || 0) + (q.lineItems || []).filter((li) => li.kind === "labour").reduce((sum, li) => sum + (Number(li.quantity) || 0), 0) || "",
       "Rate Type": q.laborRateType || "",
       "Shop Supplies %": q.shopSuppliesMode === "flat" ? "" : q.shopSuppliesPercent || "",
       "Shop Supplies $": q.shopSuppliesMode === "flat" ? q.shopSuppliesAmount || "" : "",
@@ -13084,7 +13146,7 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
   ))));
 }
 function PendingSignupRow({ entry, db, onReview, onReply }) {
-  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && s.number.trim().toLowerCase() === entry.submittedSiteNumber.trim().toLowerCase());
+  const guessSite = (db.sites || []).find((s) => s.number && entry.submittedSiteNumber && sameSiteNumber(s.number, entry.submittedSiteNumber));
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 px-4 py-3 bg-[#FBEEDA]/40 hover:bg-[#FBEEDA]/60 transition" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0" }, /* @__PURE__ */ React.createElement("div", { className: "text-sm font-medium text-[#1E1A13] truncate" }, entry.submittedName || "(no name given)"), /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#75716A] flex flex-wrap gap-x-2" }, /* @__PURE__ */ React.createElement("span", null, "Site ", entry.submittedSiteNumber || "\u2014"), entry.requestedDate && /* @__PURE__ */ React.createElement("span", null, "Requested ", entry.requestedDate), !guessSite && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No auto-match"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-shrink-0" }, entry.submittedEmail && onReply && /* @__PURE__ */ React.createElement("button", { onClick: () => onReply(entry), className: "px-2.5 py-1.5 rounded-md border border-[#E2DED5] text-xs font-medium text-[#377249] hover:bg-white whitespace-nowrap", "aria-label": "Reply by email", title: "Reply by email" }, "\u2709\ufe0f Reply"), /* @__PURE__ */ React.createElement("button", { onClick: () => onReview(entry), className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-xs font-medium hover:bg-[#135C30] whitespace-nowrap" }, "Review")));
 }
 function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
@@ -14328,6 +14390,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
     const wo = {
       id: uid(),
       title: "Propane Fill",
+      source: "propane",
       description,
       siteId: cottage ? cottage.siteId : null,
       cottageId: request.cottageId || null,
@@ -15185,7 +15248,7 @@ function ServiceReportsView({ db, persist, saveWinterizingRequest, savePropaneRe
   };
   const availableStatuses = Array.from(new Set(TYPES.filter((t) => activeTypes.has(t)).flatMap((t) => STATUS_BY_TYPE[t] || [])));
   const staffList = (db.staff || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-  const PAYMENT_OPTIONS = ["Zoho", "RMS", "Square", "Invoice"];
+  const PAYMENT_OPTIONS = ["Zoho", "RMS", "Square", "Cash", "Invoice"];
   const paymentLabel = (key) => key === "Invoice" ? "To Invoice" : `Paid \u2014 ${key}`;
   const paymentKeyFor = (item) => item.payment === "Paid" ? item.paymentMethod : item.payment === "Invoice" ? "Invoice" : null;
   const filtered = allItems.filter((item) => {
@@ -15654,6 +15717,51 @@ function SiteTypeBadge({ site }) {
 // One-time setup: shows each site that hasn't had its type set, with the
 // guess from its tags/section, so they can all be confirmed (and any wrong
 // ones changed) in one go.
+// One-time tidy: shows every site whose number isn't 4 digits yet
+// (20 -> 0020) and changes them together once confirmed. A number that
+// would clash with another site (both "20" and "0020" exist) is left out.
+function sitesToFormat(sites) {
+  // Park facilities keep their numbers as they are.
+  return (sites || []).filter((x) => x.number && !isFacilitySite(x) && formatSiteNumber(x.number) !== x.number.trim()).map((x) => ({ site: x, after: formatSiteNumber(x.number) }))
+    .map((r) => ({ ...r, clash: (sites || []).some((o) => o.id !== r.site.id && o.number && o.number.trim() === r.after) }))
+    .sort((a, b) => a.after.localeCompare(b.after, void 0, { numeric: true }));
+}
+function SiteNumberFormatModal({ db, persist, bulkWriteSites, onClose }) {
+  const actor = useCurrentActor();
+  const [rows] = useState(() => sitesToFormat(db.sites));
+  const [saving, setSaving] = useState(false);
+  const ok = rows.filter((r) => !r.clash);
+  const confirmAll = async () => {
+    setSaving(true);
+    const changed = ok.map((r) => ({ ...r.site, number: r.after }));
+    const res = await bulkWriteSites(changed);
+    if (res !== false) {
+      persist({ ...db, activityLog: addLog(db, actor, `Changed ${changed.length} site number${changed.length === 1 ? "" : "s"} to 4 digits (e.g. ${changed[0] ? `${ok[0].site.number} → ${changed[0].number}` : ""})`) });
+      onClose();
+    }
+    setSaving(false);
+  };
+  return React.createElement(
+    Modal,
+    { title: "Change site numbers to 4 digits", onClose, wide: true },
+    rows.length === 0 ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "Every site number already has 4 digits.") : React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${ok.length} site number${ok.length === 1 ? "" : "s"} will change, e.g. 1 → 0001, 20 → 0020, 412A → 0412A. Letter sites (A, K1) and park facilities stay as they are. Searches, sign-up forms and emails that say "site 20" still find site 0020.`),
+      React.createElement(
+        "div",
+        { className: "max-h-[50vh] overflow-y-auto rounded-lg border border-[#E2DED5] grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 p-3 mb-4 text-sm" },
+        rows.map((r) => React.createElement("div", { key: r.site.id, "data-site-format": r.site.number, className: r.clash ? "text-[#a8532a]" : "text-[#4B4740]", title: r.clash ? `Site ${r.after} already exists - fix this one by hand` : "" }, r.site.number, " → ", React.createElement("b", null, r.after), r.clash ? " (already exists)" : ""))
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, rows.length ? "Cancel" : "Close"),
+      ok.length > 0 && React.createElement("button", { type: "button", onClick: confirmAll, disabled: saving, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : `Change ${ok.length} site number${ok.length === 1 ? "" : "s"}`)
+    )
+  );
+}
 function SiteTypeSetupModal({ db, persist, bulkWriteSites, onClose }) {
   const actor = useCurrentActor();
   const unset = (db.sites || []).filter((x) => !SITE_TYPES.includes(x.siteType)).sort((a, b) => String(a.number).localeCompare(String(b.number), void 0, { numeric: true }));
@@ -17237,7 +17345,7 @@ function BulkImportLotFeesForm({ sites, onImport, onCancel }) {
     const [siteNumber, amountRaw, monthsRaw] = parseLine(line);
     const amount = amountRaw === "" || amountRaw == null ? NaN : Number(amountRaw);
     const months = Number(monthsRaw) === 9 ? 9 : 12;
-    const matchedSite = siteNumber ? sites.find((s) => s.number.toLowerCase() === siteNumber.toLowerCase()) : null;
+    const matchedSite = siteNumber ? sites.find((s) => sameSiteNumber(s.number, siteNumber)) : null;
     return {
       siteNumber: siteNumber || "",
       amount: Number.isFinite(amount) ? amount : null,
@@ -17540,6 +17648,11 @@ const MONEY_PAGE_KEYS = /* @__PURE__ */ new Set(["salesreport", "cottageorders",
 // Our own addresses (service@, staff) - never a customer's, so never used
 // to match or link email to a customer.
 const PARK_EMAIL_DOMAINS = ["qicampark.com", "quintesisle.ca"];
+function customerWithEmail(customers, email, excludeId) {
+  const target = (email || "").trim().toLowerCase();
+  if (!target || !target.includes("@") || isParkEmail(target)) return null;
+  return (customers || []).find((c) => c.id !== excludeId && [c.email, c.email2, ...c.matchEmails || []].some((e) => (e || "").trim().toLowerCase() === target)) || null;
+}
 function isParkEmail(email) {
   const domain = String(email || "").trim().toLowerCase().split("@")[1] || "";
   return PARK_EMAIL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`));
@@ -17637,6 +17750,13 @@ function CorrespondenceRow({ item, customer, active, onClick, count, hasWorkOrde
 }
 // TODO(design-handoff): who owns a failed send, and what happens at the monthly Zoho task
 // ceiling, are open decisions the handoff flags explicitly — not resolved here.
+// Deleting an email in the app moves its copy in Zoho to Zoho's Trash, so
+// nobody answers it from there. Best effort: problems show up in System
+// Health.
+function trashEmailInZoho(item) {
+  const { direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt } = item;
+  return functions_.httpsCallable("trashEmailInZoho")({ direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt }).catch((e) => console.error("Couldn't move the email to Zoho's Trash:", e));
+}
 function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice }) {
   const actor = useCurrentActor();
   const [selectedId, setSelectedId] = useState(null);
@@ -17735,6 +17855,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     const entry = { id: uid(), type: "correspondence", data: item, label, deletedAt: (/* @__PURE__ */ new Date()).toISOString() };
     persist({ ...db, trash: [entry, ...db.trash || []], activityLog });
     deleteCorrespondence(deleteConfirmId);
+    if (item) trashEmailInZoho(item);
     if (selectedId === deleteConfirmId) {
       setSelectedId(null);
       // Stay on the customer's conversation while it has other messages.
@@ -17777,8 +17898,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
     // suggest whoever owns that site.
     const mentionedSite = !selectedVoicemail && !selectedItem.customerId && ((selectedItem.webForm && selectedItem.webForm.siteNumber) || (selectedItem.triage && selectedItem.triage.siteNumber));
     if (!knownCustomer && mentionedSite) {
-      const norm = (v) => String(v || "").trim().toLowerCase().replace(/^(site|lot)\s*#?\s*/, "");
-      const site = (db.sites || []).find((st) => norm(st.number) === norm(mentionedSite));
+      const site = (db.sites || []).find((st) => sameSiteNumber(st.number, mentionedSite));
       const owner = site ? getSiteOwner(db, site.id) : null;
       if (owner) {
         knownCustomer = owner;
@@ -17854,7 +17974,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
       ...correspondencePrefill(db, creatingTreeFrom, creatingTreeFrom.customerId, "tree")
     }
   }), viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" }), deleteConfirmId && /* @__PURE__ */ React.createElement(ConfirmDeleteModal, {
-    message: "Delete this email? It'll be removed from correspondence.",
+    message: "Delete this email? It'll be removed from correspondence and moved to Zoho's Trash too.",
     onConfirm: confirmDelete,
     onCancel: () => setDeleteConfirmId(null)
   }), cannedRepliesOpen && /* @__PURE__ */ React.createElement(CannedRepliesModal, { db, persist, onClose: () => setCannedRepliesOpen(false) }));
@@ -18917,6 +19037,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
     const wo = {
       id: uid(),
       title: "Propane Fill",
+      source: "propane",
       description,
       siteId: cottage ? cottage.siteId : null,
       cottageId: request.cottageId || null,
@@ -19724,7 +19845,6 @@ function FieldQuotesScreen({ db, persist, actor, saveQuote, saveWorkOrder, onBac
 function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, onBack, setToast }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
-  const [paidMethodPrompt, setPaidMethodPrompt] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
   const [sendConfirm, setSendConfirm] = useState(null);
@@ -19739,61 +19859,21 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
     setModal(null);
     setToast(exists ? "Invoice updated" : "Invoice created");
   };
-  const markPaidInFull = (invoice, paidMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = { ...invoice, depositAmount: total, paidInFullDate: todayISO(), paidMethod };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Full via ${paidMethod}`);
+  const setPaid = (invoice, method) => {
+    const activityLog = addLog(db, actor, method ? `Invoice ${invoice.invoiceNumber} marked paid \u2014 ${method}` : `Invoice ${invoice.invoiceNumber} marked not paid`);
     persist({ ...db, activityLog });
-    saveInvoice(updated);
-    setToast("Marked paid in full");
-  };
-  const setPaidInAdvance = (invoice, paidInAdvanceMethod) => {
-    const { total } = computeQuoteTotals(invoice, invoice.taxRate != null ? invoice.taxRate : taxRate);
-    const updated = {
-      ...invoice,
-      paidInAdvanceMethod,
-      paidInAdvanceDate: todayISO(),
-      depositAmount: total,
-      paidInFullDate: invoice.paidInFullDate || todayISO(),
-      paidMethod: paidInAdvanceMethod
-    };
-    const activityLog = addLog(db, actor, `Invoice ${invoice.invoiceNumber} marked Paid in Advance via ${paidInAdvanceMethod} (also marked Paid in Full)`);
-    persist({ ...db, activityLog });
-    saveInvoice(updated);
+    saveInvoice(invoiceWithPayment(invoice, method, taxRate));
   };
   const sendInvoice = (invoice, toEmail) => {
     const customer = invoice.customerId ? db.customers.find((c) => c.id === invoice.customerId) : null;
     const recipientEmail = toEmail || (customer == null ? void 0 : customer.email);
     if (!customer || !recipientEmail) return;
-    const accountingEmail = ((db.settings || {}).accountingEmail || "").trim();
     setEmailStatus((s) => ({ ...s, [invoice.id]: "sending" }));
-    const sends = [sendEmail({
-      toEmail: recipientEmail,
-      toName: customer.name,
-      subject: `Invoice ${invoice.invoiceNumber}`,
-      message: buildInvoiceEmailText(invoice, db, taxRate),
-      department: "service",
-      source: "Invoice email"
-    })];
-    if (accountingEmail) {
-      sends.push(sendEmail({
-        toEmail: accountingEmail,
-        toName: "Accounting",
-        subject: `Invoice ${invoice.invoiceNumber} — ${customer.name}`,
-        message: buildInvoiceEmailText(invoice, db, taxRate),
-        department: "service",
-        source: "Invoice email"
-      }));
-    }
-    Promise.all(sends).then(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "sent" }));
-      const updated = { ...invoice, sentDate: invoice.sentDate || todayISO(), sentAt: invoice.sentAt || (/* @__PURE__ */ new Date()).toISOString() };
-      const activityLog = addLog(db, actor, `Emailed invoice ${invoice.invoiceNumber} to ${customer.name}${accountingEmail ? " and accounting" : ""}`);
+    sendInvoiceEmail(invoice, customer, recipientEmail, db, taxRate).then((updated) => {
+      setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 }));
+      const activityLog = addLog(db, actor, updated.emailStatus === "sent" ? `Emailed invoice ${invoice.invoiceNumber} to ${customer.name} (${recipientEmail})` : `Invoice ${invoice.invoiceNumber} didn't send to ${recipientEmail}: ${updated.emailError}`);
       persist({ ...db, activityLog });
       saveInvoice(updated);
-      setTimeout(() => setEmailStatus((s) => ({ ...s, [invoice.id]: void 0 })), 3e3);
-    }).catch(() => {
-      setEmailStatus((s) => ({ ...s, [invoice.id]: "error" }));
     });
   };
   const remove = (id) => {
@@ -19826,21 +19906,13 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
         workOrders: db.workOrders,
         invoiceNumber: nextInvoiceNumber(db),
         taxRate,
+        defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
         rateOptions: getLaborRateOptions(db),
         serviceCallOptions: getServiceCallOptions(db),
         onSave: save,
         onCancel: () => setModal(null)
       })
     ),
-    paidMethodPrompt && React.createElement(PaymentMethodModal, {
-      title: `Mark invoice ${paidMethodPrompt.invoiceNumber} paid in full`,
-      methods: INVOICE_PAYMENT_METHODS,
-      onConfirm: (method) => {
-        markPaidInFull(paidMethodPrompt, method);
-        setPaidMethodPrompt(null);
-      },
-      onCancel: () => setPaidMethodPrompt(null)
-    }),
     confirmDeleteId && React.createElement(ConfirmDeleteModal, {
       label: `invoice ${((invoices.find((i) => i.id === confirmDeleteId) || {}).invoiceNumber) || ""}`,
       onConfirm: () => remove(confirmDeleteId),
@@ -19870,8 +19942,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
       onPrint: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, false), `invoice-${i.invoiceNumber}`),
       onInfoSheet: (i) => downloadPrintableItems([i], (x) => buildInvoiceHtml(x, db, taxRate, true), `info-sheet-${i.invoiceNumber}`),
       onEmail: (i) => setSendConfirm(i),
-      onMarkPaidInFull: (i) => setPaidMethodPrompt(i),
-      onMarkPaidInAdvance: (i, m) => setPaidInAdvance(i, m),
+      onSetPaid: setPaid,
       onDelete: (i) => setConfirmDeleteId(i.id)
     }))
   );

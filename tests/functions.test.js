@@ -303,3 +303,70 @@ test("replies sent from Zoho: entries filed with Zoho's shifted time are correct
   assert.equal(state.timesRepaired, true);
   assert.ok(state.lastReceivedAt <= now);
 });
+
+test("deleting an email in the app moves its Zoho copy to Zoho's Trash", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  zoho.on = true;
+  zoho.search = [
+    { messageId: "z-leak", folderId: "inbox1", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3 - 20e3) },
+    { messageId: "z-other", folderId: "inbox1", subject: "Other thing", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3) },
+    { messageId: "z-old", folderId: "inbox1", subject: "Leak", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 30 * 24 * 3600e3) },
+    { messageId: "z-fwd", folderId: "inbox1", subject: "Fwd: Deck", fromAddress: "krista@qicampark.com", toAddress: "service@qicampark.com", receivedTime: String(now - 7200e3) },
+    { messageId: "z-sent", folderId: "sent1", subject: "Re: Leak", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", receivedTime: String(now - 1800e3) }
+  ];
+  const del = (data) => call(fns.trashEmailInZoho, data);
+
+  assert.deepEqual(await del({ direction: "in", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: true, moved: 1 });
+  assert.deepEqual(zoho.moved.pop(), { mode: "moveMessage", messageId: ["z-leak"], destfolderId: "trash1" }, "only the same email - not her other one or an older one");
+  assert.deepEqual((await db.doc("serverState/zohoSentSync").get()).data().trashSeen, ["z-leak"], "the Trash check skips what the app already deleted");
+  // A coworker's forward is in Zoho under the coworker.
+  assert.deepEqual(await del({ direction: "in", fromEmail: "bob@y.com", forwardedBy: "krista@qicampark.com", subject: "Fwd: Deck", receivedAt: iso(now - 7200e3 + 5e3) }), { ok: true, moved: 1 });
+  assert.equal(zoho.moved.pop().messageId[0], "z-fwd");
+  // A reply sent from Zoho is found by its message id.
+  assert.deepEqual(await del({ direction: "out", zohoMessageId: "z-sent", toEmail: "anne@x.com", subject: "Re: Leak", receivedAt: iso(now - 1800e3) }), { ok: true, moved: 1 });
+  assert.equal(zoho.moved.pop().messageId[0], "z-sent");
+  // Nothing in Zoho matches: nothing is moved.
+  assert.deepEqual(await del({ direction: "in", fromEmail: "nobody@z.com", subject: "Hi", receivedAt: iso(now) }), { ok: true, moved: 0 });
+  assert.equal((await all("serverAlerts")).length, 0);
+
+  // Zoho refuses (the connection can't delete mail yet): reported.
+  zoho.moveStatus = 400;
+  assert.deepEqual(await del({ direction: "in", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: false, reason: "not-allowed" });
+  assert.equal((await all("serverAlerts"))[0].source, "zohoDelete");
+
+  assert.equal((await call(fns.trashEmailInZoho, { subject: "Leak" }, "")).error, "permission-denied");
+});
+
+test("an email moved to Zoho's Trash is removed from the app", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const put = (c) => db.collection("correspondence").doc(c.id).set(c);
+  await put({ id: "in-leak", direction: "in", status: "new", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) });
+  await put({ id: "in-other", direction: "in", status: "new", fromEmail: "anne@x.com", subject: "Other thing", receivedAt: iso(now - 3600e3) });
+  await put({ id: "in-webform", direction: "in", status: "new", fromEmail: "carl@z.com", zohoFrom: "website@qicampark.com", subject: "Contact form", receivedAt: iso(now - 7200e3) });
+  await put({ id: "zoho_sent_r1", direction: "out", sentVia: "zoho", zohoMessageId: "r1", toEmail: "anne@x.com", subject: "Re: Leak", receivedAt: iso(now - 1800e3) });
+  await put({ id: "app-out", direction: "out", toEmail: "bob@y.com", subject: "Gate code", receivedAt: iso(now - 900e3) });
+  zoho.on = true;
+  zoho.trash = [
+    { messageId: "t-leak", subject: "Leak", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3 - 30e3) },
+    { messageId: "t-form", subject: "Contact form", fromAddress: "website@qicampark.com", toAddress: "service@qicampark.com", receivedTime: String(now - 7200e3) },
+    { messageId: "r1", subject: "Re: Leak", fromAddress: "service@qicampark.com", toAddress: "anne@x.com", receivedTime: String(now - 1800e3) },
+    { messageId: "t-gate", subject: "Gate code", fromAddress: "service@qicampark.com", toAddress: "bob@y.com", receivedTime: String(now - 900e3 + 30e3) },
+    { messageId: "t-junk", subject: "Win a prize", fromAddress: "spam@junk.com", toAddress: "service@qicampark.com", receivedTime: String(now - 600e3) },
+    { messageId: "t-ancient", subject: "Other thing", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 90 * 24 * 3600e3) }
+  ];
+
+  await fns.zohoSentMail();
+  assert.deepEqual((await all("correspondence")).map((c) => c.id).sort(), ["in-other"]);
+  assert.equal((await all("serverAlerts")).length, 0);
+  // They're kept in the app's Trash, where they can be read or restored.
+  const trash = (await db.doc("campground/data").get()).data().trash;
+  assert.deepEqual(trash.map((t) => [t.type, t.data.id, t.deletedIn]).sort(), [["correspondence", "app-out", "Zoho"], ["correspondence", "in-leak", "Zoho"], ["correspondence", "in-webform", "Zoho"], ["correspondence", "zoho_sent_r1", "Zoho"]]);
+  assert.equal(trash.find((t) => t.data.id === "in-leak").label, "Email — Leak");
+
+  // Each trashed message is only looked at once.
+  await put({ id: "in-leak", direction: "in", status: "new", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) });
+  await fns.zohoSentMail();
+  assert.deepEqual((await all("correspondence")).map((c) => c.id).sort(), ["in-leak", "in-other"]);
+});

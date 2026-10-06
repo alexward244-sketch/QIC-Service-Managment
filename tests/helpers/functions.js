@@ -53,7 +53,9 @@ Module._load = function (request, ...rest) {
 // `zoho.on` is set, from `zoho.sent` (the Sent folder's listing) and
 // `zoho.content` (message id -> HTML); anything else fails.
 const emails = [];
-const zoho = { on: false, sent: [], content: {}, foldersStatus: 200 };
+// `zoho.trash` is the Trash folder's listing, `zoho.search` the messages
+// a search can find, and `zoho.moved` records moves to Trash.
+const zoho = { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200 };
 const jsonResponse = (status, data) => ({ ok: status < 300, status, json: async () => data, text: async () => JSON.stringify(data) });
 global.fetch = async (url, opts) => {
   if (String(url).includes("api.emailjs.com")) {
@@ -64,8 +66,18 @@ global.fetch = async (url, opts) => {
   if (zoho.on && String(url).includes("zohocloud.ca")) {
     const u = new URL(url);
     if (u.pathname.endsWith("/oauth/v2/token")) return jsonResponse(200, { access_token: "zoho-token", expires_in: 3600 });
-    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
+    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }, { folderId: "trash1", folderName: "Trash", folderType: "Trash" }] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "sent1") return jsonResponse(200, { data: zoho.sent });
+    if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "trash1") return jsonResponse(200, { data: zoho.trash });
+    if (u.pathname.endsWith("/messages/search")) {
+      const [kind, addr] = u.searchParams.get("searchKey").split(/:(.*)/);
+      return jsonResponse(200, { data: zoho.search.filter((x) => String(kind === "to" ? x.toAddress : x.fromAddress).toLowerCase().includes(addr)) });
+    }
+    if (u.pathname.endsWith("/updatemessage") && opts && opts.method === "PUT") {
+      if (zoho.moveStatus !== 200) return jsonResponse(zoho.moveStatus, { data: { errorCode: "INVALID_OAUTHSCOPE" } });
+      zoho.moved.push(JSON.parse(opts.body));
+      return jsonResponse(200, { status: { code: 200 } });
+    }
     const m = u.pathname.match(/\/folders\/sent1\/messages\/([^/]+)\/content$/);
     if (m && zoho.content[m[1]] != null) return jsonResponse(200, { data: { messageId: m[1], content: zoho.content[m[1]] } });
     return jsonResponse(404, {});
@@ -106,7 +118,7 @@ async function clearData() {
   claude.script.length = 0;
   claude.calls.length = 0;
   emails.length = 0;
-  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200 });
+  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200 });
   auth.users = {};
   auth.calls.length = 0;
 }
