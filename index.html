@@ -5426,6 +5426,7 @@ function QuickInvoiceModal({ db, initial, saveInvoice, onClose, onViewWorkOrder 
     workOrders: db.workOrders,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
+    defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
     rateOptions: getLaborRateOptions(db),
     serviceCallOptions: getServiceCallOptions(db),
     onSave: save,
@@ -6416,7 +6417,7 @@ function InvoiceLineDescription({ value, onChange, onPick, suggest, placeholder 
         className: `w-full flex items-center justify-between gap-3 px-3 py-2 text-left text-sm ${i === active ? "bg-[#F1EEE9]" : ""}`
       }, React.createElement("span", { className: "text-[#1E1A13]" }, item.label), React.createElement("span", { className: "text-xs text-[#75716A] whitespace-nowrap" }, item.detail)))));
 }
-function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, invoiceNumber, taxRate, rateOptions, serviceCallOptions, onSave, onCancel }) {
+function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, invoiceNumber, taxRate, defaultShopSuppliesPercent, rateOptions, serviceCallOptions, onSave, onCancel }) {
   var _a, _b, _c, _d;
   const [title, setTitle] = useState((initial == null ? void 0 : initial.title) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || todayISO());
@@ -6428,7 +6429,8 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   // Labour and the service call are lines too (see invoiceFormLines).
   const [lineItems, setLineItems] = useState(() => invoiceFormLines(initial, rateOptions, serviceCallOptions));
   const [shopSuppliesMode, setShopSuppliesMode] = useState((initial == null ? void 0 : initial.shopSuppliesMode) || "percent");
-  const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_c = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _c : 0);
+  // A new invoice starts at the default from Admin > Settings > Tax & Commission.
+  const [shopSuppliesPercent, setShopSuppliesPercent] = useState((_c = initial == null ? void 0 : initial.shopSuppliesPercent) != null ? _c : defaultShopSuppliesPercent != null ? defaultShopSuppliesPercent : 0);
   const [shopSuppliesAmount, setShopSuppliesAmount] = useState((initial == null ? void 0 : initial.shopSuppliesAmount) != null ? initial.shopSuppliesAmount : "");
   const [depositAmount, setDepositAmount] = useState((initial == null ? void 0 : initial.depositAmount) != null ? initial.depositAmount : "");
   const [depositDate, setDepositDate] = useState((initial == null ? void 0 : initial.depositDate) || "");
@@ -6894,6 +6896,7 @@ function InvoicesView({ db, persist, saveInvoice, deleteInvoice, saveWorkOrder, 
     workOrders: db.workOrders,
     invoiceNumber: nextInvoiceNumber(db),
     taxRate,
+    defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
     rateOptions: getLaborRateOptions(db),
     serviceCallOptions: getServiceCallOptions(db),
     onSave: save,
@@ -19960,6 +19963,7 @@ function FieldInvoicesScreen({ db, persist, actor, saveInvoice, deleteInvoice, o
         workOrders: db.workOrders,
         invoiceNumber: nextInvoiceNumber(db),
         taxRate,
+        defaultShopSuppliesPercent: (db.settings || {}).shopSuppliesPercent != null ? db.settings.shopSuppliesPercent : 5,
         rateOptions: getLaborRateOptions(db),
         serviceCallOptions: getServiceCallOptions(db),
         onSave: save,

@@ -675,7 +675,7 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   await page.evaluate(() => {
     window.__saved = [];
     const parts = [{ id: "p1", name: "Washer", sku: "W-12", price: 20, salesAccount: "4010" }, { id: "p2", name: "Water heater element", price: 45 }];
-    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(InvoiceForm, { initial: null, sites: [], cottages: [], customers: [], parts, workOrders: [], invoiceNumber: "INV-26-0020", taxRate: 13, rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (inv) => window.__saved.push(inv), onCancel() {} }));
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(InvoiceForm, { initial: null, sites: [], cottages: [], customers: [], parts, workOrders: [], invoiceNumber: "INV-26-0020", taxRate: 13, defaultShopSuppliesPercent: 5, rateOptions: RATE_OPTIONS, serviceCallOptions: SERVICE_CALL_OPTIONS, onSave: (inv) => window.__saved.push(inv), onCancel() {} }));
   });
   await page.getByRole("textbox").first().fill("Deck repair");
   const desc = () => page.getByPlaceholder(/^Description/);
@@ -703,7 +703,9 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   const inv = await page.evaluate(() => window.__saved[0]);
   assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
   const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
-  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.serviceCall, t.subtotal], [20, 220, 70, 310]);
+  // Shop supplies: the Admin default (5%) of parts + labour, not the service call.
+  assert.equal(inv.shopSuppliesPercent, 5);
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 12, 70, 322]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
