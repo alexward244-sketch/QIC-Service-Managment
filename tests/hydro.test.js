@@ -247,7 +247,7 @@ test("The hydro bill email shows the previous and current readings with their da
   await mountWithDb(page, asUser("HydroReviewView"), READY(3));
   await openReview(page);
   await page.getByRole("button", { name: "Confirm & Send Invoice" }).click();
-  await page.getByRole("button", { name: "Confirm & email" }).click();
+  await page.getByRole("button", { name: "Yes, send" }).click();
   await page.waitForFunction(() => window.__sent.length > 0);
   const mail = await page.evaluate(() => window.__sent.find((m) => m.toEmail === "rsmith@x.com"));
   const text = mail.message.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
@@ -293,7 +293,7 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
   await openReview(page);
   for (let i = 0; i < 2; i++) {
     await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
-    await page.getByRole("button", { name: "Confirm & email" }).click();
+    await page.getByRole("button", { name: "Yes, send" }).click();
     await page.getByText("Print a copy for the file?").waitFor();
     await page.getByRole("button", { name: "Not now" }).click();
   }
@@ -424,7 +424,7 @@ test("Each reading in a site's history shows who owned the site when it was read
   await page.close();
 });
 
-test("A reading can be confirmed without emailing: Confirm & print for a customer with no email, or Confirm only", async () => {
+test("A reading can be confirmed without emailing: Confirm & print for a customer with no email, or Confirm without sending", async () => {
   await resetData({
     ...base("accounting"),
     "customers/c1": { id: "c1", name: "Robert Smith", email: "", siteIds: ["s42"] },
@@ -449,15 +449,15 @@ test("A reading can be confirmed without emailing: Confirm & print for a custome
   const card42 = page.locator("div", { has: page.getByText("Site 42", { exact: false }) }).filter({ has: page.getByRole("button", { name: "Confirm & Send Invoice" }) }).last();
   await card42.getByRole("button", { name: "Confirm & Send Invoice" }).click();
   await page.getByText("No email on file").waitFor();
-  assert.equal(await page.getByRole("button", { name: "Confirm & email" }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Yes, send" }).count(), 0, "nothing to email to");
   await page.getByRole("button", { name: "Confirm & print" }).click();
   await page.getByText("Print the bill").waitFor();
   await page.getByRole("button", { name: "Print", exact: true }).click();
   assert.match(await page.evaluate(() => window.__printed), /HYD-\d{2}-\d{4}/);
-  // Nora: Confirm only - recorded, not emailed.
+  // Nora: the separate "Confirm without sending" - recorded, not emailed.
   await openReview(page);
-  await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
-  await page.getByRole("button", { name: "Confirm only" }).click();
+  await page.getByRole("button", { name: "Confirm without sending" }).first().click();
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
   const done = await waitFor(async () => {
     const list = await readings();
     const c = list.find((x) => x.id === "c"), d = list.find((x) => x.id === "d");
