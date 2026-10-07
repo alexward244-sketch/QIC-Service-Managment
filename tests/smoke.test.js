@@ -917,6 +917,28 @@ test("hydro areas still find sites A-D and K1-K5 after the 4-digit change, and 0
   await page.close();
 });
 
+test("propane forms still show the tanks after parts were re-entered (new ids, slightly different names)", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    // Parts re-entered after the SKU loss: new ids, "100 lb Propane Refill" instead of "100lb Propane Refill Filled".
+    const db = { ...emptyDb(), parts: [{ id: "new100", name: "100 lb Propane Refill", price: 95 }, { id: "new20", name: "20lb Propane Tank Filled", price: 25 }, { id: "x", name: "Washer", price: 2 }], cottages: [{ id: "k1", name: "Loon", siteId: "s1" }], sites: [{ id: "s1", number: "0042" }] };
+    const old = { id: "r1", cottageId: "k1", requestedDate: "2026-10-08", run: "10am", partsUsed: [{ partId: "gone100", quantity: 1, name: "100lb Propane Refill Filled" }] };
+    const orphan = { id: "r2", cottageId: "k1", requestedDate: "2026-10-08", partsUsed: [{ partId: "gone", quantity: 2 }] };
+    return {
+      tanks: tankPartsFor(db).map((p) => p.id),
+      oldForm: buildPropaneRequestHtml(old, db).replace(/<[^>]+>/g, " ").replace(/\s+/g, " "),
+      orphanForm: buildPropaneRequestHtml(orphan, db).replace(/<[^>]+>/g, " ").replace(/\s+/g, " "),
+      default100: (findTankPart(db.parts, "100lb Propane Refill Filled") || {}).id
+    };
+  });
+  assert.deepEqual(out.tanks, ["new20", "new100"], "tank sizes are found by size when the name differs");
+  assert.equal(out.default100, "new100");
+  assert.match(out.oldForm, /1× 100 lb Propane Refill/, "a request saved before the parts were re-entered finds the new part by name");
+  assert.match(out.orphanForm, /2× Part no longer in Parts/, "a line whose part is gone still shows, not a blank form");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("customers: tidy names takes the site number off the end, only after review", async () => {
   const page = await openApp(browser, "stub");
   const cases = await page.evaluate(() => ["Bill & Susan March (0412A)", "Anne Lee (107, 108)", "Bob Smith (Robert)", "Gary Callaghan", "Jo (412) Day", "(233)", "Tom Grant  (Site 518) "].map(nameWithoutSite));

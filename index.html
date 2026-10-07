@@ -667,6 +667,37 @@ async function parseSquareSalesPdf(file) {
   return { month, location, fields };
 }
 const TANK_PART_NAMES = ["20lb Propane Tank Filled", "30lb Propane Tank Filled", "40lb Propane Tank Filled", "100lb Propane Refill Filled"];
+// A tank size's part, by its usual name or - if the part was re-entered
+// under a slightly different name ("100 lb Propane Refill") - by its size.
+function findTankPart(parts, tankName) {
+  const exact = (parts || []).find((p) => (p.name || "").trim().toLowerCase() === tankName.toLowerCase());
+  if (exact) return exact;
+  const m = /^(\d+)\s*lb/i.exec(tankName);
+  if (!m) return null;
+  const size = m[1];
+  const bySize = new RegExp(`(^|\\D)${size}\\s*(lb|lbs|pound)`, "i");
+  return (parts || []).find((p) => /propane/i.test(p.name || "") && bySize.test(p.name || "")) || null;
+}
+function tankPartsFor(db) {
+  return TANK_PART_NAMES.map((name) => findTankPart(db.parts, name)).filter(Boolean);
+}
+// The part a propane request's tank line refers to: by id, or - when the
+// part has since been deleted and re-entered - by the name saved with it.
+function propanePartFor(pu, db) {
+  const parts = db.parts || [];
+  const byId = parts.find((p) => p.id === pu.partId);
+  if (byId || !pu.name) return byId || null;
+  const sameName = parts.find((p) => (p.name || "").trim().toLowerCase() === pu.name.trim().toLowerCase());
+  if (sameName) return sameName;
+  const size = /(\d+)\s*lb/i.exec(pu.name);
+  return size && /propane/i.test(pu.name) ? findTankPart(parts, `${size[1]}lb`) : null;
+}
+// What to call a tank line: the part's name, the name saved with the line,
+// or a clear "not found" so it never silently disappears from a form.
+function propanePartLabel(pu, db) {
+  const part = propanePartFor(pu, db);
+  return part ? part.name : pu.name || "Part no longer in Parts";
+}
 const SALUTATION_OPTIONS = ["", "Mr.", "Mrs.", "Ms.", "Dr.", "Mx."];
 const PHONE_TYPE_OPTIONS = ["Mobile", "Work", "Home"];
 const CUSTOMER_LANGUAGE_OPTIONS = ["English", "French"];
@@ -3563,8 +3594,7 @@ function WorkOrderViewModal({ wo: woProp, db, persist, saveWorkOrder, saveCorres
     setSummaryCopied(false);
     try {
       const partsLines = (wo.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
-        return part ? `${pu.quantity}x ${part.name}` : null;
+        return `${pu.quantity}x ${propanePartLabel(pu, db)}`;
       }).filter(Boolean);
       const notesLog = [...(wo.notes || [])].reverse().map((n) => n.text).filter(Boolean);
       const rawNotes = [
@@ -8411,8 +8441,7 @@ function buildPropaneRequestHtml(request, db) {
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
   const company = getCompanyProfile(db);
   const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\u00D7 ${part.name}` : null;
+    return `${pu.quantity}\u00D7 ${propanePartLabel(pu, db)}`;
   }).filter(Boolean);
   const paymentLabel = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "method not set"}` : request.payment === "Invoice" ? "To be invoiced by accounting" : "\u2014";
   return `
@@ -12842,13 +12871,14 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   const [payment, setPayment] = useState((initial == null ? void 0 : initial.payment) || "");
   const [paymentMethod, setPaymentMethod] = useState((initial == null ? void 0 : initial.paymentMethod) || "");
   const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
-  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
+  const tankParts = tankPartsFor(db);
   const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
   const setTankQuantity = (partId, qty) => {
     setPartsUsed((items) => {
       const n = Math.max(0, Math.floor(Number(qty) || 0));
       const without = items.filter((pu) => pu.partId !== partId);
-      return n > 0 ? [...without, { partId, quantity: n }] : without;
+      const part = (db.parts || []).find((p) => p.id === partId);
+      return n > 0 ? [...without, { partId, quantity: n, name: part ? part.name : "" }] : without;
     });
   };
   const choosePayment = (val) => {
@@ -12962,7 +12992,7 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
       className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
     },
     "+"
-  ))))), TANK_PART_NAMES.some((name) => !tankParts.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mt-1" }, "Some tank sizes aren't set up in Parts yet.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+  ))))), TANK_PART_NAMES.some((name) => !findTankPart(db.parts, name)) && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mt-1" }, "Some tank sizes aren't set up in Parts yet.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -13015,15 +13045,16 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   const [requestedDate, setRequestedDate] = useState(entry.requestedDate || todayISO());
   const [run, setRun] = useState(defaultPropaneRun(entry.requestedDate || todayISO()));
   const [notes, setNotes] = useState(entry.notes || "");
-  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
-  const default100lb = tankParts.find((p) => p.name.trim().toLowerCase() === "100lb propane refill filled");
-  const [partsUsed, setPartsUsed] = useState(default100lb ? [{ partId: default100lb.id, quantity: 1 }] : []);
+  const tankParts = tankPartsFor(db);
+  const default100lb = findTankPart(db.parts, "100lb Propane Refill Filled");
+  const [partsUsed, setPartsUsed] = useState(default100lb ? [{ partId: default100lb.id, quantity: 1, name: default100lb.name }] : []);
   const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
   const setTankQuantity = (partId, qty) => {
     setPartsUsed((items) => {
       const n = Math.max(0, Math.floor(Number(qty) || 0));
       const without = items.filter((pu) => pu.partId !== partId);
-      return n > 0 ? [...without, { partId, quantity: n }] : without;
+      const part = (db.parts || []).find((p) => p.id === partId);
+      return n > 0 ? [...without, { partId, quantity: n, name: part ? part.name : "" }] : without;
     });
   };
   const [payment, setPayment] = useState("Paid");
@@ -14684,8 +14715,7 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpire
   const runAccent = request.completed ? "#377249" : request.run === "10am" ? "#C1652F" : "#3B6E91";
   const paymentLabel = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
   const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
+    return `${pu.quantity}\xD7 ${propanePartLabel(pu, db).replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}`;
   }).filter(Boolean).join(", ");
   // NOTE on responsive approach: every action below keeps its original sm:+ classes
   // unchanged (same padding/text-size/order as before), so desktop is pixel-identical.
@@ -14761,7 +14791,10 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       workGroup: "",
       date: todayISO(),
       completedDate: todayISO(),
-      partsUsed: request.partsUsed || [],
+      partsUsed: (request.partsUsed || []).map((pu) => {
+        const part = propanePartFor(pu, db);
+        return part ? { ...pu, partId: part.id } : pu;
+      }),
       laborHours: "",
       laborRateType: "N/A",
       paymentStatus: request.payment || "",
@@ -14774,7 +14807,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
     savePropaneRequest(updated);
     if (request.payment === "Paid" && request.paymentMethod) {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
@@ -14833,7 +14866,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       }
     } else if (request.payment === "Invoice") {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
@@ -19407,8 +19440,7 @@ function FieldPropaneRow({ request, db, onComplete, onExpired, onMoveRun }) {
   const runAccent = request.completed ? "#377249" : request.run === "10am" ? "#C1652F" : "#3B6E91";
   const paymentLabel = request.payment === "Paid" ? `Paid — ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
   const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
+    return `${pu.quantity}\xD7 ${propanePartLabel(pu, db).replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}`;
   }).filter(Boolean).join(", ");
   return React.createElement(
     "div",
@@ -19457,7 +19489,10 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       workGroup: "",
       date: todayISO(),
       completedDate: todayISO(),
-      partsUsed: request.partsUsed || [],
+      partsUsed: (request.partsUsed || []).map((pu) => {
+        const part = propanePartFor(pu, db);
+        return part ? { ...pu, partId: part.id } : pu;
+      }),
       laborHours: "",
       laborRateType: "N/A",
       paymentStatus: request.payment || "",
@@ -19470,7 +19505,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
     savePropaneRequest(updated);
     if (request.payment === "Paid" && request.paymentMethod) {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
@@ -19529,7 +19564,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       }
     } else if (request.payment === "Invoice") {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
