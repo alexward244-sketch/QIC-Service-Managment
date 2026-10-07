@@ -124,3 +124,17 @@ test("work order photos: staff can add images, not other files or huge ones; no 
   await assertFails(st("noRole").ref("work-order-photos/w1/a.jpg").getMetadata());
   await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").delete());
 });
+
+test("Site Map equipment: every staff role can see it, only Admin, Service Manager and Accounting change it", async () => {
+  await seed();
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc("mapEquipment/e1").set({ id: "e1", utility: "water", siteIds: [] }));
+  for (const role of ROLES) assert.ok(await allowed(role, (db) => db.doc("mapEquipment/e1").get()), `${role} read equipment`);
+  for (const role of ["admin", "manager", "accounting"]) {
+    assert.ok(await allowed(role, (db) => db.doc("mapEquipment/e1").update({ name: role })), `${role} edit equipment`);
+  }
+  for (const role of ["office", "salesmanager", "noRole", "signedOut"]) {
+    assert.equal(await allowed(role, (db) => db.doc("mapEquipment/e1").update({ name: "x" })), false, `${role} must not edit equipment`);
+    assert.equal(await allowed(role, (db) => db.doc("mapEquipment/new").set({ id: "new" })), false, `${role} must not add equipment`);
+  }
+  for (const role of ["noRole", "signedOut"]) assert.equal(await allowed(role, (db) => db.doc("mapEquipment/e1").get()), false, `${role} must not read equipment`);
+});
