@@ -99,6 +99,9 @@ const HYDRO_READINGS_REF = db_.collection("hydroReadings");
 // a save writes only the parts it changed, and stock taken out or put back
 // is written as an amount (FieldValue.increment), never a total.
 const PARTS_REF = db_.collection("parts");
+// Site Map equipment (Hydro / Water / Sewer views): transformers, valves,
+// lift stations... and the sites each one feeds. One document per piece.
+const MAP_EQUIPMENT_REF = db_.collection("mapEquipment");
 // Hydro readings used to be one ever-growing array inside campground/data,
 // which counts against Firestore's 1 MB per-document limit and was
 // rewritten whole on every save anywhere in the app (so two people saving
@@ -3801,7 +3804,60 @@ function MapUploader({ onUpload, uploading, uploadPct, uploadError, hasExisting 
     }
   ));
 }
-function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreateWorkOrder, onViewFull, onUnpin }) {
+// Site Map views: "Customers" is the original map (who's on each site);
+// Hydro, Water and Sewer show the equipment for that service (transformers,
+// valves, lift stations...) and the sites each piece feeds, so shutting one
+// off tells you exactly who's affected.
+const MAP_LAYERS = [
+  { key: "customers", label: "Customers" },
+  { key: "hydro", label: "Hydro", color: "#C98A06", types: ["Transformer", "Breaker Panel", "Pedestal", "Disconnect", "Other"] },
+  { key: "water", label: "Water", color: "#2F7FB8", types: ["Main Valve", "Shut-off Valve", "Curb Stop", "Hydrant / Tap", "Well / Pump", "Other"] },
+  { key: "sewer", label: "Sewer", color: "#8A5A35", types: ["Lift Station", "Septic Tank", "Manhole", "Cleanout", "Other"] }
+];
+function mapLayerOf(key) {
+  return MAP_LAYERS.find((l) => l.key === key) || MAP_LAYERS[0];
+}
+// A piece of equipment plus everything fed from it, all the way down the
+// line (a main valve's branch valves, and theirs). Safe against a loop.
+function equipmentDownstreamIds(equipment, id) {
+  const ids = /* @__PURE__ */ new Set();
+  const visit = (x) => {
+    if (ids.has(x)) return;
+    ids.add(x);
+    equipment.forEach((e) => {
+      if (e.fedFrom === x) visit(e.id);
+    });
+  };
+  visit(id);
+  return ids;
+}
+// Sites a piece of equipment affects: linked to it or to anything fed from
+// it. Map of siteId -> the piece the site is linked to.
+function equipmentAffectedSites(equipment, id) {
+  const ids = equipmentDownstreamIds(equipment, id);
+  const out = /* @__PURE__ */ new Map();
+  equipment.forEach((e) => {
+    if (ids.has(e.id)) (e.siteIds || []).forEach((sid) => {
+      if (!out.has(sid)) out.set(sid, e);
+    });
+  });
+  return out;
+}
+// What feeds a site in one service: the piece it's linked to, then what that
+// is fed from, up to the main.
+function equipmentFeedingSite(equipment, utility, siteId) {
+  const chain = [];
+  let cur = equipment.find((e) => e.utility === utility && (e.siteIds || []).includes(siteId));
+  while (cur && !chain.includes(cur)) {
+    chain.push(cur);
+    cur = cur.fedFrom ? equipment.find((e) => e.id === cur.fedFrom) : null;
+  }
+  return chain;
+}
+function equipmentLabel(e) {
+  return e.name || e.type || "Equipment";
+}
+function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreateWorkOrder, onViewFull, onUnpin, serviceBlock }) {
   if (!site) return null;
   const cottages = db.cottages.filter((c) => c.siteId === site.id);
   const customers = db.customers.filter((c) => customerSiteIds(c).includes(site.id));
@@ -3811,8 +3867,89 @@ function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreate
   const customerBlock = customers.length === 0 ? null : /* @__PURE__ */ React.createElement("div", { className: "mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Customer", customers.length > 1 ? "s" : ""), customers.map((c) => /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] py-0.5" }, c.name, c.phone && /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, " \xB7 ", c.phone))));
   const infoBlock = hasRecord ? /* @__PURE__ */ React.createElement(React.Fragment, null, cottageBlock, customerBlock) : /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No cottage or customer on file \u2014 treated as a transient site.");
   const actions = /* @__PURE__ */ React.createElement("div", { className: "flex flex-col gap-2 mt-2" }, hasRecord && /* @__PURE__ */ React.createElement("button", { onClick: () => onViewFull(site), className: "px-3 py-2 text-sm text-[#377249] border border-[#377249]/40 rounded-md hover:bg-[#DDF1E1] font-medium" }, "View Full Details"), /* @__PURE__ */ React.createElement("button", { onClick: () => onCreateWorkOrder(site), className: "px-3 py-2 text-sm bg-[#C1652F] text-white rounded-md hover:bg-[#a8532a] font-medium" }, "Create Work Order"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => onUnpin(site), className: "px-3 py-2 text-xs text-[#a8532a] hover:underline" }, "Unpin this site from the map"));
-  const body = /* @__PURE__ */ React.createElement("div", { className: "p-4" }, infoBlock, actions);
+  const body = /* @__PURE__ */ React.createElement("div", { className: "p-4" }, serviceBlock, infoBlock, actions);
   return /* @__PURE__ */ React.createElement("div", { className: "fixed sm:absolute left-0 right-0 sm:left-auto sm:right-4 bottom-0 sm:bottom-auto sm:top-4 w-full sm:w-80 bg-[#FFFDFA] border border-[#E2DED5] rounded-t-xl sm:rounded-xl shadow-2xl z-30 max-h-[70vh] overflow-y-auto" }, header, body);
+}
+// The panel for one piece of equipment: what feeds it, what it feeds, and
+// every site (and customer) it affects.
+function MapEquipmentPanel({ item, equipment, db, layer, isAdminOrManager, linking, onClose, onSelect, onEdit, onDelete, onToggleLinking, onCopied }) {
+  const sitesById = new Map((db.sites || []).map((s) => [s.id, s]));
+  const affected = Array.from(equipmentAffectedSites(equipment, item.id).entries()).map(([sid, via]) => ({ site: sitesById.get(sid), via })).filter((x) => x.site).sort((a, b) => (a.site.number || "").localeCompare(b.site.number || "", void 0, { numeric: true }));
+  const parent = item.fedFrom ? equipment.find((e) => e.id === item.fedFrom) : null;
+  const children = equipment.filter((e) => e.fedFrom === item.id);
+  const customersOf = (sid) => db.customers.filter((c) => customerSiteIds(c).includes(sid));
+  const copyList = () => {
+    const lines = affected.map(({ site }) => {
+      const custs = customersOf(site.id);
+      return `Site ${site.number}` + (custs.length ? ` - ${custs.map((c) => c.name + (c.phone ? ` (${c.phone})` : "")).join(", ")}` : "");
+    });
+    const text = `${equipmentLabel(item)} (${layer.label} ${item.type}) affects ${affected.length} site${affected.length === 1 ? "" : "s"}:
+${lines.join("\n")}`;
+    try {
+      navigator.clipboard.writeText(text).then(() => onCopied("Site list copied"), () => onCopied(null));
+    } catch (e) {
+    }
+  };
+  const label = "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1";
+  const linkBtn = (e) => React.createElement("button", { key: e.id, onClick: () => onSelect(e.id), className: "text-sm text-[#377249] hover:underline mr-2" }, equipmentLabel(e));
+  return React.createElement(
+    "div",
+    { "data-testid": "equipment-panel", className: "fixed sm:absolute left-0 right-0 sm:left-auto sm:right-4 bottom-0 sm:bottom-auto sm:top-4 w-full sm:w-80 bg-[#FFFDFA] border border-[#E2DED5] rounded-t-xl sm:rounded-xl shadow-2xl z-30 max-h-[70vh] overflow-y-auto" },
+    React.createElement(
+      "div",
+      { className: "flex items-center justify-between px-4 py-3 border-b border-[#EEEBE5] sticky top-0 bg-[#FFFDFA]" },
+      React.createElement("div", null, React.createElement("div", { className: "font-serif text-[15px] font-semibold", style: { color: layer.color } }, equipmentLabel(item)), React.createElement("div", { className: "text-xs text-[#75716A]" }, layer.label, " \xB7 ", item.type)),
+      React.createElement("button", { onClick: onClose, className: "text-[#75716A] hover:text-[#1E1A13] w-7 h-7 rounded-full hover:bg-[#F1EEE9] flex items-center justify-center", "aria-label": "Close" }, "✕")
+    ),
+    React.createElement(
+      "div",
+      { className: "p-4" },
+      item.notes && React.createElement("p", { className: "text-sm text-[#4B4740] whitespace-pre-wrap mb-3" }, item.notes),
+      parent && React.createElement("div", { className: "mb-3" }, React.createElement("div", { className: label }, "Fed from"), linkBtn(parent)),
+      children.length > 0 && React.createElement("div", { className: "mb-3" }, React.createElement("div", { className: label }, "Feeds"), children.map(linkBtn)),
+      React.createElement(
+        "div",
+        { className: "mb-3" },
+        React.createElement("div", { className: "flex items-center justify-between" }, React.createElement("div", { className: label }, "Affects ", affected.length, " site", affected.length === 1 ? "" : "s"), affected.length > 0 && React.createElement("button", { onClick: copyList, className: "text-xs text-[#377249] hover:underline" }, "Copy list")),
+        affected.length === 0 ? React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, isAdminOrManager ? "No sites linked yet — use Link Sites, then click the sites it feeds." : "No sites linked yet.") : React.createElement("div", { className: "max-h-56 overflow-y-auto" }, affected.map(({ site, via }) => {
+          const custs = customersOf(site.id);
+          return React.createElement(
+            "div",
+            { key: site.id, className: "text-sm py-0.5 flex gap-2" },
+            React.createElement("span", { className: "font-medium text-[#1E1A13] whitespace-nowrap" }, site.number),
+            React.createElement("span", { className: "text-[#75716A] truncate" }, custs.map((c) => c.name).join(", ") || "—", via.id !== item.id ? ` \xB7 via ${equipmentLabel(via)}` : "")
+          );
+        }))
+      ),
+      isAdminOrManager && React.createElement(
+        "div",
+        { className: "flex flex-col gap-2 mt-2" },
+        React.createElement("button", { onClick: onToggleLinking, className: `px-3 py-2 text-sm rounded-md font-medium ${linking ? "bg-[#377249] text-white" : "border border-[#377249]/40 text-[#377249] hover:bg-[#DDF1E1]"}` }, linking ? "Done Linking Sites" : "Link Sites"),
+        React.createElement("div", { className: "flex gap-2" }, React.createElement("button", { onClick: onEdit, className: "flex-1 px-3 py-2 text-sm border border-[#E2DED5] rounded-md hover:bg-[#F1EEE9] font-medium" }, "Edit"), React.createElement("button", { onClick: onDelete, className: "flex-1 px-3 py-2 text-sm text-[#a8532a] border border-[#E2DED5] rounded-md hover:bg-[#F9EDE6] font-medium" }, "Delete"))
+      )
+    )
+  );
+}
+function MapEquipmentForm({ initial, layer, equipment, onSave, onCancel }) {
+  const [type, setType] = useState(initial && initial.type || layer.types[0]);
+  const [name, setName] = useState(initial && initial.name || "");
+  const [fedFrom, setFedFrom] = useState(initial && initial.fedFrom || "");
+  const [notes, setNotes] = useState(initial && initial.notes || "");
+  // Can't be fed from itself or anything it feeds (that would be a loop).
+  const excluded = initial && initial.id ? equipmentDownstreamIds(equipment, initial.id) : /* @__PURE__ */ new Set();
+  const options = equipment.filter((e) => e.utility === layer.key && !excluded.has(e.id)).sort((a, b) => equipmentLabel(a).localeCompare(equipmentLabel(b), void 0, { numeric: true }));
+  return React.createElement(
+    "form",
+    { onSubmit: (e) => {
+      e.preventDefault();
+      onSave({ type, name: name.trim(), fedFrom: fedFrom || null, notes: notes.trim() });
+    } },
+    React.createElement(Field, { label: "Type" }, React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value), "aria-label": "Type" }, layer.types.map((t) => React.createElement("option", { key: t, value: t }, t)))),
+    React.createElement(Field, { label: "Name / Label" }, React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: layer.key === "hydro" ? "e.g. T3 or Panel by 0120" : layer.key === "water" ? "e.g. Valve V4 - North Loop" : "e.g. Lift Station 2", "aria-label": "Name / Label" })),
+    React.createElement(Field, { label: "Fed From (optional)" }, React.createElement("select", { className: inputCls, value: fedFrom, onChange: (e) => setFedFrom(e.target.value), "aria-label": "Fed From" }, React.createElement("option", { value: "" }, "— Nothing / the main supply —"), options.map((e) => React.createElement("option", { key: e.id, value: e.id }, equipmentLabel(e), " (", e.type, ")"))), React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Shutting off the piece it's fed from affects this one's sites too.")),
+    React.createElement(Field, { label: "Notes" }, React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "e.g. Key on the office board, turn clockwise to close" })),
+    React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm border border-[#E2DED5] rounded-md hover:bg-[#F1EEE9]" }, "Cancel"), React.createElement("button", { type: "submit", className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#2d5d3b] font-medium" }, initial && initial.id ? "Save" : "Next: Place on Map"))
+  );
 }
 function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder }) {
   const actor = useCurrentActor();
@@ -3830,12 +3967,51 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
   const [viewingSite, setViewingSite] = useState(null);
   const [unplacedSearch, setUnplacedSearch] = useState("");
   const [toast, setToast] = useState(null);
+  const [layerKey, setLayerKey] = useState("customers");
+  const [equipment, setEquipment] = useState([]);
+  const [selectedEquipmentId, setSelectedEquipmentId] = useState(null);
+  const [linkingEquipmentId, setLinkingEquipmentId] = useState(null);
+  const [equipmentForm, setEquipmentForm] = useState(null);
+  const [placingEquipment, setPlacingEquipment] = useState(null);
+  const [equipmentError, setEquipmentError] = useState(null);
   const viewportRef = useRef(null);
   const canvasRef = useRef(null);
   const fitScaleRef = useRef(1);
   const panStateRef = useRef({ panning: false, startX: 0, startY: 0, startPan: { x: 0, y: 0 } });
   const draggingRef = useRef(null);
   const [, forceTick] = useState(0);
+  const layer = mapLayerOf(layerKey);
+  const isServiceLayer = layerKey !== "customers";
+  useEffect(() => MAP_EQUIPMENT_REF.onSnapshot(
+    (snap) => {
+      const list = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setEquipment(list);
+    },
+    () => {
+    }
+  ), []);
+  const layerEquipment = equipment.filter((e) => e.utility === layerKey);
+  const switchLayer = (key) => {
+    setLayerKey(key);
+    setSelectedSiteId(null);
+    setSelectedEquipmentId(null);
+    setLinkingEquipmentId(null);
+    setPlacingSiteId(null);
+    setPlacingEquipment(null);
+  };
+  // Each piece of equipment is its own document; a change writes only the
+  // fields it touched (site links as arrayUnion/arrayRemove), so two people
+  // editing at once don't undo each other.
+  const writeEquipment = (promise, okMessage) => Promise.resolve(promise).then(() => {
+    setEquipmentError(null);
+    if (okMessage) setToast(okMessage);
+    return true;
+  }, (e) => {
+    noteSaveFailure();
+    setEquipmentError(`Couldn't save that equipment change${e && e.message ? `: ${e.message}` : ""}. Try again.`);
+    return false;
+  });
   const fitToViewport = useCallback((naturalW, naturalH) => {
     const vp = viewportRef.current;
     if (!vp || !naturalW || !naturalH) return;
@@ -3856,7 +4032,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
       return;
     }
     if (file.size > 20 * 1024 * 1024) {
-      setUploadError("That image is larger than 20MB \u2014 try a smaller export.");
+      setUploadError("That image is larger than 20MB — try a smaller export.");
       return;
     }
     setUploadError(null);
@@ -3916,7 +4092,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
   };
   const handleViewportPointerDown = (e) => {
     if (e.target.closest("[data-map-pin]")) return;
-    if (editMode && placingSiteId) return;
+    if (editMode && placingSiteId || placingEquipment) return;
     panStateRef.current = { panning: true, startX: e.clientX, startY: e.clientY, startPan: pan };
     viewportRef.current.setPointerCapture(e.pointerId);
   };
@@ -3924,6 +4100,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
     if (draggingRef.current) {
       const { xPct, yPct } = posFromEvent(e);
       draggingRef.current.pos = { xPct, yPct };
+      if (Math.abs(e.clientX - draggingRef.current.startX) + Math.abs(e.clientY - draggingRef.current.startY) > 4) draggingRef.current.moved = true;
       forceTick((t) => t + 1);
       return;
     }
@@ -3935,15 +4112,36 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
   const endPointerInteractions = (e) => {
     panStateRef.current.panning = false;
     if (draggingRef.current) {
-      const { siteId, pos } = draggingRef.current;
+      const { siteId, equipmentId, pos, moved } = draggingRef.current;
       draggingRef.current = null;
+      if (equipmentId) {
+        if (moved) writeEquipment(MAP_EQUIPMENT_REF.doc(equipmentId).update({ mapX: pos.xPct, mapY: pos.yPct }));
+        else setSelectedEquipmentId(equipmentId);
+        forceTick((t) => t + 1);
+        return;
+      }
       const site = sites.find((s) => s.id === siteId);
       if (site) saveSite({ ...site, mapX: pos.xPct, mapY: pos.yPct });
     }
   };
   const handleCanvasClick = (e) => {
+    if (placingEquipment) {
+      const { xPct, yPct } = posFromEvent(e);
+      const item = { ...placingEquipment, mapX: xPct, mapY: yPct };
+      setPlacingEquipment(null);
+      writeEquipment(MAP_EQUIPMENT_REF.doc(item.id).set(firestoreSafe(item)), `${equipmentLabel(item)} placed`).then((ok) => {
+        if (!ok) return;
+        persist({ ...db, activityLog: addLog(db, actor, `Added ${layerLabelFor(item)} ${item.type} ${equipmentLabel(item)} to the campground map`) });
+        setSelectedEquipmentId(item.id);
+        setLinkingEquipmentId(item.id);
+      });
+      return;
+    }
     if (!editMode || !placingSiteId) {
-      if (!e.target.closest("[data-map-pin]")) setSelectedSiteId(null);
+      if (!e.target.closest("[data-map-pin]")) {
+        setSelectedSiteId(null);
+        if (!linkingEquipmentId) setSelectedEquipmentId(null);
+      }
       return;
     }
     const { xPct, yPct } = posFromEvent(e);
@@ -3954,10 +4152,17 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
     setPlacingSiteId(null);
     setToast(`Site ${site ? site.number : ""} placed`);
   };
+  const layerLabelFor = (item) => mapLayerOf(item.utility).label;
   const startDragPin = (e, site) => {
-    if (!editMode) return;
+    if (!editMode || isServiceLayer) return;
     e.stopPropagation();
-    draggingRef.current = { siteId: site.id, pos: { xPct: site.mapX, yPct: site.mapY } };
+    draggingRef.current = { siteId: site.id, pos: { xPct: site.mapX, yPct: site.mapY }, startX: e.clientX, startY: e.clientY };
+    viewportRef.current.setPointerCapture(e.pointerId);
+  };
+  const startDragEquipment = (e, item) => {
+    if (!editMode || !isAdminOrManager) return;
+    e.stopPropagation();
+    draggingRef.current = { equipmentId: item.id, pos: { xPct: item.mapX, yPct: item.mapY }, startX: e.clientX, startY: e.clientY };
     viewportRef.current.setPointerCapture(e.pointerId);
   };
   const unpinSite = (site) => {
@@ -3965,6 +4170,46 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
     persist({ ...db, activityLog });
     saveSite({ ...site, mapX: null, mapY: null });
     setSelectedSiteId(null);
+  };
+  // A site hangs directly off one piece of equipment per service: linking it
+  // to a new one takes it off the old one.
+  const toggleSiteLink = (site) => {
+    const item = equipment.find((x) => x.id === linkingEquipmentId);
+    if (!item) return;
+    const ref = MAP_EQUIPMENT_REF.doc(item.id);
+    if ((item.siteIds || []).includes(site.id)) {
+      writeEquipment(ref.update({ siteIds: firebase.firestore.FieldValue.arrayRemove(site.id) }), `Site ${site.number} unlinked`);
+      return;
+    }
+    const batch = db_.batch();
+    const previous = equipment.filter((x) => x.utility === item.utility && x.id !== item.id && (x.siteIds || []).includes(site.id));
+    previous.forEach((p) => batch.update(MAP_EQUIPMENT_REF.doc(p.id), { siteIds: firebase.firestore.FieldValue.arrayRemove(site.id) }));
+    batch.update(ref, { siteIds: firebase.firestore.FieldValue.arrayUnion(site.id) });
+    writeEquipment(batch.commit(), previous.length ? `Site ${site.number} moved from ${equipmentLabel(previous[0])}` : `Site ${site.number} linked`);
+  };
+  const saveEquipmentForm = (fields) => {
+    const form = equipmentForm;
+    setEquipmentForm(null);
+    if (form.item && form.item.id) {
+      writeEquipment(MAP_EQUIPMENT_REF.doc(form.item.id).update(firestoreSafe({ ...fields, updatedAt: (/* @__PURE__ */ new Date()).toISOString() })), "Equipment saved");
+      return;
+    }
+    setPlacingEquipment({ id: uid(), utility: layerKey, ...fields, siteIds: [], createdAt: (/* @__PURE__ */ new Date()).toISOString(), createdBy: actor || null });
+    setSelectedEquipmentId(null);
+    setLinkingEquipmentId(null);
+  };
+  const deleteEquipment = (item) => {
+    const affectedCount = (item.siteIds || []).length;
+    if (!window.confirm(`Delete ${equipmentLabel(item)}?${affectedCount ? ` Its ${affectedCount} linked site${affectedCount === 1 ? "" : "s"} will be unlinked.` : ""}`)) return;
+    // Anything fed from it is now fed from whatever fed it.
+    const batch = db_.batch();
+    equipment.filter((x) => x.fedFrom === item.id).forEach((x) => batch.update(MAP_EQUIPMENT_REF.doc(x.id), { fedFrom: item.fedFrom || null }));
+    batch.delete(MAP_EQUIPMENT_REF.doc(item.id));
+    setSelectedEquipmentId(null);
+    setLinkingEquipmentId(null);
+    writeEquipment(batch.commit(), `${equipmentLabel(item)} deleted`).then((ok) => {
+      if (ok) persist({ ...db, activityLog: addLog(db, actor, `Removed ${layerLabelFor(item)} ${item.type} ${equipmentLabel(item)} from the campground map`) });
+    });
   };
   const placedSites = sites.filter((s) => s.mapX != null && s.mapY != null);
   const allUnplaced = sites.filter((s) => s.mapX == null || s.mapY == null);
@@ -3977,28 +4222,97 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
   const unplacedSectionNames = Object.keys(unplacedBySection).sort((a, b) => a.localeCompare(b));
   unplacedSectionNames.forEach((k) => unplacedBySection[k].sort((a, b) => a.number.localeCompare(b.number, void 0, { numeric: true })));
   const selectedSite = selectedSiteId ? sites.find((s) => s.id === selectedSiteId) : null;
+  const selectedEquipment = isServiceLayer && selectedEquipmentId ? layerEquipment.find((x) => x.id === selectedEquipmentId) : null;
+  const linkingEquipment = linkingEquipmentId ? layerEquipment.find((x) => x.id === linkingEquipmentId) : null;
+  const linkedSiteIds = new Set(layerEquipment.flatMap((x) => x.siteIds || []));
+  const affectedSites = selectedEquipment ? equipmentAffectedSites(equipment, selectedEquipment.id) : null;
+  const highlightedEquipmentIds = selectedEquipment ? equipmentDownstreamIds(equipment, selectedEquipment.id) : null;
+  const linkedPlacedCount = placedSites.filter((s) => linkedSiteIds.has(s.id)).length;
   if (!mapInfo) {
     if (!isAdminOrManager) {
       return /* @__PURE__ */ React.createElement(EmptyState, { text: "No campground map has been uploaded yet. Ask an Admin or Manager to add one." });
     }
     return /* @__PURE__ */ React.createElement(MapUploader, { onUpload: handleUpload, uploading, uploadPct, uploadError, hasExisting: false });
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "relative" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 mb-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { onClick: () => zoomBy(1.3), className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-bold" }, "+"), /* @__PURE__ */ React.createElement("button", { onClick: () => zoomBy(1 / 1.3), className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-bold" }, "\u2212"), /* @__PURE__ */ React.createElement("button", { onClick: () => fitToViewport(canvasRef.current.querySelector("img").naturalWidth, canvasRef.current.querySelector("img").naturalHeight), className: "px-2.5 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-medium" }, "Reset View"), /* @__PURE__ */ React.createElement("button", { onClick: () => setPinsVisible((v) => !v), className: `px-2.5 h-8 rounded-md border font-medium ${pinsVisible ? "border-[#E2DED5] bg-[#FFFDFA] text-[#4B4740] hover:bg-[#F1EEE9]" : "border-[#377249] bg-[#377249]/10 text-[#377249]"}` }, pinsVisible ? "Hide Pins" : "Show Pins"), /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, placedSites.length, " of ", sites.length, " sites placed")), isAdminOrManager && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
+  const layerSwitch = React.createElement(
+    "div",
+    { className: "inline-flex rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-0.5 mb-3", role: "group", "aria-label": "Map view" },
+    MAP_LAYERS.map((l) => React.createElement("button", {
+      key: l.key,
+      onClick: () => switchLayer(l.key),
+      "aria-pressed": layerKey === l.key,
+      className: `px-3 h-8 text-xs font-semibold rounded-md ${layerKey === l.key ? "text-white" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`,
+      style: layerKey === l.key ? { background: l.color || "#377249" } : void 0
+    }, l.label))
+  );
+  const serviceEditPanel = editMode && isServiceLayer && React.createElement(
+    "div",
+    { className: "mb-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3" },
+    placingEquipment ? React.createElement("div", { className: "flex items-center justify-between gap-2" }, React.createElement("p", { className: "text-sm font-medium", style: { color: layer.color } }, "Click on the map to place ", equipmentLabel(placingEquipment), "…"), React.createElement("button", { onClick: () => setPlacingEquipment(null), className: "text-xs text-[#a8532a] hover:underline" }, "Cancel placing")) : React.createElement(
+      "div",
+      { className: "flex items-center justify-between gap-3 flex-wrap" },
+      React.createElement("p", { className: "text-xs text-[#75716A]" }, "Drag equipment to move it. Click a piece, then Link Sites to choose the sites it feeds."),
+      React.createElement("button", { onClick: () => setEquipmentForm({ item: null }), className: "px-3 py-1.5 text-xs font-semibold rounded-md text-white", style: { background: layer.color } }, "+ Add ", layer.label, " Equipment")
+    )
+  );
+  const siteServiceBlock = (site) => {
+    const chain = equipmentFeedingSite(equipment, layerKey, site.id);
+    return React.createElement(
+      "div",
+      { className: "mb-3 rounded-md border px-3 py-2", style: { borderColor: layer.color + "55", background: layer.color + "10" } },
+      React.createElement("div", { className: "text-[11px] uppercase tracking-wider font-semibold mb-1", style: { color: layer.color } }, layer.label),
+      chain.length === 0 ? React.createElement("p", { className: "text-xs text-[#75716A] italic" }, "Not linked to any ", layer.label.toLowerCase(), " equipment yet.") : chain.map((x, i) => React.createElement(
+        "div",
+        { key: x.id, className: "text-sm" },
+        React.createElement("span", { className: "text-[#75716A]" }, i === 0 ? "Fed by " : "← from "),
+        React.createElement("button", { onClick: () => {
+          setSelectedSiteId(null);
+          setSelectedEquipmentId(x.id);
+        }, className: "text-[#377249] font-medium hover:underline" }, equipmentLabel(x)),
+        React.createElement("span", { className: "text-[#75716A]" }, " (", x.type, ")")
+      ))
+    );
+  };
+  const siteColor = (s) => {
+    if (!isServiceLayer) {
+      const hasRecord = db.cottages.some((c) => c.siteId === s.id) || db.customers.some((c) => customerSiteIds(c).includes(s.id));
+      return hasRecord ? "#377249" : "#C1652F";
+    }
+    if (affectedSites) return affectedSites.has(s.id) ? layer.color : "#CFCAC0";
+    return linkedSiteIds.has(s.id) ? layer.color : "#FFFFFF";
+  };
+  // Lines from the selected piece to each site it feeds and each piece fed
+  // from it, so "what does this affect" is visible at a glance.
+  const lines = [];
+  if (selectedEquipment) {
+    const sitePos = new Map(placedSites.map((s) => [s.id, s]));
+    equipment.forEach((x) => {
+      if (!highlightedEquipmentIds.has(x.id) || x.mapX == null) return;
+      (x.siteIds || []).forEach((sid) => {
+        const s = sitePos.get(sid);
+        if (s) lines.push({ key: x.id + sid, x1: x.mapX, y1: x.mapY, x2: s.mapX, y2: s.mapY });
+      });
+      const parent = x.id !== selectedEquipment.id && equipment.find((p) => p.id === x.fedFrom);
+      if (parent && parent.mapX != null) lines.push({ key: "f" + x.id, x1: parent.mapX, y1: parent.mapY, x2: x.mapX, y2: x.mapY, feed: true });
+    });
+  }
+  return /* @__PURE__ */ React.createElement("div", { className: "relative" }, layerSwitch, equipmentError && React.createElement("div", { role: "alert", className: "mb-3 rounded-md bg-[#F9EDE6] border border-[#a8532a]/30 px-3 py-2 text-sm text-[#a8532a]" }, equipmentError), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-3 mb-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs flex-wrap" }, /* @__PURE__ */ React.createElement("button", { onClick: () => zoomBy(1.3), className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-bold" }, "+"), /* @__PURE__ */ React.createElement("button", { onClick: () => zoomBy(1 / 1.3), className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-bold" }, "−"), /* @__PURE__ */ React.createElement("button", { onClick: () => fitToViewport(canvasRef.current.querySelector("img").naturalWidth, canvasRef.current.querySelector("img").naturalHeight), className: "px-2.5 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9] font-medium" }, "Reset View"), !isServiceLayer && /* @__PURE__ */ React.createElement("button", { onClick: () => setPinsVisible((v) => !v), className: `px-2.5 h-8 rounded-md border font-medium ${pinsVisible ? "border-[#E2DED5] bg-[#FFFDFA] text-[#4B4740] hover:bg-[#F1EEE9]" : "border-[#377249] bg-[#377249]/10 text-[#377249]"}` }, pinsVisible ? "Hide Pins" : "Show Pins"), isServiceLayer ? React.createElement("span", { className: "text-[#75716A]" }, layerEquipment.length, " piece", layerEquipment.length === 1 ? "" : "s", " of equipment \xB7 ", linkedPlacedCount, " of ", placedSites.length, " sites linked") : /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, placedSites.length, " of ", sites.length, " sites placed")), isAdminOrManager && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => {
         setEditMode((m) => !m);
         setPlacingSiteId(null);
+        setPlacingEquipment(null);
         setSelectedSiteId(null);
       },
       className: `px-3 py-1.5 text-xs font-semibold rounded-md ${editMode ? "bg-[#377249] text-white" : "border border-[#E2DED5] bg-[#FFFDFA] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
-    editMode ? "Done Editing Pins" : "Edit Pins"
-  ))), editMode && /* @__PURE__ */ React.createElement("div", { className: "mb-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Unplaced Sites (", allUnplaced.length, ")"), placingSiteId && /* @__PURE__ */ React.createElement("button", { onClick: () => setPlacingSiteId(null), className: "text-xs text-[#a8532a] hover:underline" }, "Cancel placing")), placingSiteId ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium mb-2" }, "Click on the map to drop the pin for Site ", (sites.find((s) => s.id === placingSiteId) || {}).number, "\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+    editMode ? "Done Editing Pins" : isServiceLayer ? `Edit ${layer.label} Equipment` : "Edit Pins"
+  ))), serviceEditPanel, linkingEquipment && React.createElement("div", { className: "mb-3 rounded-lg border px-3 py-2 flex items-center justify-between gap-2", style: { borderColor: layer.color, background: layer.color + "14" } }, React.createElement("p", { className: "text-sm text-[#1E1A13]" }, "Linking sites to ", React.createElement("b", null, equipmentLabel(linkingEquipment)), " — click a site to add it, click again to remove it."), React.createElement("button", { onClick: () => setLinkingEquipmentId(null), className: "px-3 py-1 text-xs font-semibold rounded-md text-white whitespace-nowrap", style: { background: layer.color } }, "Done")), editMode && !isServiceLayer && /* @__PURE__ */ React.createElement("div", { className: "mb-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Unplaced Sites (", allUnplaced.length, ")"), placingSiteId && /* @__PURE__ */ React.createElement("button", { onClick: () => setPlacingSiteId(null), className: "text-xs text-[#a8532a] hover:underline" }, "Cancel placing")), placingSiteId ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium mb-2" }, "Click on the map to drop the pin for Site ", (sites.find((s) => s.id === placingSiteId) || {}).number, "…") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls + " mb-2",
-      placeholder: "Search site number or section\u2026",
+      placeholder: "Search site number or section…",
       value: unplacedSearch,
       onChange: (e) => setUnplacedSearch(e.target.value)
     }
@@ -4020,7 +4334,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
       onPointerUp: endPointerInteractions,
       onPointerCancel: endPointerInteractions,
       className: "relative w-full h-[calc(100vh-160px)] min-h-[420px] rounded-xl border border-[#E2DED5] bg-[#EEEBE5] overflow-hidden touch-none",
-      style: { cursor: editMode && placingSiteId ? "crosshair" : panStateRef.current.panning ? "grabbing" : "grab" }
+      style: { cursor: editMode && placingSiteId || placingEquipment ? "crosshair" : panStateRef.current.panning ? "grabbing" : "grab" }
     },
     /* @__PURE__ */ React.createElement(
       "div",
@@ -4031,10 +4345,12 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
         style: { transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, transformOrigin: "0 0" }
       },
       /* @__PURE__ */ React.createElement("img", { src: mapInfo.imageUrl, onLoad: handleImageLoad, draggable: false, className: "block max-w-none select-none", alt: "Campground map" }),
+      lines.length > 0 && React.createElement("svg", { className: "absolute inset-0 w-full h-full pointer-events-none", viewBox: "0 0 100 100", preserveAspectRatio: "none" }, lines.map((l) => React.createElement("line", { key: l.key, x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2, stroke: layer.color, strokeWidth: l.feed ? 3 : 1.5, strokeDasharray: l.feed ? "6 4" : void 0, strokeOpacity: 0.8, vectorEffect: "non-scaling-stroke" }))),
       placedSites.map((s) => {
         const pos = draggingRef.current && draggingRef.current.siteId === s.id ? draggingRef.current.pos : { xPct: s.mapX, yPct: s.mapY };
-        const hasRecord = db.cottages.some((c) => c.siteId === s.id) || db.customers.some((c) => customerSiteIds(c).includes(s.id));
-        const showVisualPin = pinsVisible || editMode;
+        const showVisualPin = pinsVisible || editMode || isServiceLayer;
+        const linkedToLinking = linkingEquipment && (linkingEquipment.siteIds || []).includes(s.id);
+        const color = siteColor(s);
         return /* @__PURE__ */ React.createElement(
           "button",
           {
@@ -4043,28 +4359,80 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
             onPointerDown: (e) => startDragPin(e, s),
             onClick: (e) => {
               e.stopPropagation();
-              if (editMode) return;
+              if (linkingEquipment) {
+                toggleSiteLink(s);
+                return;
+              }
+              if (editMode && !isServiceLayer) return;
+              setSelectedEquipmentId(null);
               setSelectedSiteId(s.id);
             },
-            className: `absolute w-3.5 h-3.5 rounded-full -translate-x-1/2 -translate-y-1/2 transition-transform ${showVisualPin ? "border-2 border-white shadow hover:scale-125" : "hover:scale-150"}`,
+            className: `absolute w-3.5 h-3.5 rounded-full -translate-x-1/2 -translate-y-1/2 transition-transform ${showVisualPin ? "border-2 shadow hover:scale-125" : "hover:scale-150"} ${linkedToLinking ? "ring-2 ring-offset-1 ring-[#1E1A13]" : ""}`,
             style: {
               left: `${pos.xPct}%`,
               top: `${pos.yPct}%`,
-              background: showVisualPin ? hasRecord ? "#377249" : "#C1652F" : "transparent",
-              cursor: editMode ? "grab" : "pointer"
+              background: showVisualPin ? color : "transparent",
+              borderColor: isServiceLayer && color === "#FFFFFF" ? "#9A968D" : "#FFFFFF",
+              cursor: editMode && !isServiceLayer ? "grab" : "pointer"
             },
             title: `Site ${s.number}`
           }
         );
+      }),
+      isServiceLayer && layerEquipment.filter((x) => x.mapX != null && x.mapY != null).map((x) => {
+        const pos = draggingRef.current && draggingRef.current.equipmentId === x.id ? draggingRef.current.pos : { xPct: x.mapX, yPct: x.mapY };
+        const dim = highlightedEquipmentIds && !highlightedEquipmentIds.has(x.id);
+        const selected = selectedEquipment && selectedEquipment.id === x.id;
+        return React.createElement(
+          "button",
+          {
+            key: x.id,
+            "data-map-pin": "true",
+            "data-equipment": x.id,
+            onPointerDown: (e) => startDragEquipment(e, x),
+            onClick: (e) => {
+              e.stopPropagation();
+              setSelectedSiteId(null);
+              if (linkingEquipmentId && linkingEquipmentId !== x.id) setLinkingEquipmentId(null);
+              setSelectedEquipmentId(x.id);
+            },
+            className: `absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center ${selected ? "z-20" : "z-10"}`,
+            style: { left: `${pos.xPct}%`, top: `${pos.yPct}%`, opacity: dim ? 0.45 : 1, cursor: editMode ? "grab" : "pointer" },
+            title: `${equipmentLabel(x)} (${x.type})`,
+            "aria-label": `${equipmentLabel(x)} (${x.type})`
+          },
+          React.createElement("span", { className: `w-5 h-5 rounded-[5px] rotate-45 border-2 border-white shadow flex items-center justify-center ${selected ? "ring-2 ring-[#1E1A13]" : ""}`, style: { background: layer.color } }, React.createElement("span", { className: "-rotate-45 text-[9px] font-bold text-white leading-none" }, (x.type || "?").charAt(0))),
+          React.createElement("span", { className: "mt-1 px-1 rounded bg-white/90 text-[9px] font-semibold text-[#1E1A13] whitespace-nowrap shadow-sm" }, equipmentLabel(x))
+        );
       })
     )
-  ), selectedSite && !editMode && /* @__PURE__ */ React.createElement(
+  ), selectedEquipment && !placingEquipment && React.createElement(MapEquipmentPanel, {
+    item: selectedEquipment,
+    equipment,
+    db,
+    layer,
+    isAdminOrManager,
+    linking: linkingEquipmentId === selectedEquipment.id,
+    onClose: () => {
+      setSelectedEquipmentId(null);
+      setLinkingEquipmentId(null);
+    },
+    onSelect: (id) => {
+      setLinkingEquipmentId(null);
+      setSelectedEquipmentId(id);
+    },
+    onEdit: () => setEquipmentForm({ item: selectedEquipment }),
+    onDelete: () => deleteEquipment(selectedEquipment),
+    onToggleLinking: () => setLinkingEquipmentId((cur) => cur === selectedEquipment.id ? null : selectedEquipment.id),
+    onCopied: (msg) => msg && setToast(msg)
+  }), selectedSite && !selectedEquipment && (!editMode || isServiceLayer) && /* @__PURE__ */ React.createElement(
     MapSitePopover,
     {
       site: selectedSite,
       db,
       persist,
       isAdminOrManager,
+      serviceBlock: isServiceLayer ? siteServiceBlock(selectedSite) : null,
       onClose: () => setSelectedSiteId(null),
       onCreateWorkOrder: (site) => {
         setSelectedSiteId(null);
@@ -4076,7 +4444,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
       },
       onUnpin: unpinSite
     }
-  ), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, saveCottage, saveCorrespondence, readOnly: true, variant: "drawer", onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
+  ), equipmentForm && React.createElement(Modal, { title: equipmentForm.item ? `Edit ${equipmentLabel(equipmentForm.item)}` : `Add ${layer.label} Equipment`, onClose: () => setEquipmentForm(null) }, React.createElement(MapEquipmentForm, { initial: equipmentForm.item, layer, equipment, onSave: saveEquipmentForm, onCancel: () => setEquipmentForm(null) })), viewingSite && /* @__PURE__ */ React.createElement(SiteDetailModal, { site: viewingSite, db, persist, saveWorkOrder, saveCottage, saveCorrespondence, readOnly: true, variant: "drawer", onClose: () => setViewingSite(null) }), toast && /* @__PURE__ */ React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }));
 }
 function SiteForm({ initial, sites, onSave, onCancel }) {
   const [number, setNumber] = useState((initial == null ? void 0 : initial.number) || "");
