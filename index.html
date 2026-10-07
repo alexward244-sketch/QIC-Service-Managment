@@ -3857,6 +3857,153 @@ function equipmentFeedingSite(equipment, utility, siteId) {
 function equipmentLabel(e) {
   return e.name || e.type || "Equipment";
 }
+// Live list of Site Map equipment (all services).
+function useMapEquipment() {
+  const [equipment, setEquipment] = useState([]);
+  useEffect(() => MAP_EQUIPMENT_REF.onSnapshot(
+    (snap) => {
+      const list = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setEquipment(list);
+    },
+    () => {
+    }
+  ), []);
+  return equipment;
+}
+// The placed site closest to a piece of equipment on the map ("beside site
+// 0104"), for telling staff where to look.
+function equipmentNearestSite(item, sites) {
+  if (!item || item.mapX == null || item.mapY == null) return null;
+  let best = null;
+  let bestD = Infinity;
+  (sites || []).forEach((s) => {
+    if (s.mapX == null || s.mapY == null) return;
+    const d = (s.mapX - item.mapX) ** 2 + (s.mapY - item.mapY) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = s;
+    }
+  });
+  return best;
+}
+function equipmentWhere(item, sites) {
+  if (item.location) return item.location;
+  const near = equipmentNearestSite(item, sites);
+  return near ? `near site ${near.number}` : "";
+}
+// An email reporting a hydro, water or sewer problem ("no power", "breaker
+// keeps tripping", "no water", "sewer backing up"). Only the customer's
+// wording counts - a hydro bill or a winterizing "turn the water off" isn't one.
+const UTILITY_ISSUE_PATTERNS = {
+  hydro: [/\b(no|lost|losing|lose|without)\s+(power|hydro|electricity|electric|lights)\b/i, /\bpower\s+(is\s+|went\s+|has\s+gone\s+|keeps\s+going\s+|keeps\s+cutting\s+)?(out|off|down)\b/i, /\b(power|hydro)\s+(outage|failure|cut)\b/i, /\bbreakers?\b/i, /\b(tripped|tripping|keeps\s+tripping)\b/i],
+  water: [/\b(no|lost|without)\s+water\b/i, /\bwater\s+(is|went|has\s+been|has\s+gone)\s+(off|out)\b/i, /\b(low|no)\s+water\s+pressure\b/i, /\bwater\s+main\b/i],
+  sewer: [/\bsewer\b/i, /\bsewage\b/i, /\bseptic\b/i, /\b(backed|backing)\s+up\b/i, /\btoilets?\s+(won'?t|will\s+not|isn'?t|is\s+not|not)\s+(flush|flushing|drain|draining)\b/i, /\bdrains?\s+(are\s+|is\s+)?(backing|backed|blocked|clogged)\b/i]
+};
+function utilityIssueOf(item) {
+  if (!item || item.direction === "out") return null;
+  const text = `${item.subject || ""}
+${displayEmailBody(item.body || "")}
+${item.triage && item.triage.summary || ""}`;
+  return ["hydro", "water", "sewer"].find((k) => UTILITY_ISSUE_PATTERNS[k].some((re) => re.test(text))) || null;
+}
+// The sites an email is about: the linked customer's sites, else a site
+// number the message mentions (website form, or Claude's read of it).
+function correspondenceSites(db, item) {
+  const sites = db.sites || [];
+  if (item.customerId && !correspondenceVoicemail(item)) {
+    const cust = (db.customers || []).find((c) => c.id === item.customerId);
+    const ids = cust ? customerSiteIds(cust) : [];
+    const found = sites.filter((s) => ids.includes(s.id));
+    if (found.length) return found;
+  }
+  const num = item.webForm && item.webForm.siteNumber || item.triage && item.triage.siteNumber;
+  const site = num ? sites.find((s) => sameSiteNumber(s.number, num)) : null;
+  return site ? [site] : [];
+}
+const UTILITY_ISSUE_WINDOW_MS = 12 * 60 * 60 * 1e3;
+// What staff should check for a "no power / no water / sewer" email: for each
+// of its sites, the equipment feeding it (from the Site Map), and - when
+// other sites have reported the same kind of problem within 12 hours - the
+// piece they have in common. Staff only; never part of anything sent.
+function utilityIssueHint(db, equipment, all, item) {
+  const utility = utilityIssueOf(item);
+  if (!utility || !equipment.some((e) => e.utility === utility)) return null;
+  const sites = correspondenceSites(db, item);
+  if (!sites.length) return null;
+  const at = Date.parse(item.receivedAt || "") || Date.now();
+  const reports = /* @__PURE__ */ new Map();
+  (all || []).forEach((c) => {
+    const t = Date.parse(c.receivedAt || "");
+    if (!t || Math.abs(t - at) > UTILITY_ISSUE_WINDOW_MS || utilityIssueOf(c) !== utility) return;
+    correspondenceSites(db, c).forEach((s) => reports.set(s.id, s));
+  });
+  sites.forEach((s) => reports.set(s.id, s));
+  const rows = sites.slice(0, 3).map((site) => {
+    const chain = equipmentFeedingSite(equipment, utility, site.id);
+    if (!chain.length) return { site, chain };
+    const direct = chain[0];
+    const others = (direct.siteIds || []).filter((id) => id !== site.id).length;
+    // The piece most of the reporting sites share (ties go to the one
+    // closest to the sites).
+    let likely = null;
+    chain.forEach((piece) => {
+      const affected = equipmentAffectedSites(equipment, piece.id);
+      const reported = Array.from(reports.values()).filter((s) => affected.has(s.id));
+      if (reported.length >= 2 && (!likely || reported.length > likely.reported.length)) likely = { piece, reported };
+    });
+    return { site, chain, direct, others, likely };
+  });
+  return { utility, layer: mapLayerOf(utility), rows };
+}
+function UtilityIssueHint({ hint, sites, onShowOnMap }) {
+  const { layer, rows } = hint;
+  const btn = (piece) => onShowOnMap && React.createElement("button", { type: "button", onClick: () => onShowOnMap(piece), className: "ml-1 text-xs font-semibold text-[#377249] hover:underline" }, "Show on map");
+  return React.createElement(
+    "div",
+    { "data-testid": "utility-issue-hint", className: "mx-5 mt-4 rounded-lg border px-3 py-2.5 text-sm text-[#1E1A13]", style: { borderColor: layer.color + "66", background: layer.color + "12" } },
+    React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" }, React.createElement("span", { className: "text-xs font-bold uppercase tracking-wider", style: { color: layer.color } }, "⚡ Possible ", layer.label.toLowerCase(), " problem"), React.createElement("span", { className: "text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#F1EEE9] text-[#75716A]" }, "Staff only — not sent to the customer")),
+    rows.map(({ site, chain, direct, others, likely }) => React.createElement(
+      "div",
+      { key: site.id, className: "py-1" },
+      !direct ? React.createElement("p", { className: "text-[#75716A]" }, "Site ", site.number, " isn't linked to any ", layer.label.toLowerCase(), " equipment on the Site Map yet.") : React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(
+          "p",
+          null,
+          "Site ",
+          React.createElement("b", null, site.number),
+          " is on ",
+          React.createElement("b", null, equipmentLabel(direct)),
+          " (",
+          direct.type,
+          equipmentWhere(direct, sites) ? `, ${equipmentWhere(direct, sites)}` : "",
+          ")",
+          chain.slice(1).map((p) => ` ← ${equipmentLabel(p)}`).join(""),
+          "."
+        ),
+        React.createElement("p", { className: "text-[#4B4740]" }, "Check ", equipmentLabel(direct), " first", others > 0 ? ` — ${others} other site${others === 1 ? " is" : "s are"} on it.` : ".", btn(direct)),
+        likely && React.createElement(
+          "p",
+          { className: "mt-1 font-medium", style: { color: "#a8532a" } },
+          likely.reported.length,
+          " sites on ",
+          equipmentLabel(likely.piece),
+          " reported a ",
+          layer.label.toLowerCase(),
+          " problem within 12 hours (",
+          likely.reported.map((s) => s.number).sort((a, b) => a.localeCompare(b, void 0, { numeric: true })).join(", "),
+          ") — likely ",
+          equipmentLabel(likely.piece),
+          likely.piece.fedFrom ? " or what feeds it" : "",
+          ".",
+          likely.piece.id !== direct.id && btn(likely.piece)
+        )
+      )
+    ))
+  );
+}
 function MapSitePopover({ site, db, persist, isAdminOrManager, onClose, onCreateWorkOrder, onViewFull, onUnpin, serviceBlock }) {
   if (!site) return null;
   const cottages = db.cottages.filter((c) => c.siteId === site.id);
@@ -3904,6 +4051,7 @@ ${lines.join("\n")}`;
     React.createElement(
       "div",
       { className: "p-4" },
+      equipmentWhere(item, db.sites) && React.createElement("p", { className: "text-sm text-[#1E1A13] mb-2" }, "\u{1F4CD} ", equipmentWhere(item, db.sites)),
       item.notes && React.createElement("p", { className: "text-sm text-[#4B4740] whitespace-pre-wrap mb-3" }, item.notes),
       parent && React.createElement("div", { className: "mb-3" }, React.createElement("div", { className: label }, "Fed from"), linkBtn(parent)),
       children.length > 0 && React.createElement("div", { className: "mb-3" }, React.createElement("div", { className: label }, "Feeds"), children.map(linkBtn)),
@@ -3934,6 +4082,7 @@ function MapEquipmentForm({ initial, layer, equipment, onSave, onCancel }) {
   const [type, setType] = useState(initial && initial.type || layer.types[0]);
   const [name, setName] = useState(initial && initial.name || "");
   const [fedFrom, setFedFrom] = useState(initial && initial.fedFrom || "");
+  const [location, setLocation] = useState(initial && initial.location || "");
   const [notes, setNotes] = useState(initial && initial.notes || "");
   // Can't be fed from itself or anything it feeds (that would be a loop).
   const excluded = initial && initial.id ? equipmentDownstreamIds(equipment, initial.id) : /* @__PURE__ */ new Set();
@@ -3942,16 +4091,17 @@ function MapEquipmentForm({ initial, layer, equipment, onSave, onCancel }) {
     "form",
     { onSubmit: (e) => {
       e.preventDefault();
-      onSave({ type, name: name.trim(), fedFrom: fedFrom || null, notes: notes.trim() });
+      onSave({ type, name: name.trim(), fedFrom: fedFrom || null, location: location.trim(), notes: notes.trim() });
     } },
     React.createElement(Field, { label: "Type" }, React.createElement("select", { className: inputCls, value: type, onChange: (e) => setType(e.target.value), "aria-label": "Type" }, layer.types.map((t) => React.createElement("option", { key: t, value: t }, t)))),
     React.createElement(Field, { label: "Name / Label" }, React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: layer.key === "hydro" ? "e.g. T3 or Panel by 0120" : layer.key === "water" ? "e.g. Valve V4 - North Loop" : "e.g. Lift Station 2", "aria-label": "Name / Label" })),
+    React.createElement(Field, { label: "Location (optional)" }, React.createElement("input", { className: inputCls, value: location, onChange: (e) => setLocation(e.target.value), placeholder: "e.g. Grey box behind site 0104", "aria-label": "Location" }), React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Left blank, staff are told the nearest site on the map.")),
     React.createElement(Field, { label: "Fed From (optional)" }, React.createElement("select", { className: inputCls, value: fedFrom, onChange: (e) => setFedFrom(e.target.value), "aria-label": "Fed From" }, React.createElement("option", { value: "" }, "— Nothing / the main supply —"), options.map((e) => React.createElement("option", { key: e.id, value: e.id }, equipmentLabel(e), " (", e.type, ")"))), React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "Shutting off the piece it's fed from affects this one's sites too.")),
     React.createElement(Field, { label: "Notes" }, React.createElement("textarea", { className: inputCls, rows: 3, value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "e.g. Key on the office board, turn clockwise to close" })),
     React.createElement("div", { className: "flex justify-end gap-2 mt-2" }, React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm border border-[#E2DED5] rounded-md hover:bg-[#F1EEE9]" }, "Cancel"), React.createElement("button", { type: "submit", className: "px-4 py-2 text-sm bg-[#377249] text-white rounded-md hover:bg-[#2d5d3b] font-medium" }, initial && initial.id ? "Save" : "Next: Place on Map"))
   );
 }
-function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder }) {
+function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder, focus, onFocusUsed }) {
   const actor = useCurrentActor();
   const sites = db.sites || [];
   const mapInfo = db.campgroundMap;
@@ -3968,7 +4118,7 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
   const [unplacedSearch, setUnplacedSearch] = useState("");
   const [toast, setToast] = useState(null);
   const [layerKey, setLayerKey] = useState("customers");
-  const [equipment, setEquipment] = useState([]);
+  const equipment = useMapEquipment();
   const [selectedEquipmentId, setSelectedEquipmentId] = useState(null);
   const [linkingEquipmentId, setLinkingEquipmentId] = useState(null);
   const [equipmentForm, setEquipmentForm] = useState(null);
@@ -3982,15 +4132,15 @@ function CampgroundMapView({ db, persist, saveWorkOrder, saveSite, saveCottage, 
   const [, forceTick] = useState(0);
   const layer = mapLayerOf(layerKey);
   const isServiceLayer = layerKey !== "customers";
-  useEffect(() => MAP_EQUIPMENT_REF.onSnapshot(
-    (snap) => {
-      const list = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-      setEquipment(list);
-    },
-    () => {
-    }
-  ), []);
+  // Opened from an email's "Show on map": that service, that piece selected.
+  useEffect(() => {
+    if (!focus) return;
+    setLayerKey(focus.utility);
+    setSelectedSiteId(null);
+    setLinkingEquipmentId(null);
+    setSelectedEquipmentId(focus.equipmentId);
+    if (onFocusUsed) onFocusUsed();
+  }, [focus]);
   const layerEquipment = equipment.filter((e) => e.utility === layerKey);
   const switchLayer = (key) => {
     setLayerKey(key);
@@ -18504,8 +18654,9 @@ function trashEmailInZoho(item) {
   const { direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt } = item;
   return functions_.httpsCallable("trashEmailInZoho")({ direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt }).catch((e) => console.error("Couldn't move the email to Zoho's Trash:", e));
 }
-function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice }) {
+function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice, onShowEquipmentOnMap }) {
   const actor = useCurrentActor();
+  const mapEquipment = useMapEquipment();
   const [selectedId, setSelectedId] = useState(null);
   const [viewCustomerId, setViewCustomerId] = useState(null);
   const [composePickerOpen, setComposePickerOpen] = useState(false);
@@ -18679,6 +18830,10 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
   } else {
     readingPane = /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-center h-full text-sm text-[#9A968D] italic p-5" }, "Select a message to read it here.");
   }
+  // "No power" / "no water" / "sewer backing up": what feeds their site, for
+  // staff to go and check. Shown here only - never added to a reply.
+  const issueHint = selectedItem && !composePickerOpen ? utilityIssueHint(db, mapEquipment, all, selectedItem) : null;
+  if (issueHint) readingPane = React.createElement(React.Fragment, null, React.createElement(UtilityIssueHint, { hint: issueHint, sites: db.sites, onShowOnMap: onShowEquipmentOnMap ? (piece) => onShowEquipmentOnMap({ utility: piece.utility, equipmentId: piece.id, ts: Date.now() }) : null }), readingPane);
   const showingDetail = !!(selectedItem || viewCustomer || composePickerOpen);
   const clearSelection = () => {
     setSelectedId(null);
@@ -21578,6 +21733,7 @@ function AppContent() {
   }, [mode]);
   const [invoicePrefill, setInvoicePrefill] = useState(null);
   const [workOrderPrefill, setWorkOrderPrefill] = useState(null);
+  const [mapFocus, setMapFocus] = useState(null);
   const [importPending, setImportPending] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -22026,7 +22182,10 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite, focus: mapFocus, onFocusUsed: () => setMapFocus(null) }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null, onShowEquipmentOnMap: (f) => {
+    setMapFocus(f);
+    selectTab("map");
+  } }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),

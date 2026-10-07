@@ -119,3 +119,62 @@ test("deleting equipment re-feeds what hung off it; Office can look but not edit
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+// "No power" emails: what feeds the site, and the piece several reporting
+// sites share - shown to staff only, never sent.
+const HOUR = 60 * 60 * 1000;
+const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
+const outageSeed = () => seed({
+  "customers/c2": { id: "c2", name: "Debbie Knox", siteIds: ["b"] },
+  "customers/c3": { id: "c3", name: "Wayne McKinnon", siteIds: ["c"] },
+  "mapEquipment/t1": { id: "t1", utility: "hydro", type: "Transformer", name: "T1", mapX: 50, mapY: 50, siteIds: [], fedFrom: null },
+  "mapEquipment/pa": { id: "pa", utility: "hydro", type: "Breaker Panel", name: "Panel A", mapX: 21, mapY: 12, siteIds: ["a", "b"], fedFrom: "t1" },
+  "mapEquipment/pb": { id: "pb", utility: "hydro", type: "Breaker Panel", name: "Panel B", mapX: 31, mapY: 12, siteIds: ["c"], fedFrom: "t1", location: "Grey box behind the laundry" },
+  "correspondence/e1": { id: "e1", direction: "in", status: "new", customerId: "c1", fromEmail: "robert@x.com", subject: "No power at the cottage", body: "Hi, we have no power since this morning.", receivedAt: iso(1 * HOUR) },
+  "correspondence/e2": { id: "e2", direction: "in", status: "new", customerId: "c2", fromEmail: "debbie@x.com", subject: "Help", body: "Our breaker keeps tripping and now everything is off.", receivedAt: iso(2 * HOUR) },
+  "correspondence/e3": { id: "e3", direction: "in", status: "new", customerId: "c3", fromEmail: "wayne@x.com", subject: "Question about my hydro bill", body: "Can you explain the usage?", receivedAt: iso(3 * HOUR) },
+  "correspondence/e4": { id: "e4", direction: "in", status: "new", customerId: "c3", fromEmail: "wayne@x.com", subject: "Sewer", body: "The toilet won't flush.", receivedAt: iso(30 * HOUR) }
+});
+const inboxView = `(api) => React.createElement(CurrentUserContext.Provider, { value: "${EMAIL}" }, React.createElement(CorrespondenceInboxView, { db: api.db, persist: api.persist, saveCorrespondence: api.saveCorrespondence, deleteCorrespondence: api.deleteCorrespondence, saveCustomer: api.saveCustomer, saveWorkOrder: api.saveWorkOrder, savePropaneRequest: api.savePropaneRequest, saveTreeRequest: api.saveTreeRequest, saveCottage: api.saveCottage, onShowEquipmentOnMap: (f) => { window.__shown = f; } }))`;
+
+test("a 'no power' email shows staff which panel feeds the site and when neighbours reported it too", async () => {
+  await outageSeed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await page.evaluate(() => { window.__sent = []; window.sendEmail = (x) => { window.__sent.push(x); return Promise.resolve(); }; });
+  await mountWithDb(page, inboxView, "(api) => api.db.sites.length === 3 && api.db.correspondence.length === 4 && api.db.customers.length === 3");
+  await page.getByText("No power at the cottage").first().click();
+  const hint = page.getByTestId("utility-issue-hint");
+  await hint.waitFor();
+  const text = await hint.innerText();
+  assert.match(text, /Possible hydro problem/i);
+  assert.match(text, /Staff only/i);
+  assert.match(text, /Site 0101 is on Panel A \(Breaker Panel, near site 0102\) ← T1\./);
+  assert.match(text, /1 other site is on it/);
+  assert.match(text, /2 sites on Panel A reported a hydro problem within 12 hours \(0101, 0102\)/);
+  await hint.getByRole("button", { name: "Show on map" }).first().click();
+  assert.deepEqual(await page.evaluate(() => ({ u: window.__shown.utility, id: window.__shown.equipmentId })), { u: "hydro", id: "pa" });
+
+  // Nothing about the panel goes into a reply, and nothing was sent.
+  const boxes = await page.locator("textarea").evaluateAll((els) => els.map((e) => e.value).join(" "));
+  assert.doesNotMatch(boxes, /Panel|T1/);
+  assert.deepEqual(await page.evaluate(() => window.__sent), []);
+
+  // A hydro bill question isn't an outage; a sewer email with no sewer
+  // equipment set up shows nothing either.
+  await page.getByText("Question about my hydro bill").first().click();
+  await page.getByText("Can you explain the usage?").last().waitFor();
+  assert.equal(await page.getByTestId("utility-issue-hint").count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("Show on map opens the right service with that piece selected, with its location", async () => {
+  await outageSeed();
+  const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
+  await mountWithDb(page, mapView(false).replace("onCreateWorkOrder: () => {} }", `onCreateWorkOrder: () => {}, focus: { utility: "hydro", equipmentId: "pb", ts: 1 } }`), "(api) => api.db.sites.length === 3");
+  const panel = page.getByTestId("equipment-panel");
+  await panel.getByText("Panel B").first().waitFor();
+  assert.ok(await panel.getByText("Grey box behind the laundry").isVisible());
+  assert.equal(await page.getByRole("button", { name: "Hydro", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.close();
+});
