@@ -2760,6 +2760,36 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, onClear, showLabel
     m
   )), isPaid && onClear && React.createElement("button", { type: "button", onClick: () => { onClear(); setOpen(false); }, className: "w-full text-left px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F1EEE9] border-t border-[#EEEBE5]" }, "Not paid")));
 }
+// Confirming a hydro reading records the bill (HYD number); then it's
+// emailed, printed for the customer's file (some have no email), or just
+// kept to send or print later from Sent bills.
+// Confirm & Send Invoice ("send") emails the bill as always - or, with no
+// email on file, offers to print it for the customer's file. Confirm
+// without sending ("quiet") records the bill (HYD number) and either prints
+// it or leaves it to email or print later from Sent bills.
+function HydroConfirmModal({ kind, site, customer, accountingEmail, onConfirm, onCancel }) {
+  const emailOptions = customer ? [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean) : [];
+  const [to, setTo] = useState(emailOptions[0] || "");
+  const btn = "px-3.5 py-2 text-sm rounded-md font-medium";
+  const primary = `${btn} bg-[#377249] text-[#F9F5EC] hover:bg-[#135C30]`;
+  const secondary = `${btn} text-[#377249] border border-[#377249]/40 hover:bg-[#377249]/10`;
+  const cancel = React.createElement("button", { type: "button", onClick: onCancel, className: `${btn} text-[#75716A] hover:bg-[#F1EEE9]` }, "Cancel");
+  if (kind === "quiet") {
+    return React.createElement(Modal, { title: `Confirm without sending \u2014 Site ${site.number}`, onClose: onCancel },
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, "The bill is recorded with its number but not emailed. You can email or print it any time from Sent bills."),
+      React.createElement("div", { className: "flex justify-end gap-2 flex-wrap" }, cancel,
+        React.createElement("button", { type: "button", onClick: () => onConfirm("", "print"), className: secondary }, "Confirm & print"),
+        React.createElement("button", { type: "button", onClick: () => onConfirm("", "none"), className: primary }, "Confirm")));
+  }
+  return React.createElement(Modal, { title: "Send hydro bill?", onClose: onCancel },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, `Email the bill for site ${site.number} to:`),
+    React.createElement("ul", { className: "text-sm text-[#1E1A13] mb-4 space-y-1" },
+      React.createElement("li", { className: "flex items-center gap-2 flex-wrap" }, "\u2022 ", customer ? customer.name : "No customer on file", emailOptions.length ? " \u2014 " : "", emailOptions.length > 1 ? React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-sm border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => React.createElement("option", { key: e, value: e }, e))) : emailOptions[0] || ""),
+      emailOptions.length > 0 && accountingEmail && React.createElement("li", null, "\u2022 Accounting \u2014 ", accountingEmail)),
+    !emailOptions.length && React.createElement("p", { className: "text-sm text-[#9A6B1F] mb-4" }, "No email on file \u2014 print it for their file instead."),
+    React.createElement("div", { className: "flex justify-end gap-2 flex-wrap" }, cancel,
+      emailOptions.length ? React.createElement("button", { type: "button", onClick: () => onConfirm(to, "email"), className: primary }, "Yes, send") : React.createElement("button", { type: "button", onClick: () => onConfirm("", "print"), className: primary }, "Confirm & print")));
+}
 function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
   const emailOptions = [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean);
   const [to, setTo] = useState(emailOptions[0] || "");
@@ -16906,9 +16936,10 @@ function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, se
   const previewSubtotal = usageValid ? Math.round(usageNum * rate) / 100 : null;
   const previewTax = previewSubtotal != null ? Math.round(previewSubtotal * taxRate) / 100 : null;
   const previewTotal = previewSubtotal != null ? Math.round((previewSubtotal + previewTax) * 100) / 100 : null;
-  const confirm = () => {
+  // kind: "send" (Confirm & Send Invoice) or "quiet" (Confirm without sending)
+  const confirm = (kind) => {
     if (!readingValid || !usageValid) return;
-    onConfirm(r, { reading: readingNum, date: dateStr, usage: usageNum, rolledOver: computed.rolledOver });
+    onConfirm(r, { reading: readingNum, date: dateStr, usage: usageNum, rolledOver: computed.rolledOver }, kind);
   };
   return /* @__PURE__ */ React.createElement("div", { className: `rounded-xl border p-4 bg-[#FFFDFA] ${r.flagged ? "border-[#e0bfa6]" : "border-[#E2DED5]"}` }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between flex-wrap gap-2 mb-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, "Site ", site ? site.number : "?"), " \u2014 ", (owner == null ? void 0 : owner.name) || "No customer on file", r.flagged && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-xs font-semibold text-[#a8532a]" }, "\u26A0 Flagged for review"), r.closingReading && React.createElement("span", { className: "ml-2 text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-[#FBEEDA] text-[#9A6B1F]" }, "Closing reading"), owner && currentOwner && owner.id !== currentOwner.id && React.createElement("div", { className: "text-xs text-[#9A6B1F] mt-0.5" }, `Billed to ${owner.name}, the owner when this was read \u2014 the site is now ${currentOwner.name}'s.`)), /* @__PURE__ */ React.createElement("label", { className: "text-xs text-[#75716A]" }, "Read ", /* @__PURE__ */ React.createElement("input", { type: "date", value: dateStr, onChange: (ev) => setEditField(r.id, "date", ev.target.value), className: "ml-1 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" }))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap text-xs text-[#75716A] mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Previous: ", r.previousReading != null ? r.previousReading : "\u2014"), /* @__PURE__ */ React.createElement("span", null, "\u2192"), /* @__PURE__ */ React.createElement("label", null, "Reading: ", /* @__PURE__ */ React.createElement("input", { type: "number", value: readingStr, onChange: (ev) => setEditField(r.id, "reading", ev.target.value), className: "ml-1 w-24 border border-[#E2DED5] rounded-lg px-2 py-1 text-xs" })), readingWasEdited && /* @__PURE__ */ React.createElement("span", { className: "text-[#a8532a]" }, "(corrected from ", r.reading, ")"), computed.rolledOver && /* @__PURE__ */ React.createElement("span", null, "(meter appears to have rolled over)")), underRead && !r.closingReading ? React.createElement(
     "div",
@@ -16925,7 +16956,7 @@ function HydroReviewRow({ r, site, owner, currentOwner, rate, taxRate, edits, se
     { className: "rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-3 py-2 text-xs text-[#4B4740] flex items-center justify-between gap-2 flex-wrap" },
     React.createElement("span", null, "Remove this reading? Use this for a mistake or duplicate — it's deleted and not billed."),
     React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => onRemove(r), className: "px-2.5 py-1 rounded-md bg-[#a8532a] text-white font-medium" }, "Yes, remove"), React.createElement("button", { type: "button", onClick: () => setAsking(null), className: "px-2.5 py-1 rounded-md text-[#75716A]" }, "Cancel"))
-  ) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 flex-wrap" }, React.createElement("span", { className: "flex gap-1" }, React.createElement("button", { type: "button", onClick: () => setAsking("remove"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#a8532a] hover:bg-[#F5E3D9]" }, "Remove"), !r.closingReading && !underRead && React.createElement("button", { type: "button", onClick: () => setAsking("carry"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#9A6B1F] hover:bg-[#FBEEDA]" }, "Carry over to next bill")), /* @__PURE__ */ React.createElement("button", { onClick: confirm, disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice")));
+  ) : /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 flex-wrap" }, React.createElement("span", { className: "flex gap-1" }, React.createElement("button", { type: "button", onClick: () => setAsking("remove"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#a8532a] hover:bg-[#F5E3D9]" }, "Remove"), !r.closingReading && !underRead && React.createElement("button", { type: "button", onClick: () => setAsking("carry"), className: "px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#9A6B1F] hover:bg-[#FBEEDA]" }, "Carry over to next bill")), React.createElement("span", { className: "flex gap-2 flex-wrap" }, React.createElement("button", { type: "button", onClick: () => confirm("quiet"), disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold text-[#377249] border border-[#377249]/40 hover:bg-[#377249]/10 disabled:opacity-40" }, "Confirm without sending"), /* @__PURE__ */ React.createElement("button", { onClick: () => confirm("send"), disabled: previewTotal == null, className: "px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#377249] text-white disabled:opacity-40" }, "Confirm & Send Invoice"))));
 }
 // Invoiced hydro bills whose email didn't go out (failed, or no address).
 function hydroBillsNotSent(db) {
@@ -16987,6 +17018,7 @@ function HydroSentBills({ db, setToast }) {
     if (r.emailStatus === "failed") return React.createElement("span", { className: "text-[#a8532a] font-medium", title: r.emailError || "" }, "Didn't send");
     if (r.emailStatus === "no-email") return React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No email on file");
     if (r.emailStatus === "sending") return React.createElement("span", { className: "text-[#9A6B1F]", title: "The app closed before it heard back - check with the customer or resend" }, "Not confirmed");
+    if (r.emailStatus === "not-emailed") return React.createElement("span", { className: "text-[#75716A]" }, "Not emailed");
     return React.createElement("span", { className: "text-[#28633C]" }, r.emailedTo ? `Sent to ${r.emailedTo}` : "Sent");
   };
   return React.createElement(
@@ -17030,7 +17062,7 @@ function HydroSentBills({ db, setToast }) {
                 resend(r, sel ? sel.value : emails[0]);
               }, className: "px-2 py-1 rounded bg-[#377249] text-white text-xs font-medium disabled:opacity-40" }, "Send"),
               React.createElement("button", { type: "button", onClick: () => setResendTo(null), className: "px-2 py-1 text-xs text-[#75716A]" }, "Cancel")
-            ) : React.createElement("span", { className: "inline-flex items-center gap-3" }, React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-medium text-[#75716A] hover:underline" }, "Print"), React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, "Resend")))
+            ) : React.createElement("span", { className: "inline-flex items-center gap-3" }, React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-medium text-[#75716A] hover:underline" }, "Print"), React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, r.emailStatus === "not-emailed" ? "Email" : "Resend")))
           );
         }))
       )
@@ -17060,10 +17092,10 @@ function HydroReviewView({ db, persist }) {
   const rate = getHydroRate(db);
   const pending = (db.hydroReadings || []).filter((r) => r.status === "pending").slice().sort((a, b) => (a.flagged === b.flagged ? 0 : a.flagged ? -1 : 1) || (a.date < b.date ? -1 : 1));
   const setEditField = (id, field, value) => setEdits((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
-  const requestConfirm = (reading, final) => {
+  const requestConfirm = (reading, final, kind = "send") => {
     const site = db.sites.find((s) => s.id === reading.siteId);
     if (!site) return;
-    setPendingConfirm({ reading, final, site });
+    setPendingConfirm({ reading, final, site, kind });
   };
   const siteReadings = (siteId) => (db.hydroReadings || []).filter((x) => x.siteId === siteId);
   const clearEdits = (id) => setEdits((prev) => {
@@ -17119,7 +17151,8 @@ function HydroReviewView({ db, persist }) {
     });
     return out;
   };
-  const confirmAndInvoice = async (toEmail) => {
+  // mode: "email" (send it), "print" (for the file) or "none" (later).
+  const confirmAndInvoice = async (toEmail, mode = "email") => {
     if (!pendingConfirm) return;
     const { reading, final, site } = pendingConfirm;
     const subtotal = Math.round(final.usage * rate) / 100;
@@ -17141,6 +17174,7 @@ function HydroReviewView({ db, persist }) {
     lastIssuedRef.current = { head, n };
     const invoiceNumber = `${head}${String(n).padStart(4, "0")}`;
     let invoiced = { ...reading, reading: final.reading, date: final.date, rolledOver: final.rolledOver, status: "invoiced", invoiceNumber, confirmedUsage: final.usage, rate, taxAmount, amount: total, billTaxRate: taxRate, billMeter, confirmedBy: actor, confirmedAt: todayISO(), invoicedAt: todayISO(), emailStatus: "sending" };
+    if (mode !== "email") invoiced = { ...invoiced, emailStatus: "not-emailed", emailedTo: "" };
     setPendingConfirm(null);
     setEdits((prev) => {
       const next = { ...prev };
@@ -17151,6 +17185,12 @@ function HydroReviewView({ db, persist }) {
       await saveHydroReading(invoiced);
     } catch (e) {
       setToast(`Couldn't save the confirmed reading for site ${site.number}. Try again.`);
+      return;
+    }
+    if (mode !== "email") {
+      persist({ ...db, activityLog: addLog(db, actor, `Confirmed hydro reading and recorded invoice ${invoiceNumber} for site ${site.number} (${final.usage} kWh, ${formatPrice(total)}) \u2014 not emailed${mode === "print" ? ", printed for the file" : ""}`) });
+      setToast(`Bill ${invoiceNumber} saved for site ${site.number} \u2014 not emailed`);
+      if (mode === "print") setPrintAsk({ reading: invoiced, siteNumber: site.number, printOnly: true });
       return;
     }
     persist({ ...db, activityLog: addLog(db, actor, `Confirmed hydro reading and sent invoice ${invoiceNumber} for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`) });
@@ -17191,10 +17231,10 @@ function HydroReviewView({ db, persist }) {
       const currentOwner = getSiteOwner(db, r.siteId);
       return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r), billedFrom: billedBefore(r) });
     })));
-  }))), printAsk && React.createElement(Modal, { title: "Print a copy for the file?", onClose: () => setPrintAsk(null) }, React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} ${printAsk.reading.emailStatus === "sent" ? `was emailed to ${printAsk.reading.emailedTo}` : "wasn't emailed"}. Print a copy for the customer's file, in case they'd rather pay at the office?`), React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setPrintAsk(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not now"), React.createElement("button", { type: "button", onClick: () => {
+  }))), printAsk && React.createElement(Modal, { title: printAsk.printOnly ? "Print the bill" : "Print a copy for the file?", onClose: () => setPrintAsk(null) }, React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, printAsk.printOnly ? `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} is saved (not emailed). Print it for the customer's file.` : `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} ${printAsk.reading.emailStatus === "sent" ? `was emailed to ${printAsk.reading.emailedTo}` : "wasn't emailed"}. Print a copy for the customer's file, in case they'd rather pay at the office?`), React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setPrintAsk(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not now"), React.createElement("button", { type: "button", onClick: () => {
     printHydroBills([printAsk.reading], db);
     setPrintAsk(null);
-  }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print"))), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro invoice \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
+  }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print"))), pendingConfirm && React.createElement(HydroConfirmModal, { kind: pendingConfirm.kind, site: pendingConfirm.site, customer: hydroBillTo(db, pendingConfirm.reading), accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
 }
 function getConsignmentTransferInfo(db, cottage, site) {
   if (!cottage || !site) return { buyer: null, seller: null };
