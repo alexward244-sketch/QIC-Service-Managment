@@ -484,6 +484,7 @@ async function openWinterizing(page) {
       ]
     };
     const root = ReactDOM.createRoot(document.getElementById("root"));
+    window.__addRequest = (r) => { db = { ...db, winterizingRequests: [...db.winterizingRequests, r] }; render(); };
     const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
     render();
   });
@@ -521,6 +522,31 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   await page.close();
 });
 
+test("winterizing: once auto-plan has run, a new sign-up goes on the schedule by itself, marked New until seen", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.getByRole("tab", { name: "Plan" }).click();
+  // Willow and Cedar have requested days; Oak (new, no date) arrives later.
+  await page.getByRole("button", { name: "Auto-plan…" }).click();
+  const planBtn = page.getByRole("button", { name: /^Plan \d+ cottage/ });
+  if (await planBtn.isEnabled()) await planBtn.click(); else await page.getByRole("button", { name: "Cancel" }).click();
+  // Auto-plan turns auto-placing on (set it directly if there was nothing to plan).
+  await page.getByLabel("Put new sign-ups on the schedule").check();
+  const before = await page.evaluate(() => window.__saved.length);
+  await page.evaluate(() => window.__addRequest({ id: "r9", cottageId: "k3", customerId: "c3", options: {} }));
+  await page.locator("[data-new-on-plan]").getByText(/1 new sign-up was put on the schedule/).waitFor();
+  const placed = await page.evaluate((n) => window.__saved.slice(n).find((r) => r.id === "r9"), before);
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(placed.plannedDate), "it got a day");
+  assert.equal(placed.newOnPlan, true);
+  // Nothing is left "Not scheduled" but cottages taken off by hand.
+  assert.equal(await page.locator('[data-plan-column="pool"] [data-plan-card="r9"]').count(), 0);
+  await page.locator("[data-new-on-plan]").getByRole("button", { name: "Got it" }).click();
+  await page.locator("[data-new-on-plan]").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => window.__saved[window.__saved.length - 1].newOnPlan), false);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing plan board: season settings, day counts, blocking a day and the auto-plan preview", async () => {
   const page = await openApp(browser, "stub");
   await openWinterizing(page);
@@ -534,7 +560,7 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
   await page.getByText("That day is full").waitFor();
   await page.getByRole("button", { name: "Cancel" }).click();
   // Block a day (when the board shows one ahead).
-  const blockBtn = page.getByRole("button", { name: "Block day" }).first();
+  const blockBtn = page.getByRole("button", { name: "Block", exact: true }).first();
   if (await blockBtn.count()) {
     await blockBtn.click();
     await page.getByPlaceholder("e.g. Pebble Beach & By the Woods").fill("Pebble Beach");
@@ -612,11 +638,11 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
     assert.deepEqual([moved.id, moved.plannedDate, moved.requestedDate], ["r1", inOne, today]);
     await target.locator('[data-plan-card="r1"]').getByText(/^asked for /).waitFor();
   }
-  // Back to "To plan" takes it off the schedule.
+  // Back to "Not scheduled" takes it off the schedule.
   await page.locator('[data-plan-card="r2"]').dragTo(page.locator('[data-plan-column="pool"]'));
   const off = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
   assert.deepEqual([off.id, off.plannedDate], ["r2", ""]);
-  await page.locator('[data-plan-column="pool"] [data-plan-card="r2"]').getByText("No date").waitFor();
+  await page.locator('[data-plan-column="pool"] [data-plan-card="r2"]').getByText("No day yet").waitFor();
   assert.ok(inTwo);
   // Found a problem: a work order for that site, prefilled.
   await page.locator('[data-plan-card="r2"]').click();
