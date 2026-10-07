@@ -2760,6 +2760,23 @@ function PaidCheckToggle({ isPaid, method, options, onSelect, onClear, showLabel
     m
   )), isPaid && onClear && React.createElement("button", { type: "button", onClick: () => { onClear(); setOpen(false); }, className: "w-full text-left px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F1EEE9] border-t border-[#EEEBE5]" }, "Not paid")));
 }
+// Confirming a hydro reading records the bill (HYD number); then it's
+// emailed, printed for the customer's file (some have no email), or just
+// kept to send or print later from Sent bills.
+function HydroConfirmModal({ site, customer, accountingEmail, onConfirm, onCancel }) {
+  const emailOptions = customer ? [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean) : [];
+  const [to, setTo] = useState(emailOptions[0] || "");
+  const btn = "px-3.5 py-2 text-sm rounded-md font-medium";
+  return React.createElement(Modal, { title: `Confirm hydro bill \u2014 Site ${site.number}`, onClose: onCancel },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-2" }, "Bill to ", React.createElement("span", { className: "font-semibold" }, customer ? customer.name : "No customer on file"), emailOptions.length ? " \u2014 " : "", emailOptions.length > 1 ? React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-sm border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => React.createElement("option", { key: e, value: e }, e))) : emailOptions[0] || ""),
+    !emailOptions.length && React.createElement("p", { className: "text-xs text-[#9A6B1F] mb-2" }, "No email on file \u2014 print it for their file instead."),
+    emailOptions.length > 0 && accountingEmail && React.createElement("p", { className: "text-xs text-[#75716A] mb-2" }, "A copy goes to accounting (", accountingEmail, ") when it's emailed."),
+    React.createElement("div", { className: "flex justify-end gap-2 flex-wrap mt-4" },
+      React.createElement("button", { type: "button", onClick: onCancel, className: `${btn} text-[#75716A] hover:bg-[#F1EEE9]` }, "Cancel"),
+      React.createElement("button", { type: "button", onClick: () => onConfirm("", "none"), title: "Records the bill without sending it - send or print it later from Sent bills", className: `${btn} text-[#4B4740] border border-[#E2DED5] hover:bg-[#F1EEE9]` }, "Confirm only"),
+      React.createElement("button", { type: "button", onClick: () => onConfirm("", "print"), className: `${btn} ${emailOptions.length ? "text-[#377249] border border-[#377249]/40 hover:bg-[#377249]/10" : "bg-[#377249] text-[#F9F5EC] hover:bg-[#135C30]"}` }, "Confirm & print"),
+      emailOptions.length > 0 && React.createElement("button", { type: "button", onClick: () => onConfirm(to, "email"), className: `${btn} bg-[#377249] text-[#F9F5EC] hover:bg-[#135C30]` }, "Confirm & email")));
+}
 function SendInvoiceConfirmModal({ invoice, customer, accountingEmail, onConfirm, onCancel }) {
   const emailOptions = [customer.email, customer.email2, ...customer.matchEmails || []].filter(Boolean);
   const [to, setTo] = useState(emailOptions[0] || "");
@@ -16987,6 +17004,7 @@ function HydroSentBills({ db, setToast }) {
     if (r.emailStatus === "failed") return React.createElement("span", { className: "text-[#a8532a] font-medium", title: r.emailError || "" }, "Didn't send");
     if (r.emailStatus === "no-email") return React.createElement("span", { className: "text-[#a8532a] font-medium" }, "No email on file");
     if (r.emailStatus === "sending") return React.createElement("span", { className: "text-[#9A6B1F]", title: "The app closed before it heard back - check with the customer or resend" }, "Not confirmed");
+    if (r.emailStatus === "not-emailed") return React.createElement("span", { className: "text-[#75716A]" }, "Not emailed");
     return React.createElement("span", { className: "text-[#28633C]" }, r.emailedTo ? `Sent to ${r.emailedTo}` : "Sent");
   };
   return React.createElement(
@@ -17030,7 +17048,7 @@ function HydroSentBills({ db, setToast }) {
                 resend(r, sel ? sel.value : emails[0]);
               }, className: "px-2 py-1 rounded bg-[#377249] text-white text-xs font-medium disabled:opacity-40" }, "Send"),
               React.createElement("button", { type: "button", onClick: () => setResendTo(null), className: "px-2 py-1 text-xs text-[#75716A]" }, "Cancel")
-            ) : React.createElement("span", { className: "inline-flex items-center gap-3" }, React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-medium text-[#75716A] hover:underline" }, "Print"), React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, "Resend")))
+            ) : React.createElement("span", { className: "inline-flex items-center gap-3" }, React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-medium text-[#75716A] hover:underline" }, "Print"), React.createElement("button", { type: "button", onClick: () => setResendTo(r.id), className: `text-xs font-medium hover:underline ${r.emailStatus === "failed" || r.emailStatus === "no-email" ? "text-[#a8532a]" : "text-[#377249]"}` }, r.emailStatus === "not-emailed" ? "Email" : "Resend")))
           );
         }))
       )
@@ -17119,7 +17137,8 @@ function HydroReviewView({ db, persist }) {
     });
     return out;
   };
-  const confirmAndInvoice = async (toEmail) => {
+  // mode: "email" (send it), "print" (for the file) or "none" (later).
+  const confirmAndInvoice = async (toEmail, mode = "email") => {
     if (!pendingConfirm) return;
     const { reading, final, site } = pendingConfirm;
     const subtotal = Math.round(final.usage * rate) / 100;
@@ -17141,6 +17160,7 @@ function HydroReviewView({ db, persist }) {
     lastIssuedRef.current = { head, n };
     const invoiceNumber = `${head}${String(n).padStart(4, "0")}`;
     let invoiced = { ...reading, reading: final.reading, date: final.date, rolledOver: final.rolledOver, status: "invoiced", invoiceNumber, confirmedUsage: final.usage, rate, taxAmount, amount: total, billTaxRate: taxRate, billMeter, confirmedBy: actor, confirmedAt: todayISO(), invoicedAt: todayISO(), emailStatus: "sending" };
+    if (mode !== "email") invoiced = { ...invoiced, emailStatus: "not-emailed", emailedTo: "" };
     setPendingConfirm(null);
     setEdits((prev) => {
       const next = { ...prev };
@@ -17151,6 +17171,12 @@ function HydroReviewView({ db, persist }) {
       await saveHydroReading(invoiced);
     } catch (e) {
       setToast(`Couldn't save the confirmed reading for site ${site.number}. Try again.`);
+      return;
+    }
+    if (mode !== "email") {
+      persist({ ...db, activityLog: addLog(db, actor, `Confirmed hydro reading and recorded invoice ${invoiceNumber} for site ${site.number} (${final.usage} kWh, ${formatPrice(total)}) \u2014 not emailed${mode === "print" ? ", printed for the file" : ""}`) });
+      setToast(`Bill ${invoiceNumber} saved for site ${site.number} \u2014 not emailed`);
+      if (mode === "print") setPrintAsk({ reading: invoiced, siteNumber: site.number, printOnly: true });
       return;
     }
     persist({ ...db, activityLog: addLog(db, actor, `Confirmed hydro reading and sent invoice ${invoiceNumber} for site ${site.number} (${final.usage} kWh, ${formatPrice(total)})${readingChanged ? ` \u2014 reading corrected from ${reading.reading} to ${final.reading}` : ""}`) });
@@ -17191,10 +17217,10 @@ function HydroReviewView({ db, persist }) {
       const currentOwner = getSiteOwner(db, r.siteId);
       return /* @__PURE__ */ React.createElement(HydroReviewRow, { key: r.id, r, site, owner, currentOwner, rate, taxRate, edits, setEditField, onConfirm: requestConfirm, onCarry: carryOver, onRemove: removeReading, carriedIn: carriedInto(r), billedFrom: billedBefore(r) });
     })));
-  }))), printAsk && React.createElement(Modal, { title: "Print a copy for the file?", onClose: () => setPrintAsk(null) }, React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} ${printAsk.reading.emailStatus === "sent" ? `was emailed to ${printAsk.reading.emailedTo}` : "wasn't emailed"}. Print a copy for the customer's file, in case they'd rather pay at the office?`), React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setPrintAsk(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not now"), React.createElement("button", { type: "button", onClick: () => {
+  }))), printAsk && React.createElement(Modal, { title: printAsk.printOnly ? "Print the bill" : "Print a copy for the file?", onClose: () => setPrintAsk(null) }, React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, printAsk.printOnly ? `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} is saved (not emailed). Print it for the customer's file.` : `Bill ${printAsk.reading.invoiceNumber} for site ${printAsk.siteNumber} ${printAsk.reading.emailStatus === "sent" ? `was emailed to ${printAsk.reading.emailedTo}` : "wasn't emailed"}. Print a copy for the customer's file, in case they'd rather pay at the office?`), React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setPrintAsk(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Not now"), React.createElement("button", { type: "button", onClick: () => {
     printHydroBills([printAsk.reading], db);
     setPrintAsk(null);
-  }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print"))), pendingConfirm && /* @__PURE__ */ React.createElement(SendInvoiceConfirmModal, { invoice: { invoiceNumber: `Hydro invoice \u2014 Site ${pendingConfirm.site.number}` }, customer: hydroBillTo(db, pendingConfirm.reading) || { name: "No customer on file", email: "\u2014" }, accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
+  }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print"))), pendingConfirm && React.createElement(HydroConfirmModal, { site: pendingConfirm.site, customer: hydroBillTo(db, pendingConfirm.reading), accountingEmail: getAccountingCopyEmail(db), onConfirm: confirmAndInvoice, onCancel: () => setPendingConfirm(null) }));
 }
 function getConsignmentTransferInfo(db, cottage, site) {
   if (!cottage || !site) return { buyer: null, seller: null };

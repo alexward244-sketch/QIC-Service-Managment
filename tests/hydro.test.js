@@ -247,7 +247,7 @@ test("The hydro bill email shows the previous and current readings with their da
   await mountWithDb(page, asUser("HydroReviewView"), READY(3));
   await openReview(page);
   await page.getByRole("button", { name: "Confirm & Send Invoice" }).click();
-  await page.getByRole("button", { name: "Yes, send" }).click();
+  await page.getByRole("button", { name: "Confirm & email" }).click();
   await page.waitForFunction(() => window.__sent.length > 0);
   const mail = await page.evaluate(() => window.__sent.find((m) => m.toEmail === "rsmith@x.com"));
   const text = mail.message.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
@@ -293,7 +293,7 @@ test("Hydro bills get HYD numbers; a bill whose email fails is flagged and can b
   await openReview(page);
   for (let i = 0; i < 2; i++) {
     await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
-    await page.getByRole("button", { name: "Yes, send" }).click();
+    await page.getByRole("button", { name: "Confirm & email" }).click();
     await page.getByText("Print a copy for the file?").waitFor();
     await page.getByRole("button", { name: "Not now" }).click();
   }
@@ -421,5 +421,58 @@ test("Each reading in a site's history shows who owned the site when it was read
   await table.waitFor();
   const rows = await table.locator("tbody tr").allInnerTexts();
   assert.deepEqual(rows.map((t) => t.split("\t").slice(0, 3).join(" | ")), ["2026-10-01 | 1300 | Bea Buyer", "2026-08-01 | 1200 | Robert Smith", "2026-05-01 | 1000 | Robert Smith"]);
+  await page.close();
+});
+
+test("A reading can be confirmed without emailing: Confirm & print for a customer with no email, or Confirm only", async () => {
+  await resetData({
+    ...base("accounting"),
+    "customers/c1": { id: "c1", name: "Robert Smith", email: "", siteIds: ["s42"] },
+    "sites/s43": { id: "s43", number: "43", tags: ["Seasonal"] },
+    "customers/c3": { id: "c3", name: "Nora North", email: "nora@x.com", siteIds: ["s43"] },
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-06-01", reading: 1000, status: "confirmed", isBaseline: true },
+    "hydroReadings/c": { id: "c", siteId: "s42", date: "2026-09-20", reading: 1250, previousReading: 1000, usage: 250, status: "pending", ownerAtReading: "c1" },
+    "hydroReadings/e": { id: "e", siteId: "s43", date: "2026-06-01", reading: 500, status: "confirmed", isBaseline: true },
+    "hydroReadings/d": { id: "d", siteId: "s43", date: "2026-09-21", reading: 600, previousReading: 500, usage: 100, status: "pending", ownerAtReading: "c3" }
+  });
+  const page = await openApp(browser, "emulator", { role: "accounting", email: EMAIL });
+  await page.evaluate(() => {
+    window.__sent = [];
+    window.sendEmail = async (o) => { window.__sent.push(o); };
+    window.__printed = "";
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed += h; }, close() {} } });
+  });
+  await mountWithDb(page, asUser("HydroReviewView"), `(api) => api.db.sites.length === 2 && (api.db.hydroReadings || []).length === 4`);
+  await openReview(page);
+  // Robert has no email: only Confirm & print / Confirm only.
+  await page.locator('[data-review-group]').getByText("Site 42").waitFor();
+  const card42 = page.locator("div", { has: page.getByText("Site 42", { exact: false }) }).filter({ has: page.getByRole("button", { name: "Confirm & Send Invoice" }) }).last();
+  await card42.getByRole("button", { name: "Confirm & Send Invoice" }).click();
+  await page.getByText("No email on file").waitFor();
+  assert.equal(await page.getByRole("button", { name: "Confirm & email" }).count(), 0);
+  await page.getByRole("button", { name: "Confirm & print" }).click();
+  await page.getByText("Print the bill").waitFor();
+  await page.getByRole("button", { name: "Print", exact: true }).click();
+  assert.match(await page.evaluate(() => window.__printed), /HYD-\d{2}-\d{4}/);
+  // Nora: Confirm only - recorded, not emailed.
+  await openReview(page);
+  await page.getByRole("button", { name: "Confirm & Send Invoice" }).first().click();
+  await page.getByRole("button", { name: "Confirm only" }).click();
+  const done = await waitFor(async () => {
+    const list = await readings();
+    const c = list.find((x) => x.id === "c"), d = list.find((x) => x.id === "d");
+    return c.status === "invoiced" && d.status === "invoiced" ? { c, d } : null;
+  }, "both confirmed");
+  assert.deepEqual([done.c.emailStatus, done.d.emailStatus], ["not-emailed", "not-emailed"]);
+  assert.ok(done.c.invoiceNumber && done.d.invoiceNumber, "both have HYD numbers");
+  assert.equal(await page.evaluate(() => window.__sent.length), 0, "nothing was emailed");
+  // Sent bills: "Not emailed", with Email and Print to do it later; no "didn't reach the customer" nag.
+  assert.equal(await page.getByText(/didn't reach the customer/).count(), 0);
+  await page.getByRole("button", { name: /^Sent bills/ }).click();
+  const row = page.locator(`[data-hydro-bill="${done.d.invoiceNumber}"]`);
+  await row.getByText("Not emailed").waitFor();
+  assert.equal(await row.getByRole("button", { name: "Email" }).count(), 1);
+  assert.equal(await row.getByRole("button", { name: "Print" }).count(), 1);
+  assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
