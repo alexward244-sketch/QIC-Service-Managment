@@ -666,6 +666,69 @@ test("winterizing on a phone keeps the simple list", async () => {
   await page.close();
 });
 
+test("winterizing in the field app: the crew's day, a checklist to finish each cottage, carry-over, all sign-ups", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 }, touch: true });
+  const info = await page.evaluate(() => {
+    window.__saved = [];
+    window.__toasts = [];
+    window.__workOrders = [];
+    const today = todayISO();
+    const add = (n) => winterAddDays(today, n);
+    let db = {
+      settings: { winterSeasonStart: add(-10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal" }, { id: "s2", number: "0233", section: "Limestone South" }, { id: "s3", number: "0107", section: "Pebble Beach Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
+      customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", siteIds: ["s1"] }, { id: "c2", name: "Gary C", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", siteIds: ["s3"] }],
+      winterizingRequests: [
+        { id: "r1", cottageId: "k1", customerId: "c1", requestedDate: today, notes: "Dog in the yard \u2014 close the gate.", options: { outsideTap: true } },
+        { id: "r2", cottageId: "k2", customerId: "c2", requestedDate: add(1), options: {} },
+        { id: "r3", cottageId: "k3", customerId: "c3", plannedDate: add(-3), options: {} }
+      ]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("test"));
+    const save = (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); };
+    const render = () => root.render(React.createElement(FieldWinterTab, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, actor: "Dave", saveWinterizingRequest: save, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), onGoToDesktopTab() {}, setToast: (t) => window.__toasts.push(t) }));
+    render();
+    return { today, carryTo: winterFirstWorkday(winterSeason(db), today) };
+  });
+  // Maple wasn't finished 3 days ago, so it moved on by itself.
+  await page.locator("[data-carry-notice]").waitFor();
+  const maple = await page.evaluate(() => window.__saved.find((r) => r.id === "r3"));
+  assert.equal(maple.plannedDate, info.carryTo);
+  // The day opens on today, area by area.
+  assert.equal(await page.locator("[data-field-winter-day]").getAttribute("data-field-winter-day"), info.today);
+  const willow = page.locator('[data-field-winter="r1"]');
+  await willow.getByText("Dog in the yard", { exact: false }).waitFor();
+  await page.getByRole("heading", { name: "Pebble Beach Seasonal", exact: false }).first().waitFor();
+  // Open it: the checklist has to be ticked before it can be marked done.
+  await willow.click();
+  const done = page.getByRole("button", { name: /^Mark winterized/ });
+  assert.equal(await done.isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Print" }).count(), 0, "no printing from the phone");
+  assert.equal(await page.getByRole("button", { name: "Edit sign-up" }).count(), 0);
+  await page.getByRole("button", { name: "Found a problem" }).waitFor();
+  for (const box of await page.locator("[data-winter-panel] input[type=checkbox]").all()) await box.check();
+  await done.click();
+  await page.locator("[data-winter-panel]").waitFor({ state: "detached" });
+  const saved = await page.evaluate(() => ({ r1: window.__saved.filter((r) => r.id === "r1").pop(), toast: window.__toasts.pop() }));
+  assert.equal(saved.r1.completed, true);
+  assert.equal(saved.r1.completedDate, info.today);
+  assert.equal(saved.toast, "Site 0126 winterized");
+  await page.getByText("Winterized today (1)").waitFor();
+  // The next day has Cedar.
+  await page.getByRole("button", { name: "Next day" }).click();
+  await page.locator('[data-field-winter="r2"]').waitFor();
+  await page.getByRole("button", { name: "Back to today" }).click();
+  // Every sign-up, searchable.
+  await page.getByRole("tab", { name: "All sign-ups" }).click();
+  await page.getByText("Winterized (1)").waitFor();
+  await page.getByLabel("Search winterizing").fill("cedar");
+  await page.locator('[data-field-winter="r2"]').waitFor();
+  assert.equal(await page.locator("[data-field-winter]").count(), 1);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: voicemails show who called, are never linked or grouped, and stay out of customer threads", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
