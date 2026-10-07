@@ -667,6 +667,37 @@ async function parseSquareSalesPdf(file) {
   return { month, location, fields };
 }
 const TANK_PART_NAMES = ["20lb Propane Tank Filled", "30lb Propane Tank Filled", "40lb Propane Tank Filled", "100lb Propane Refill Filled"];
+// A tank size's part, by its usual name or - if the part was re-entered
+// under a slightly different name ("100 lb Propane Refill") - by its size.
+function findTankPart(parts, tankName) {
+  const exact = (parts || []).find((p) => (p.name || "").trim().toLowerCase() === tankName.toLowerCase());
+  if (exact) return exact;
+  const m = /^(\d+)\s*lb/i.exec(tankName);
+  if (!m) return null;
+  const size = m[1];
+  const bySize = new RegExp(`(^|\\D)${size}\\s*(lb|lbs|pound)`, "i");
+  return (parts || []).find((p) => /propane/i.test(p.name || "") && bySize.test(p.name || "")) || null;
+}
+function tankPartsFor(db) {
+  return TANK_PART_NAMES.map((name) => findTankPart(db.parts, name)).filter(Boolean);
+}
+// The part a propane request's tank line refers to: by id, or - when the
+// part has since been deleted and re-entered - by the name saved with it.
+function propanePartFor(pu, db) {
+  const parts = db.parts || [];
+  const byId = parts.find((p) => p.id === pu.partId);
+  if (byId || !pu.name) return byId || null;
+  const sameName = parts.find((p) => (p.name || "").trim().toLowerCase() === pu.name.trim().toLowerCase());
+  if (sameName) return sameName;
+  const size = /(\d+)\s*lb/i.exec(pu.name);
+  return size && /propane/i.test(pu.name) ? findTankPart(parts, `${size[1]}lb`) : null;
+}
+// What to call a tank line: the part's name, the name saved with the line,
+// or a clear "not found" so it never silently disappears from a form.
+function propanePartLabel(pu, db) {
+  const part = propanePartFor(pu, db);
+  return part ? part.name : pu.name || "Part no longer in Parts";
+}
 const SALUTATION_OPTIONS = ["", "Mr.", "Mrs.", "Ms.", "Dr.", "Mx."];
 const PHONE_TYPE_OPTIONS = ["Mobile", "Work", "Home"];
 const CUSTOMER_LANGUAGE_OPTIONS = ["English", "French"];
@@ -3563,8 +3594,7 @@ function WorkOrderViewModal({ wo: woProp, db, persist, saveWorkOrder, saveCorres
     setSummaryCopied(false);
     try {
       const partsLines = (wo.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
-        return part ? `${pu.quantity}x ${part.name}` : null;
+        return `${pu.quantity}x ${propanePartLabel(pu, db)}`;
       }).filter(Boolean);
       const notesLog = [...(wo.notes || [])].reverse().map((n) => n.text).filter(Boolean);
       const rawNotes = [
@@ -8411,8 +8441,7 @@ function buildPropaneRequestHtml(request, db) {
   const customer = request.customerId ? db.customers.find((c) => c.id === request.customerId) : null;
   const company = getCompanyProfile(db);
   const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\u00D7 ${part.name}` : null;
+    return `${pu.quantity}\u00D7 ${propanePartLabel(pu, db)}`;
   }).filter(Boolean);
   const paymentLabel = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "method not set"}` : request.payment === "Invoice" ? "To be invoiced by accounting" : "\u2014";
   return `
@@ -12842,13 +12871,14 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   const [payment, setPayment] = useState((initial == null ? void 0 : initial.payment) || "");
   const [paymentMethod, setPaymentMethod] = useState((initial == null ? void 0 : initial.paymentMethod) || "");
   const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
-  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
+  const tankParts = tankPartsFor(db);
   const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
   const setTankQuantity = (partId, qty) => {
     setPartsUsed((items) => {
       const n = Math.max(0, Math.floor(Number(qty) || 0));
       const without = items.filter((pu) => pu.partId !== partId);
-      return n > 0 ? [...without, { partId, quantity: n }] : without;
+      const part = (db.parts || []).find((p) => p.id === partId);
+      return n > 0 ? [...without, { partId, quantity: n, name: part ? part.name : "" }] : without;
     });
   };
   const choosePayment = (val) => {
@@ -12962,7 +12992,7 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
       className: "w-7 h-7 rounded-md border border-[#E2DED5] text-[#75716A] hover:bg-[#F1EEE9] font-medium"
     },
     "+"
-  ))))), TANK_PART_NAMES.some((name) => !tankParts.some((p) => p.name.trim().toLowerCase() === name.toLowerCase())) && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mt-1" }, "Some tank sizes aren't set up in Parts yet.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
+  ))))), TANK_PART_NAMES.some((name) => !findTankPart(db.parts, name)) && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic mt-1" }, "Some tank sizes aren't set up in Parts yet.")), /* @__PURE__ */ React.createElement(Field, { label: "Payment" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -13015,15 +13045,16 @@ function PendingPropaneMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) 
   const [requestedDate, setRequestedDate] = useState(entry.requestedDate || todayISO());
   const [run, setRun] = useState(defaultPropaneRun(entry.requestedDate || todayISO()));
   const [notes, setNotes] = useState(entry.notes || "");
-  const tankParts = TANK_PART_NAMES.map((name) => (db.parts || []).find((p) => p.name.trim().toLowerCase() === name.toLowerCase())).filter(Boolean);
-  const default100lb = tankParts.find((p) => p.name.trim().toLowerCase() === "100lb propane refill filled");
-  const [partsUsed, setPartsUsed] = useState(default100lb ? [{ partId: default100lb.id, quantity: 1 }] : []);
+  const tankParts = tankPartsFor(db);
+  const default100lb = findTankPart(db.parts, "100lb Propane Refill Filled");
+  const [partsUsed, setPartsUsed] = useState(default100lb ? [{ partId: default100lb.id, quantity: 1, name: default100lb.name }] : []);
   const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
   const setTankQuantity = (partId, qty) => {
     setPartsUsed((items) => {
       const n = Math.max(0, Math.floor(Number(qty) || 0));
       const without = items.filter((pu) => pu.partId !== partId);
-      return n > 0 ? [...without, { partId, quantity: n }] : without;
+      const part = (db.parts || []).find((p) => p.id === partId);
+      return n > 0 ? [...without, { partId, quantity: n, name: part ? part.name : "" }] : without;
     });
   };
   const [payment, setPayment] = useState("Paid");
@@ -13798,6 +13829,15 @@ function autoPlanWinter(requests, db, { today, byArea, replanAll }) {
   rest.forEach((r) => plan.push({ request: r, date: roomFrom(first) }));
   return plan;
 }
+// New sign-ups (never planned, not taken off the schedule by hand) go on a
+// day by the same rules as auto-plan, once auto-placing is on. Each is
+// marked newOnPlan so it shows as "New" until someone looks at it.
+function placeNewWinterSignups(requests, db, today) {
+  if (!(db.settings || {}).winterAutoPlaceNew) return [];
+  const fresh = requests.filter((r) => !r.completed && !r.archived && r.plannedDate == null);
+  if (!fresh.length) return [];
+  return autoPlanWinter(requests, db, { today, byArea: false }).filter((p) => fresh.includes(p.request));
+}
 // Rain day: everything not done on that day or after moves to the next
 // open workday (blocked days stay put). Returns [{ request, date }].
 function pushBackWinterDay(requests, db, day) {
@@ -13977,7 +14017,10 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
     return dow === 0 || dow === 6;
   };
   const days = [0, 1, 2, 3, 4, 5, 6].map((i) => winterAddDays(weekStart, i)).filter((d) => !isWeekend(d) || d === today || todo.some((r) => winterPlannedDate(r) === d)).filter((d) => !season.start || d >= season.start || todo.some((r) => winterPlannedDate(r) === d));
-  const pool = todo.filter((r) => !inWeek(winterPlannedDate(r))).sort((a, b) => (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999"));
+  // Only cottages with no day; ones planned in other weeks show in their week.
+  const pool = todo.filter((r) => !winterPlannedDate(r)).sort(winterSiteSort(db));
+  const laterWeeks = todo.filter((r) => winterPlannedDate(r) > weekEnd).length;
+  const earlierWeeks = todo.filter((r) => winterPlannedDate(r) && winterPlannedDate(r) < weekStart).length;
   const doneWeek = all.filter((r) => r.completed && inWeek(r.completedDate));
   const done = all.filter((r) => r.completed).length;
   const todayCount = todo.filter((r) => winterPlannedDate(r) === today).length;
@@ -13991,7 +14034,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
         e.dataTransfer.setData("text/plain", r.id);
         e.dataTransfer.effectAllowed = "move";
       }, onClick: () => onOpen(r.id), className: `rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-2.5 mb-2 shadow-sm cursor-pointer hover:border-[#377249]/50 ${!readOnly && !r.completed ? "active:cursor-grabbing" : ""}` },
-      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner", " · ", info.section)), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
+      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner", " · ", info.section), r.newOnPlan && !r.completed && React.createElement("span", { "data-new-tag": true, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E9C46A] text-[#1E1A13]" }, "New")), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
       poolLabel && React.createElement("div", { className: `text-[11px] mt-1 font-semibold ${poolLabel.tone}` }, poolLabel.text),
       info.extras.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mt-1.5" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))),
       info.note && React.createElement("div", { className: "mt-1.5 rounded-md bg-[#FBEEDA]/70 border border-[#E9D3B5] px-2 py-1 text-[11px] text-[#4B4740] line-clamp-3" }, React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, "Note: "), info.note),
@@ -14016,8 +14059,9 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       },
       className: `rounded-xl p-2.5 border-t-4 w-[210px] flex-none ${opts.accent || "border-[#E2DED5]"} ${over === key ? "bg-[#DDF1E1] ring-2 ring-[#377249]/30" : "bg-[#F1EEE9]"}`
     },
-    React.createElement("div", { className: "px-1 mb-2" }, React.createElement("div", { className: "flex justify-between items-baseline gap-2" }, React.createElement("span", { className: "text-sm font-semibold" }, title), opts.limit ? React.createElement("span", { "data-day-count": true, className: `text-xs font-semibold ${list.length > opts.limit ? "text-[#a8532a]" : list.length >= opts.limit ? "text-[#9A6B1F]" : "text-[#75716A]"}` }, `${list.length} / ${opts.limit}`) : React.createElement("span", { className: "text-xs text-[#75716A]" }, list.length)), React.createElement("div", { className: "text-[11px] text-[#75716A] mt-0.5 min-h-[16px]" }, sub), opts.blocked != null && React.createElement("div", { "data-blocked-day": true, className: "mt-1.5 rounded-md bg-[#E4EEF2] border border-[#B9D3DF] px-2 py-1 text-[11px] text-[#2E6E8E]" }, React.createElement("span", { className: "font-semibold" }, "Blocked"), opts.blocked ? `: ${opts.blocked}` : "", opts.onUnblock && React.createElement("button", { type: "button", onClick: opts.onUnblock, className: "ml-1.5 underline" }, "Unblock")), React.createElement("div", { className: "flex gap-3" }, opts.onRain && React.createElement("button", { type: "button", onClick: opts.onRain, className: "text-[11px] text-[#2E6E8E] hover:underline mt-0.5", title: "Rain day: move this day and everything after it back one weekday" }, "\u2614 Push back a day"), opts.onBlock && React.createElement("button", { type: "button", onClick: opts.onBlock, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Keep this day free of sign-ups (e.g. for Pebble Beach)" }, "Block day"), opts.onPrint && React.createElement("button", { type: "button", onClick: opts.onPrint, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Print the forms for every cottage on this day" }, "\uD83D\uDDA8 Print"))),
-    React.createElement("div", { className: "max-h-[62vh] overflow-y-auto pr-0.5" }, list.length ? list.map((r) => card(r, opts.poolLabel && opts.poolLabel(r))) : React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, opts.empty || "Nothing planned"))
+    React.createElement("div", { className: "px-1 mb-2" }, React.createElement("div", { className: "flex justify-between items-baseline gap-2" }, React.createElement("span", { className: "text-sm font-semibold" }, title), opts.limit ? React.createElement("span", { "data-day-count": true, className: `text-xs font-semibold ${list.length > opts.limit ? "text-[#a8532a]" : list.length >= opts.limit ? "text-[#9A6B1F]" : "text-[#75716A]"}` }, `${list.length} / ${opts.limit}`) : React.createElement("span", { className: "text-xs text-[#75716A]" }, list.length)), React.createElement("div", { className: "text-[11px] text-[#75716A] mt-0.5 min-h-[16px]" }, sub), opts.blocked != null && React.createElement("div", { "data-blocked-day": true, className: "mt-1.5 rounded-md bg-[#E4EEF2] border border-[#B9D3DF] px-2 py-1 text-[11px] text-[#2E6E8E]" }, React.createElement("span", { className: "font-semibold" }, "Blocked"), opts.blocked ? `: ${opts.blocked}` : "", opts.onUnblock && React.createElement("button", { type: "button", onClick: opts.onUnblock, className: "ml-1.5 underline" }, "Unblock")), React.createElement("div", { className: "flex flex-wrap gap-x-2.5" }, opts.onRain && React.createElement("button", { type: "button", onClick: opts.onRain, className: "text-[11px] text-[#2E6E8E] hover:underline mt-0.5", title: "Rain day: move this day and everything after it back one weekday" }, "\u2614 Rain day"), opts.onBlock && React.createElement("button", { type: "button", onClick: opts.onBlock, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Keep this day free of sign-ups (e.g. for Pebble Beach)" }, "Block"), opts.onPrint && React.createElement("button", { type: "button", onClick: opts.onPrint, className: "text-[11px] text-[#75716A] hover:underline mt-0.5", title: "Print the forms for every cottage on this day" }, "\uD83D\uDDA8 Print"))),
+    React.createElement("div", { className: "max-h-[62vh] overflow-y-auto pr-0.5" }, list.length ? list.map((r) => card(r, opts.poolLabel && opts.poolLabel(r))) : React.createElement("div", { className: "text-xs text-[#9A968D] italic px-1 py-3" }, opts.empty || "Nothing planned")),
+    opts.footer && React.createElement("div", { className: "text-[11px] text-[#75716A] px-1 pt-2 mt-1 border-t border-[#E2DED5]", "data-pool-footer": true }, opts.footer)
   );
   return React.createElement(
     "div",
@@ -14040,6 +14084,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       React.createElement("label", { className: "flex items-center gap-2" }, React.createElement("span", { className: "text-[#75716A]" }, "Season starts"), React.createElement("input", { type: "date", className: inputCls.replace("w-full ", "") + " w-40 py-1", value: season.start, onChange: (e) => onSaveSeason({ winterSeasonStart: e.target.value }), "aria-label": "Season starts" })),
       React.createElement("label", { className: "flex items-center gap-2" }, React.createElement("span", { className: "text-[#75716A]" }, "Max per day"), React.createElement("input", { type: "number", min: "1", className: inputCls.replace("w-full ", "") + " w-20 py-1", value: season.limit, onChange: (e) => Number(e.target.value) > 0 && onSaveSeason({ winterDailyLimit: Number(e.target.value) }), "aria-label": "Max per day" })),
       React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Weekdays only"),
+      React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "New sign-ups go on the next day with room (their requested day if possible), marked New" }, React.createElement("input", { type: "checkbox", checked: !!(db.settings || {}).winterAutoPlaceNew, onChange: (e) => onSaveSeason({ winterAutoPlaceNew: e.target.checked }), className: "accent-[#377249]" }), "Put new sign-ups on the schedule"),
       React.createElement("button", { type: "button", onClick: onAutoPlan, className: "ml-auto px-4 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]" }, "Auto-plan\u2026")
     ),
     React.createElement(
@@ -14049,17 +14094,12 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       React.createElement("span", { className: "text-sm font-semibold min-w-[180px] text-center", "data-plan-week": weekStart }, `${winterShortDate(weekStart)} \u2013 ${winterShortDate(weekEnd)}`),
       React.createElement("button", { type: "button", onClick: () => setWeekStart(winterAddDays(weekStart, 7)), "aria-label": "Next week", className: "w-8 h-8 rounded-md border border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9]" }, "›"),
       weekStart !== winterBoardStart(season, today) && React.createElement("button", { type: "button", onClick: () => setWeekStart(winterBoardStart(season, today)), className: "text-xs text-[#377249] font-semibold hover:underline ml-1" }, season.start > today ? "Back to season start" : "Back to today"),
-      !readOnly && React.createElement("span", { className: "text-xs text-[#9A968D] ml-auto" }, "Drag a cottage onto a day to plan it · back to “To plan” to take it off the schedule")
+      !readOnly && React.createElement("span", { className: "text-xs text-[#9A968D] ml-auto" }, "Drag a cottage onto a day to plan it · back to “Not scheduled” to take it off the schedule")
     ),
     React.createElement(
       "div",
       { className: "flex gap-3 items-start overflow-x-auto pb-2" },
-      column("pool", "To plan", pool.length ? winterExtrasSummary(pool) : "", pool, { dropDate: "", empty: "Everything is planned this week", poolLabel: (r) => {
-        const d = winterPlannedDate(r);
-        if (!d) return { text: "No date", tone: "text-[#75716A]" };
-        if (d < today) return { text: `Overdue · was ${winterShortDate(d)}`, tone: "text-[#a8532a]" };
-        return { text: winterShortDate(d, { weekday: "short", month: "short", day: "numeric" }), tone: "text-[#2E6E8E]" };
-      } }),
+      column("pool", "Not scheduled", pool.length ? winterExtrasSummary(pool) : "", pool, { dropDate: "", empty: "Every cottage has a day", footer: laterWeeks || earlierWeeks ? [earlierWeeks ? `${earlierWeeks} planned in earlier weeks` : "", laterWeeks ? `${laterWeeks} more planned in later weeks` : ""].filter(Boolean).join(" · ") : "", poolLabel: () => ({ text: "No day yet", tone: "text-[#75716A]" }) }),
       days.map((d) => {
         const list = todo.filter((r) => winterPlannedDate(r) === d).sort(winterSiteSort(db));
         const isToday = d === today;
@@ -14358,6 +14398,16 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     applyWinterPlan(changes, `Moved ${lateCount} unfinished winterizing cottage${lateCount === 1 ? "" : "s"} to ${changes[0] && changes.find((c) => c.request.plannedDate < today).date}`);
     setCarryNotice(`${lateCount} cottage${lateCount === 1 ? " wasn't" : "s weren't"} finished on ${lateCount === 1 ? "its" : "their"} day and moved to ${winterShortDate(changes.find((c) => c.request.plannedDate < today).date, { weekday: "short", month: "short", day: "numeric" })}${changes.length > lateCount ? `; ${changes.length - lateCount} more moved on a day to stay within ${winterSeason(db).limit} a day` : ""}.`);
   }, [requests.length, readOnly]);
+  // New sign-ups onto the schedule (when that's on), marked New.
+  useEffect(() => {
+    if (readOnly) return;
+    const placed = placeNewWinterSignups(requests, db, todayISO());
+    if (!placed.length) return;
+    placed.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, newOnPlan: true }));
+    persist({ ...db, activityLog: addLog(db, actor, `Put ${placed.length} new winterizing sign-up${placed.length === 1 ? "" : "s"} on the schedule (${placed.map((p) => `${cottageName(p.request.cottageId)} \u2192 ${p.date}`).join(", ")})`) });
+  }, [requests.map((r) => r.id + (r.plannedDate == null ? "?" : "")).join(","), readOnly, !!(db.settings || {}).winterAutoPlaceNew]);
+  const newOnPlan = requests.filter((r) => r.newOnPlan && !r.completed);
+  const markSeen = (list) => list.forEach((r) => saveWinterizingRequest({ ...r, newOnPlan: false }));
   const resetSeason = () => {
     const seasonEndDate = todayISO();
     const toArchive = (db.winterizingRequests || []).filter((r) => !r.archived && r.completed);
@@ -14609,7 +14659,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       initial: { siteId: info.site ? info.site.id : null, cottageId: problemFor.cottageId || null, customerId: problemFor.customerId || null, title: `Found while winterizing \u2014 ${info.cottage ? info.cottage.name : "cottage"}`, description: "" }
     });
   })();
-  const content = activeView === "plan" ? React.createElement(React.Fragment, null, carryNotice && React.createElement("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-4 py-2 mb-3 text-sm text-[#4B4740] flex justify-between gap-3", "data-carry-notice": true }, React.createElement("span", null, carryNotice), React.createElement("button", { type: "button", onClick: () => setCarryNotice(""), className: "text-xs text-[#75716A] hover:underline" }, "Dismiss")), React.createElement(WinterizingPlanBoard, { db, all: requests, today, weekStart, setWeekStart, notSignedUpCount: notSignedUp.length, onOpen: setPanelId, onSchedule: dropOnDay, readOnly, onShowNotSigned: () => setView("notsigned"), onSaveSeason: saveSeason, onAutoPlan: () => setAutoPlanOpen(true), onRainDay: setRainDay, onBlockDay: (d) => setBlockDay({ date: d, label: "" }), onUnblockDay: unblock, onPrintDay: (list, d) => downloadPrintableItems(list, (r) => buildWinterizingHtml(r, db), `winterizing-${d}`) })) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
+  const content = activeView === "plan" ? React.createElement(React.Fragment, null, carryNotice && React.createElement("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-4 py-2 mb-3 text-sm text-[#4B4740] flex justify-between gap-3", "data-carry-notice": true }, React.createElement("span", null, carryNotice), React.createElement("button", { type: "button", onClick: () => setCarryNotice(""), className: "text-xs text-[#75716A] hover:underline" }, "Dismiss")), React.createElement(WinterizingPlanBoard, { db, all: requests, today, weekStart, setWeekStart, notSignedUpCount: notSignedUp.length, onOpen: (id) => {
+    setPanelId(id);
+    const r = requests.find((x) => x.id === id);
+    if (r && r.newOnPlan && !readOnly) markSeen([r]);
+  }, onSchedule: dropOnDay, readOnly, onShowNotSigned: () => setView("notsigned"), onSaveSeason: saveSeason, onAutoPlan: () => setAutoPlanOpen(true), onRainDay: setRainDay, onBlockDay: (d) => setBlockDay({ date: d, label: "" }), onUnblockDay: unblock, onPrintDay: (list, d) => downloadPrintableItems(list, (r) => buildWinterizingHtml(r, db), `winterizing-${d}`) })) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
   const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
   const autoPlan = autoPlanOpen ? autoPlanWinter(requests, db, { today, byArea: autoByArea, replanAll: autoReplanAll }) : [];
   const autoDays = autoPlan.reduce((m, p) => ({ ...m, [p.date]: (m[p.date] || 0) + 1 }), {});
@@ -14620,6 +14674,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     autoPlan.length === 0 ? React.createElement("p", { className: "text-sm text-[#75716A] italic mb-3" }, "Nothing to plan \u2014 every cottage not yet done already has a day.") : React.createElement("div", { className: "max-h-72 overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-3", "data-auto-plan": true }, Object.keys(autoDays).sort().map((d) => React.createElement("div", { key: d, className: "flex justify-between px-3 py-1.5 text-sm" }, React.createElement("span", null, dayLabel(d)), React.createElement("span", { className: "text-[#75716A]" }, `${autoDays[d]} cottage${autoDays[d] === 1 ? "" : "s"}`)))),
     React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setAutoPlanOpen(false), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), React.createElement("button", { type: "button", disabled: !autoPlan.length, onClick: () => {
       applyWinterPlan(autoPlan, `Auto-planned ${autoPlan.length} winterizing cottage${autoPlan.length === 1 ? "" : "s"}`);
+      if (!(db.settings || {}).winterAutoPlaceNew) saveSeason({ winterAutoPlaceNew: true });
       setAutoPlanOpen(false);
       setWeekStart(Object.keys(autoDays).sort()[0] || weekStart);
     }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, `Plan ${autoPlan.length} cottage${autoPlan.length === 1 ? "" : "s"}`)));
@@ -14644,7 +14699,13 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     React.createElement(Field, { label: "What's the day for?" }, React.createElement("input", { className: inputCls, value: blockDay.label, onChange: (e) => setBlockDay({ ...blockDay, label: e.target.value }), placeholder: "e.g. Pebble Beach & By the Woods", autoFocus: AUTO_FOCUS })),
     requests.some((r) => !r.completed && winterPlannedDate(r) === blockDay.date) && React.createElement("p", { className: "text-xs text-[#9A6B1F] mb-3" }, "Cottages already planned on this day stay there \u2014 drag them off, or use Auto-plan with \u201Calso re-plan\u201D ticked."),
     React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setBlockDay(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), React.createElement("button", { type: "button", onClick: () => saveBlock(blockDay.date, blockDay.label), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Block day")));
-  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl, autoPlanEl, rainEl, fullDropEl, blockEl);
+  const newEl = !readOnly && newOnPlan.length > 0 && React.createElement("div", { className: "rounded-lg border border-[#E9C46A] bg-[#FBEEDA] px-4 py-2.5 mb-4 text-sm text-[#4B4740]", "data-new-on-plan": true },
+    React.createElement("div", { className: "flex justify-between items-start gap-3" }, React.createElement("span", { className: "font-semibold" }, `${newOnPlan.length} new sign-up${newOnPlan.length === 1 ? " was" : "s were"} put on the schedule`), React.createElement("button", { type: "button", onClick: () => markSeen(newOnPlan), className: "text-xs font-semibold text-[#377249] hover:underline whitespace-nowrap" }, "Got it")),
+    React.createElement("ul", { className: "mt-1 space-y-0.5" }, newOnPlan.slice().sort((a, b) => winterPlannedDate(a).localeCompare(winterPlannedDate(b))).map((r) => {
+      const info = winterInfo(db, r);
+      return React.createElement("li", { key: r.id, className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", null, `${info.site ? `Site ${info.site.number}` : info.cottage ? info.cottage.name : "Cottage"}${info.customer ? ` (${info.customer.name})` : ""} \u2192 ${winterShortDate(winterPlannedDate(r), { weekday: "short", month: "short", day: "numeric" })}`), React.createElement("button", { type: "button", onClick: () => setPanelId(r.id), className: "text-xs text-[#2E6E8E] hover:underline" }, "Change day"));
+    })));
+  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, newEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl, autoPlanEl, rainEl, fullDropEl, blockEl);
 }
 function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpired, onMoveRun, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
@@ -14654,8 +14715,7 @@ function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpire
   const runAccent = request.completed ? "#377249" : request.run === "10am" ? "#C1652F" : "#3B6E91";
   const paymentLabel = request.payment === "Paid" ? `Paid \u2014 ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
   const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
+    return `${pu.quantity}\xD7 ${propanePartLabel(pu, db).replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}`;
   }).filter(Boolean).join(", ");
   // NOTE on responsive approach: every action below keeps its original sm:+ classes
   // unchanged (same padding/text-size/order as before), so desktop is pixel-identical.
@@ -14731,7 +14791,10 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       workGroup: "",
       date: todayISO(),
       completedDate: todayISO(),
-      partsUsed: request.partsUsed || [],
+      partsUsed: (request.partsUsed || []).map((pu) => {
+        const part = propanePartFor(pu, db);
+        return part ? { ...pu, partId: part.id } : pu;
+      }),
       laborHours: "",
       laborRateType: "N/A",
       paymentStatus: request.payment || "",
@@ -14744,7 +14807,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
     savePropaneRequest(updated);
     if (request.payment === "Paid" && request.paymentMethod) {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
@@ -14803,7 +14866,7 @@ function PropaneView({ db, persist, savePropaneRequest, deletePropaneRequest, sa
       }
     } else if (request.payment === "Invoice") {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
@@ -19377,8 +19440,7 @@ function FieldPropaneRow({ request, db, onComplete, onExpired, onMoveRun }) {
   const runAccent = request.completed ? "#377249" : request.run === "10am" ? "#C1652F" : "#3B6E91";
   const paymentLabel = request.payment === "Paid" ? `Paid — ${request.paymentMethod || "?"}` : request.payment === "Invoice" ? "To Invoice" : null;
   const tankSummary = (request.partsUsed || []).map((pu) => {
-    const part = (db.parts || []).find((p) => p.id === pu.partId);
-    return part ? `${pu.quantity}\xD7 ${part.name.replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}` : null;
+    return `${pu.quantity}\xD7 ${propanePartLabel(pu, db).replace(" Propane", "").replace(" Filled", "").replace(" Refill", "")}`;
   }).filter(Boolean).join(", ");
   return React.createElement(
     "div",
@@ -19427,7 +19489,10 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       workGroup: "",
       date: todayISO(),
       completedDate: todayISO(),
-      partsUsed: request.partsUsed || [],
+      partsUsed: (request.partsUsed || []).map((pu) => {
+        const part = propanePartFor(pu, db);
+        return part ? { ...pu, partId: part.id } : pu;
+      }),
       laborHours: "",
       laborRateType: "N/A",
       paymentStatus: request.payment || "",
@@ -19440,7 +19505,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
     savePropaneRequest(updated);
     if (request.payment === "Paid" && request.paymentMethod) {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);
@@ -19499,7 +19564,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
       }
     } else if (request.payment === "Invoice") {
       const lineItems = (request.partsUsed || []).map((pu) => {
-        const part = (db.parts || []).find((p) => p.id === pu.partId);
+        const part = propanePartFor(pu, db);
         if (!part) return null;
         return { id: uid(), description: part.name, quantity: Number(pu.quantity) || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
       }).filter(Boolean);

@@ -101,6 +101,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Auto-plan honours a customer's requested date when there's room; a rain
   day pushes that day and after back a workday; cottages not finished on
   their day move to the next workday on their own (`carryOverWinter`).
+- Once auto-plan has run (`winterAutoPlaceNew`), new sign-ups go on a day
+  by themselves, flagged `newOnPlan` ("New" tag + note) until someone sees
+  them - so nothing slips by unnoticed.
 
 **Parts**
 - Each part is its own document in the `parts` collection (not in
