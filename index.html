@@ -6047,6 +6047,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
   const [creatingWO, setCreatingWO] = useState(false);
   const [creatingQuote, setCreatingQuote] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const role = useUserRole(db);
   if (!customer) return null;
   const siteIds = customerSiteIds(customer);
   const linkedSites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
@@ -6107,10 +6108,30 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
     },
     "Edit Customer"
   ));
+  // Hydro bills (read-only, with Print) for Admin, Accounting, the Service
+  // Manager and Office (reception).
+  const canSeeHydro = ["admin", "accounting", "manager", "office"].includes(role);
+  const hydroBills = canSeeHydro ? (db.hydroReadings || []).filter((r) => r.status === "invoiced" && (hydroBillTo(db, r) || {}).id === customer.id).sort((a, b) => String(b.invoicedAt || b.date).localeCompare(String(a.invoicedAt || a.date))) : [];
+  const hydroSection = canSeeHydro && React.createElement(DetailSection, { title: "Hydro bills", empty: "No hydro bills yet." }, hydroBills.map((r) => {
+    const p = hydroBillParts(db, r);
+    const sent = r.emailStatus === "not-emailed" ? "Not emailed" : r.emailStatus === "failed" ? "Didn't send" : r.emailStatus === "no-email" ? "No email on file" : r.emailedTo ? `Emailed to ${r.emailedTo}` : "Sent";
+    return React.createElement(
+      "div",
+      { key: r.id, "data-customer-hydro-bill": r.id, className: "flex items-center justify-between gap-3 py-2 border-b border-[#F1EEE9] text-sm" },
+      React.createElement(
+        "div",
+        { className: "min-w-0" },
+        React.createElement("div", { className: "font-medium text-[#1E1A13]" }, `${r.invoiceNumber || "Hydro bill"} \u00B7 Site ${p.site.number}`),
+        React.createElement("div", { className: "text-xs text-[#75716A]" }, `${String(r.invoicedAt || r.date).slice(0, 10)} \u00B7 ${p.meter.previousReading != null ? `${p.meter.previousReading} \u2192 ` : ""}${p.meter.currentReading} \u00B7 ${p.usage != null ? `${p.usage} kWh` : "\u2014"} \u00B7 ${sent}`)
+      ),
+      React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, formatPrice(p.total)), React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Print"))
+    );
+  }));
   const TABS = [
     { key: "workorders", label: "Work Orders", count: workOrders.length, content: workOrdersSection },
     { key: "quotes", label: "Quotes", count: quotes.length, content: quotesSection },
     { key: "invoices", label: "Invoices", count: invoices.length, content: invoicesSection },
+    ...canSeeHydro ? [{ key: "hydro", label: "Hydro bills", count: hydroBills.length, content: hydroSection }] : [],
     { key: "correspondence", label: "Correspondence", count: null, content: correspondenceSection }
   ];
   const statTile = (label, value, tone) => /* @__PURE__ */ React.createElement("div", { className: "px-4 py-3 sm:px-5" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, label), /* @__PURE__ */ React.createElement("div", { className: `text-lg font-semibold ${tone || "text-[#1E1A13]"}` }, value));
@@ -6151,7 +6172,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
         (TABS.find((t) => t.key === activeTab) || TABS[0]).content
       )
     )
-  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, contactInfo, cottagesSection, workOrdersSection, quotesSection, invoicesSection, correspondenceSection);
+  ) : /* @__PURE__ */ React.createElement(React.Fragment, null, contactInfo, cottagesSection, workOrdersSection, quotesSection, invoicesSection, hydroSection, correspondenceSection);
   return /* @__PURE__ */ React.createElement(Wrap, wrapProps, body, footer, viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" }), viewingCottageId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {

@@ -817,6 +817,37 @@ test("winterizing in the field app: the crew's day, a checklist to finish each c
   await page.close();
 });
 
+test("customer page: hydro bills for Admin, Accounting, the Service Manager and Office; not Sales", async () => {
+  const page = await openApp(browser, "stub");
+  const show = (email) => page.evaluate((who) => {
+    const db = { settings: { taxRate: 13 }, userRoles: { "boss@qicampark.com": "admin", "mgr@qicampark.com": "manager", "reserve@qicampark.com": "office", "sales@qicampark.com": "salesmanager" },
+      sites: [{ id: "s1", number: "0412A", ownerId: "c1" }], cottages: [], workOrders: [], quotes: [], invoices: [], correspondence: [],
+      customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }, { id: "c2", name: "Al Other", siteIds: [] }],
+      hydroReadings: [
+        { id: "h1", siteId: "s1", ownerAtReading: "c1", status: "invoiced", invoiceNumber: "HYD-26-0003", invoicedAt: "2026-10-02", date: "2026-10-01", previousReading: 1200, reading: 1450, usage: 250, amount: 45.2, taxAmount: 5.2, emailStatus: "not-emailed" },
+        { id: "h2", siteId: "s1", ownerAtReading: "c2", status: "invoiced", invoiceNumber: "HYD-26-0001", date: "2026-05-01", reading: 1200, usage: 100, amount: 20, taxAmount: 2.3 },
+        { id: "h3", siteId: "s1", ownerAtReading: "c1", status: "pending", date: "2026-10-05", reading: 1500 }
+      ] };
+    const root = document.getElementById("test");
+    root.innerHTML = "";
+    ReactDOM.createRoot(root).render(React.createElement(CurrentUserContext.Provider, { value: who }, React.createElement(CustomerDetailModal, { customer: db.customers[0], db, persist() {}, onClose() {}, onEdit() {}, variant: "drawer" })));
+  }, email);
+  for (const who of ["mgr@qicampark.com", "reserve@qicampark.com"]) {
+    await show(who);
+    await page.getByRole("button", { name: /^Hydro bills/ }).click();
+    const bill = page.locator('[data-customer-hydro-bill="h1"]');
+    await bill.getByText("HYD-26-0003 \u00B7 Site 0412A").waitFor();
+    await bill.getByText("$45.20").waitFor();
+    await bill.getByText("1200 \u2192 1450 \u00B7 250 kWh \u00B7 Not emailed", { exact: false }).waitFor();
+    assert.equal(await page.locator("[data-customer-hydro-bill]").count(), 1, `only this customer's billed readings (${who})`);
+  }
+  await show("sales@qicampark.com");
+  await page.getByRole("button", { name: /^Work Orders/ }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /^Hydro bills/ }).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: voicemails show who called, are never linked or grouped, and stay out of customer threads", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
