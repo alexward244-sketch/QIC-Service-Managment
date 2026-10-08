@@ -840,6 +840,11 @@ test("customer page: hydro bills for Admin, Accounting, the Service Manager and 
     await bill.getByText("$45.20").waitFor();
     await bill.getByText("1200 \u2192 1450 \u00B7 250 kWh \u00B7 Not emailed", { exact: false }).waitFor();
     assert.equal(await page.locator("[data-customer-hydro-bill]").count(), 1, `only this customer's billed readings (${who})`);
+    await bill.getByRole("button", { name: "View" }).click();
+    const frame = page.frameLocator('[data-hydro-bill-view="h1"]');
+    await frame.getByText("HYD-26-0003", { exact: false }).first().waitFor();
+    await page.getByRole("button", { name: "Close", exact: true }).last().click();
+    await page.locator("[data-hydro-bill-view]").waitFor({ state: "detached" });
   }
   await show("sales@qicampark.com");
   await page.getByRole("button", { name: /^Work Orders/ }).waitFor();
@@ -1106,7 +1111,7 @@ test("propane forms still show the tanks after parts were re-entered (new ids, s
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
     // Parts re-entered after the SKU loss: new ids, "100 lb Propane Refill" instead of "100lb Propane Refill Filled".
-    const db = { ...emptyDb(), parts: [{ id: "new100", name: "100 lb Propane Refill", price: 95 }, { id: "new20", name: "20lb Propane Tank Filled", price: 25 }, { id: "x", name: "Washer", price: 2 }], cottages: [{ id: "k1", name: "Loon", siteId: "s1" }], sites: [{ id: "s1", number: "0042" }] };
+    const db = { ...emptyDb(), parts: [{ id: "buy100", name: "100lb Propane Tank (New)", price: 260 }, { id: "new100", name: "100 lb Propane Refill", price: 95 }, { id: "new20", name: "20lb Propane Tank Filled", price: 25 }, { id: "x", name: "Washer", price: 2 }], cottages: [{ id: "k1", name: "Loon", siteId: "s1" }], sites: [{ id: "s1", number: "0042" }] };
     const old = { id: "r1", cottageId: "k1", requestedDate: "2026-10-08", run: "10am", partsUsed: [{ partId: "gone100", quantity: 1, name: "100lb Propane Refill Filled" }] };
     const orphan = { id: "r2", cottageId: "k1", requestedDate: "2026-10-08", partsUsed: [{ partId: "gone", quantity: 2 }] };
     return {
@@ -1117,7 +1122,7 @@ test("propane forms still show the tanks after parts were re-entered (new ids, s
     };
   });
   assert.deepEqual(out.tanks, ["new20", "new100"], "tank sizes are found by size when the name differs");
-  assert.equal(out.default100, "new100");
+  assert.equal(out.default100, "new100", "the refill, not the new tank listed before it");
   assert.match(out.oldForm, /1× 100 lb Propane Refill/, "a request saved before the parts were re-entered finds the new part by name");
   assert.match(out.orphanForm, /2× Part no longer in Parts/, "a line whose part is gone still shows, not a blank form");
   assert.deepEqual(page.pageErrors, []);
