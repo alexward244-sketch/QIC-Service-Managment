@@ -510,7 +510,7 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
     const rain = Object.fromEntries(pushBackWinterDay(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
     // It's the 14th and r4, r6 (planned the 13th) weren't finished.
     const carry = Object.fromEntries(carryOverWinter(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
-    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)) };
+    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)), thanksgiving: [winterSeason(db).closed["2026-10-12"], winterWorkday("2026-10-12", winterSeason(db))] };
   });
   // r6 is kept on the 13th (put there by hand); r1, r2 get the day they asked for; r3 overflows past the
   // blocked 15th to the 16th; r4 and r5 (asked for a day before the season) fill the rest in sign-up order.
@@ -519,6 +519,7 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r4: "2026-10-14", r5: "2026-10-19", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend)");
   assert.equal(out.start, "2026-10-13", "the board opens on the season's first day");
   assert.equal(out.blockedIsWorkday, "2026-10-16");
+  assert.deepEqual(out.thanksgiving, [true, "2026-10-13"], "Thanksgiving Monday is closed and never planned");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

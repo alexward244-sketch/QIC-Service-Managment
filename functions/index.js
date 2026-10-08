@@ -2074,10 +2074,12 @@ exports.morningSummary = onSchedule(
   }
 );
 
-// ---- Winterizing keys: on the workday before a winterizing day (Friday for
+// ---- Winterizing keys: on the open day before a winterizing day (Friday for
 // Monday), reception (reserve@qicampark.com) is emailed the cottages planned
 // for it whose keys they need to collect - every one where the site's how-to
-// (from the master list) doesn't say our master key works. Sent once a day;
+// (from the master list) doesn't say our master key works. Closed days
+// (Thanksgiving Monday, and blocked days marked closed) get no email; the
+// open day before covers through the next open day. Sent once a day;
 // turned off with settings.winterKeyEmailOff. ----
 const WINTER_KEYS_TO = "reserve@qicampark.com";
 function nextWeekdayISO(iso) {
@@ -2086,57 +2088,75 @@ function nextWeekdayISO(iso) {
   do dt.setUTCDate(dt.getUTCDate() + 1); while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6);
   return dt.toISOString().slice(0, 10);
 }
+// Canadian Thanksgiving: the second Monday of October.
+function thanksgivingISO(year) {
+  const first = new Date(Date.UTC(year, 9, 1)).getUTCDay();
+  return `${year}-10-${String(1 + (8 - first) % 7 + 7).padStart(2, "0")}`;
+}
 function longDate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
 }
 async function sendWinterKeyList(today) {
-  const day = nextWeekdayISO(today);
-  const sentRef = db.collection("winterKeyEmails").doc(day);
-  const [mainSnap, sentSnap, winterSnap, cottSnap, sitesSnap, custSnap] = await Promise.all([
-    ROLES_DOC.get(),
+  const mainSnap = await ROLES_DOC.get();
+  const settings = (mainSnap.exists && mainSnap.data().settings) || {};
+  if (settings.winterKeyEmailOff) return { today, skipped: "turned off" };
+  const closed = new Set((settings.winterBlockedDays || []).filter((b) => b && b.closed).map((b) => b.date));
+  const year = Number(today.slice(0, 4));
+  [year, year + 1].forEach((y) => closed.add(thanksgivingISO(y)));
+  if (closed.has(today)) return { today, skipped: "closed today" };
+  // The days this email covers: the next weekdays up to and including the next open one.
+  const days = [];
+  let d = today;
+  do {
+    d = nextWeekdayISO(d);
+    days.push(d);
+  } while (closed.has(d) && days.length < 10);
+  const sentRef = db.collection("winterKeyEmails").doc(today);
+  const [sentSnap, winterSnap, cottSnap, sitesSnap, custSnap] = await Promise.all([
     sentRef.get(),
     db.collection("winterizingRequests").get(),
     db.collection("cottages").get(),
     db.collection("sites").get(),
     db.collection("customers").get()
   ]);
-  const settings = (mainSnap.exists && mainSnap.data().settings) || {};
-  if (settings.winterKeyEmailOff) return { day, skipped: "turned off" };
-  if (sentSnap.exists) return { day, skipped: "already sent" };
+  if (sentSnap.exists) return { today, skipped: "already sent" };
   const byId = (snap) => new Map(snap.docs.map((d) => [d.id, d.data()]));
   const cottages = byId(cottSnap), sites = byId(sitesSnap), customers = byId(custSnap);
   const rows = winterSnap.docs.map((d) => d.data())
-    .filter((r) => !r.archived && !r.completed && (r.plannedDate != null ? r.plannedDate : r.requestedDate || "") === day)
+    .filter((r) => !r.archived && !r.completed && days.includes(r.plannedDate != null ? r.plannedDate : r.requestedDate || ""))
     .map((r) => {
       const cottage = cottages.get(r.cottageId) || null;
       const site = cottage && cottage.siteId ? sites.get(cottage.siteId) || null : null;
       const customer = r.customerId ? customers.get(r.customerId) || null : null;
       const howTo = site && site.winterHowTo;
-      return { r, cottage, site, customer, masterKey: !!(howTo && howTo.masterKey), onList: !!(howTo && (howTo.code || howTo.note || howTo.masterKey)) };
+      return { r, day: r.plannedDate != null ? r.plannedDate : r.requestedDate, cottage, site, customer, masterKey: !!(howTo && howTo.masterKey), onList: !!(howTo && (howTo.code || howTo.note || howTo.masterKey)) };
     })
     .filter((x) => !x.masterKey);
-  if (!rows.length) return { day, count: 0 };
+  if (!rows.length) return { today, days, count: 0 };
   const section = (x) => toStr(x.site && x.site.section).trim() || "No section";
-  rows.sort((a, b) => section(a).localeCompare(section(b)) || toStr(a.site && a.site.number).localeCompare(toStr(b.site && b.site.number), undefined, { numeric: true }));
+  rows.sort((a, b) => a.day.localeCompare(b.day) || section(a).localeCompare(section(b)) || toStr(a.site && a.site.number).localeCompare(toStr(b.site && b.site.number), undefined, { numeric: true }));
+  const withWork = days.filter((x) => rows.some((r) => r.day === x));
   const lines = [];
   let last = null;
   rows.forEach((x) => {
-    if (section(x) !== last) {
+    const head = withWork.length > 1 ? `${longDate(x.day)} \u2014 ${section(x)}` : section(x);
+    if (head !== last) {
       if (last != null) lines.push("");
-      lines.push(section(x));
-      last = section(x);
+      lines.push(head);
+      last = head;
     }
     const who = x.customer ? [toStr(x.customer.name), toStr(x.customer.phone)].filter(Boolean).join(", ") : "no owner linked";
     const flags = [x.r.options && x.r.options.keyAtReception ? "customer said the key is at reception" : "", x.onList ? "" : "not on the master list - check"].filter(Boolean);
     lines.push(`- ${x.site ? `Site ${toStr(x.site.number)}` : "No site"}${x.cottage ? ` · ${toStr(x.cottage.name)}` : ""} · ${who}${flags.length ? ` (${flags.join("; ")})` : ""}`);
   });
-  const subject = `Winterizing keys needed for ${longDate(day)}`;
-  const message = `Hi,\n\nThese ${rows.length} cottage${rows.length === 1 ? " is" : "s are"} being winterized on ${longDate(day)} and our master key doesn't work for ${rows.length === 1 ? "it" : "them"}. Please collect the keys before then.\n\n${lines.join("\n")}\n\nSent by the QIC Service app.`;
+  const when = withWork.map(longDate).join(" and ");
+  const subject = `Winterizing keys needed for ${when}`;
+  const message = `Hi,\n\nThese ${rows.length} cottage${rows.length === 1 ? " is" : "s are"} being winterized on ${when} and our master key doesn't work for ${rows.length === 1 ? "it" : "them"}. Please collect the keys before then.\n\n${lines.join("\n")}\n\nSent by the QIC Service app.`;
   const to = toStr(settings.winterKeyEmailTo).trim() || WINTER_KEYS_TO;
   await sendSummaryEmail(to, subject, message);
-  await sentRef.set({ to, count: rows.length, sentAt: new Date().toISOString() });
-  return { day, count: rows.length };
+  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString() });
+  return { today, days, count: rows.length };
 }
 
 exports.winterKeyList = onSchedule(

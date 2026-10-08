@@ -371,7 +371,7 @@ test("an email moved to Zoho's Trash is removed from the app", async () => {
   assert.deepEqual((await all("correspondence")).map((c) => c.id).sort(), ["in-leak", "in-other"]);
 });
 
-test("winterizing keys: the workday before (Friday for Monday), reception gets the cottages our master key doesn't open, once", async () => {
+test("winterizing keys: the open day before (Friday for Monday, Thanksgiving and closed days skipped), reception gets the cottages our master key doesn't open, once", async () => {
   const set = (c, id, data) => db.collection(c).doc(id).set(data);
   await Promise.all([
     set("sites", "s1", { number: "0010", section: "Front of Park", winterHowTo: { code: "IN BT FD", note: "", masterKey: false } }),
@@ -402,8 +402,21 @@ test("winterizing keys: the workday before (Friday for Monday), reception gets t
   await fns.winterKeyList({ scheduleTime: "2026-10-19T13:00:00Z" });
   assert.equal(emails.length, 2, "Monday sends Tuesday's");
   assert.match(emails[1].subject, /Tuesday, October 20/);
+  // Thanksgiving Monday (Oct 12) is closed: Friday the 9th covers it and Tuesday; nothing goes out on the Monday.
+  await db.collection("winterizingRequests").doc("t1").set({ cottageId: "k1", customerId: "c1", plannedDate: "2026-10-13" });
+  await fns.winterKeyList({ scheduleTime: "2026-10-12T13:00:00Z" });
+  assert.equal(emails.length, 2, "closed on Thanksgiving");
+  await fns.winterKeyList({ scheduleTime: "2026-10-09T13:00:00Z" });
+  assert.equal(emails.length, 3);
+  assert.equal(emails[2].subject, "Winterizing keys needed for Tuesday, October 13");
+  // A blocked day marked closed works the same way (Wed 21st closed: Tuesday covers Thursday).
+  await db.collection("winterizingRequests").doc("t2").set({ cottageId: "k1", plannedDate: "2026-10-22" });
+  await db.doc("campground/data").set({ settings: { winterBlockedDays: [{ date: "2026-10-21", label: "Staff day", closed: true }] } }, { merge: true });
+  await fns.winterKeyList({ scheduleTime: "2026-10-20T13:00:00Z" });
+  assert.equal(emails.length, 4);
+  assert.equal(emails[3].subject, "Winterizing keys needed for Thursday, October 22");
   await db.doc("campground/data").set({ settings: { winterKeyEmailOff: true } }, { merge: true });
   await db.collection("winterizingRequests").doc("r6").set({ cottageId: "k1", plannedDate: "2026-10-21" });
-  await fns.winterKeyList({ scheduleTime: "2026-10-20T13:00:00Z" });
-  assert.equal(emails.length, 2);
+  await fns.winterKeyList({ scheduleTime: "2026-10-23T13:00:00Z" });
+  assert.equal(emails.length, 4, "turned off");
 });

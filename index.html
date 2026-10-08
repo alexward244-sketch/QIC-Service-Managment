@@ -13813,11 +13813,31 @@ function winterNextWorkday(iso, season) {
 // a day (25 unless changed), and days blocked off for other work (e.g.
 // Pebble Beach and By the Woods, whose winterizing is in their fee and who
 // don't sign up), each with a label.
+// Thanksgiving Monday is always a closed day (blocked, and no keys email
+// that morning); other blocked days can be marked closed too.
 function winterSeason(db) {
   const s = db.settings || {};
-  const blocked = {};
-  (s.winterBlockedDays || []).forEach((b) => { if (b && b.date) blocked[b.date] = b.label || ""; });
-  return { start: s.winterSeasonStart || "", limit: Number(s.winterDailyLimit) > 0 ? Number(s.winterDailyLimit) : 25, blocked };
+  const blocked = {}, closed = {}, auto = {};
+  (s.winterBlockedDays || []).forEach((b) => {
+    if (b && b.date) {
+      blocked[b.date] = b.label || "";
+      if (b.closed) closed[b.date] = true;
+    }
+  });
+  [String(s.winterSeasonStart || "").slice(0, 4), todayISO().slice(0, 4)].forEach((y) => {
+    const t = /^\d{4}$/.test(y) ? thanksgivingISO(Number(y)) : "";
+    if (t && blocked[t] == null) {
+      blocked[t] = "Thanksgiving \u2014 closed";
+      closed[t] = true;
+      auto[t] = true;
+    }
+  });
+  return { start: s.winterSeasonStart || "", limit: Number(s.winterDailyLimit) > 0 ? Number(s.winterDailyLimit) : 25, blocked, closed, auto };
+}
+// Canadian Thanksgiving: the second Monday of October.
+function thanksgivingISO(year) {
+  const first = new Date(year, 9, 1).getDay();
+  return `${year}-10-${String(1 + (8 - first) % 7 + 7).padStart(2, "0")}`;
 }
 // The first day work can be planned on: today or the season start, whichever
 // is later, moved to an open weekday.
@@ -14188,7 +14208,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       days.map((d) => {
         const list = todo.filter((r) => winterPlannedDate(r) === d).sort(winterSiteSort(db));
         const isToday = d === today;
-        return column(d, `${isToday ? "Today · " : ""}${winterShortDate(d, { weekday: "short", month: "short", day: "numeric" })}`, winterExtrasSummary(list), list, { dropDate: d, onPrint: onPrintDay && list.length ? () => onPrintDay(list, d) : null, limit: season.blocked[d] != null ? 0 : season.limit, blocked: season.blocked[d], onUnblock: !readOnly ? () => onUnblockDay(d) : null, onBlock: !readOnly && season.blocked[d] == null && d >= today ? () => onBlockDay(d) : null, onRain: !readOnly && d >= today && list.length ? () => onRainDay(d) : null, accent: season.blocked[d] != null ? "border-[#2E6E8E]" : list.length > season.limit ? "border-[#a8532a]" : isToday ? "border-[#E9C46A]" : d < today ? "border-[#E2DED5] opacity-80" : "border-[#E2DED5]" });
+        return column(d, `${isToday ? "Today · " : ""}${winterShortDate(d, { weekday: "short", month: "short", day: "numeric" })}`, winterExtrasSummary(list), list, { dropDate: d, onPrint: onPrintDay && list.length ? () => onPrintDay(list, d) : null, limit: season.blocked[d] != null ? 0 : season.limit, blocked: season.blocked[d], onUnblock: !readOnly && !season.auto[d] ? () => onUnblockDay(d) : null, onBlock: !readOnly && season.blocked[d] == null && d >= today ? () => onBlockDay(d) : null, onRain: !readOnly && d >= today && list.length ? () => onRainDay(d) : null, accent: season.blocked[d] != null ? "border-[#2E6E8E]" : list.length > season.limit ? "border-[#a8532a]" : isToday ? "border-[#E9C46A]" : d < today ? "border-[#E2DED5] opacity-80" : "border-[#E2DED5]" });
       }),
       column("done", "Winterized these days", winterExtrasSummary(doneWeek), doneWeek, { accent: "border-[#377249]/40", empty: "None yet" })
     )
@@ -14618,8 +14638,8 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   };
   const saveSeason = (patch) => persist({ ...db, settings: { ...db.settings || {}, ...patch } });
   const blockedList = () => ((db.settings || {}).winterBlockedDays || []).filter((b) => b && b.date);
-  const saveBlock = (date, label) => {
-    persist({ ...db, settings: { ...db.settings || {}, winterBlockedDays: [...blockedList().filter((b) => b.date !== date), { date, label: label.trim() }].sort((a, b) => a.date.localeCompare(b.date)) }, activityLog: addLog(db, actor, `Blocked ${date} for winterizing${label.trim() ? ` (${label.trim()})` : ""}`) });
+  const saveBlock = (date, label, closed) => {
+    persist({ ...db, settings: { ...db.settings || {}, winterBlockedDays: [...blockedList().filter((b) => b.date !== date), { date, label: label.trim(), ...(closed ? { closed: true } : {}) }].sort((a, b) => a.date.localeCompare(b.date)) }, activityLog: addLog(db, actor, `Blocked ${date} for winterizing${label.trim() ? ` (${label.trim()})` : ""}${closed ? " - closed" : ""}`) });
     setBlockDay(null);
   };
   const unblock = (date) => persist({ ...db, settings: { ...db.settings || {}, winterBlockedDays: blockedList().filter((b) => b.date !== date) }, activityLog: addLog(db, actor, `Unblocked ${date} for winterizing`) });
@@ -14987,8 +15007,9 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const blockEl = !readOnly && blockDay && React.createElement(Modal, { title: `Block ${dayLabel(blockDay.date)}`, onClose: () => setBlockDay(null) },
     React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "No sign-ups go on this day, for work like Pebble Beach and By the Woods (included in their fee, so they don't sign up)."),
     React.createElement(Field, { label: "What's the day for?" }, React.createElement("input", { className: inputCls, value: blockDay.label, onChange: (e) => setBlockDay({ ...blockDay, label: e.target.value }), placeholder: "e.g. Pebble Beach & By the Woods", autoFocus: AUTO_FOCUS })),
+    React.createElement("label", { className: "flex items-start gap-2 text-sm text-[#4B4740] mb-3" }, React.createElement("input", { type: "checkbox", checked: !!blockDay.closed, onChange: (e) => setBlockDay({ ...blockDay, closed: e.target.checked }), className: "accent-[#377249] w-4 h-4 mt-0.5", "aria-label": "We're closed this day" }), React.createElement("span", null, "We're closed this day (holiday) \u2014 the keys email to reception goes out the open day before instead")),
     requests.some((r) => !r.completed && winterPlannedDate(r) === blockDay.date) && React.createElement("p", { className: "text-xs text-[#9A6B1F] mb-3" }, "Cottages already planned on this day stay there \u2014 drag them off, or use Auto-plan with \u201Calso re-plan\u201D ticked."),
-    React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setBlockDay(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), React.createElement("button", { type: "button", onClick: () => saveBlock(blockDay.date, blockDay.label), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Block day")));
+    React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setBlockDay(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), React.createElement("button", { type: "button", onClick: () => saveBlock(blockDay.date, blockDay.label, blockDay.closed), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Block day")));
   const newEl = !readOnly && newOnPlan.length > 0 && React.createElement("div", { className: "rounded-lg border border-[#E9C46A] bg-[#FBEEDA] px-4 py-2.5 mb-4 text-sm text-[#4B4740]", "data-new-on-plan": true },
     React.createElement("div", { className: "flex justify-between items-start gap-3" }, React.createElement("span", { className: "font-semibold" }, (() => {
       const n = newOnPlan.filter((r) => r.newOnPlan).length, m = newOnPlan.length - n;

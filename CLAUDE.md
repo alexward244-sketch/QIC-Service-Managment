@@ -112,8 +112,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - `winterKeyList` (Cloud Function, 9am weekdays) emails reserve@qicampark.com
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
-  (`winterKeyEmails/{day}`); off with `settings.winterKeyEmailOff` (checkbox
-  on the Plan board).
+  (`winterKeyEmails/{date sent}`); off with `settings.winterKeyEmailOff`
+  (checkbox on the Plan board).
+- Closed days: Thanksgiving Monday automatically, plus blocked days ticked
+  "We're closed" (`winterBlockedDays[].closed`). Nothing is planned on them,
+  no keys email goes out that morning, and the open day before covers
+  through the next open day (we're closed Thanksgiving, so Friday's email
+  covers Tuesday).
 - The crew works from phones (field app → Runs → Winterizing: a Day view
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the
