@@ -817,6 +817,37 @@ test("winterizing in the field app: the crew's day, a checklist to finish each c
   await page.close();
 });
 
+test("customer page: hydro bills for Admin, Accounting, the Service Manager and Office; not Sales", async () => {
+  const page = await openApp(browser, "stub");
+  const show = (email) => page.evaluate((who) => {
+    const db = { settings: { taxRate: 13 }, userRoles: { "boss@qicampark.com": "admin", "mgr@qicampark.com": "manager", "reserve@qicampark.com": "office", "sales@qicampark.com": "salesmanager" },
+      sites: [{ id: "s1", number: "0412A", ownerId: "c1" }], cottages: [], workOrders: [], quotes: [], invoices: [], correspondence: [],
+      customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }, { id: "c2", name: "Al Other", siteIds: [] }],
+      hydroReadings: [
+        { id: "h1", siteId: "s1", ownerAtReading: "c1", status: "invoiced", invoiceNumber: "HYD-26-0003", invoicedAt: "2026-10-02", date: "2026-10-01", previousReading: 1200, reading: 1450, usage: 250, amount: 45.2, taxAmount: 5.2, emailStatus: "not-emailed" },
+        { id: "h2", siteId: "s1", ownerAtReading: "c2", status: "invoiced", invoiceNumber: "HYD-26-0001", date: "2026-05-01", reading: 1200, usage: 100, amount: 20, taxAmount: 2.3 },
+        { id: "h3", siteId: "s1", ownerAtReading: "c1", status: "pending", date: "2026-10-05", reading: 1500 }
+      ] };
+    const root = document.getElementById("test");
+    root.innerHTML = "";
+    ReactDOM.createRoot(root).render(React.createElement(CurrentUserContext.Provider, { value: who }, React.createElement(CustomerDetailModal, { customer: db.customers[0], db, persist() {}, onClose() {}, onEdit() {}, variant: "drawer" })));
+  }, email);
+  for (const who of ["mgr@qicampark.com", "reserve@qicampark.com"]) {
+    await show(who);
+    await page.getByRole("button", { name: /^Hydro bills/ }).click();
+    const bill = page.locator('[data-customer-hydro-bill="h1"]');
+    await bill.getByText("HYD-26-0003 \u00B7 Site 0412A").waitFor();
+    await bill.getByText("$45.20").waitFor();
+    await bill.getByText("1200 \u2192 1450 \u00B7 250 kWh \u00B7 Not emailed", { exact: false }).waitFor();
+    assert.equal(await page.locator("[data-customer-hydro-bill]").count(), 1, `only this customer's billed readings (${who})`);
+  }
+  await show("sales@qicampark.com");
+  await page.getByRole("button", { name: /^Work Orders/ }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /^Hydro bills/ }).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: voicemails show who called, are never linked or grouped, and stay out of customer threads", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
@@ -946,12 +977,12 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   assert.equal(await desc().count(), 5);
 
   // Shop supplies: 5% of parts + labour, kept up to date; it can be picked by typing too.
-  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$12.00", "5% of $20 parts + $220 labour");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$15.50", "5% of $20 parts + $220 labour + $70 service call");
   await page.getByLabel("Hours").fill("3");
-  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$17.50");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$21.00", "5% of $20 + $330 labour + $70 service call");
   await page.getByLabel("Hours").fill("2");
   await desc().nth(4).fill("shop");
-  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).waitFor();
+  await page.getByRole("option", { name: /Shop supplies.*5% of parts, labour \+ service call/ }).waitFor();
   await desc().nth(4).fill("");
   assert.equal(await page.getByText("Shop Supplies", { exact: true }).count(), 0, "no separate shop supplies box");
   assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
@@ -959,12 +990,15 @@ test("invoice form: typing in a line's description offers parts, labour rates an
 
   await page.getByRole("button", { name: "Save Invoice" }).click();
   const inv = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 12, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 15.5, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
   assert.equal(inv.lineItems[0].percent, 5);
   assert.equal(inv.shopSuppliesPercent, 0, "shop supplies is the line, not the old field");
   const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
-  // Shop supplies: 5% of parts + labour, not the service call.
-  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 12, 70, 322]);
+  // Shop supplies: 5% of parts + labour + the service call.
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 15.5, 70, 325.5]);
+  // An invoice saved before the change keeps its amount (its line isn't marked withServiceCall).
+  const old = await page.evaluate(() => computeQuoteTotals({ lineItems: [{ description: "Caulking Tube", quantity: 2, unitPrice: 18.21 }, { kind: "serviceCall", description: "Service call", quantity: 1, unitPrice: 50 }, { kind: "shopSupplies", description: "Shop supplies", percent: 5, quantity: 1, unitPrice: 1.82 }] }, 13));
+  assert.deepEqual([old.shopSupplies, Math.round(old.total * 100) / 100], [1.82, 99.71]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
