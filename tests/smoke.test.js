@@ -921,7 +921,8 @@ test("correspondence: every message in a customer's conversation can be deleted 
   const trash = await page.evaluate(() => window.__persisted[window.__persisted.length - 1].trash);
   assert.equal(trash[0].data.id, "b");
   const calls = await page.evaluate(() => window.__calls);
-  assert.deepEqual(calls.map(([n, d]) => [n, d.direction, d.toEmail, d.subject, d.receivedAt]), [["trashEmailInZoho", "out", "anne@x.com", "Re: First", "2026-10-01T13:00:00Z"]], "its copy in Zoho goes to Zoho's Trash too");
+  assert.deepEqual(calls.filter(([n]) => n === "markEmailReadInZoho").map(([, d]) => [d.fromEmail, d.subject]), [["anne@x.com", "Second"]], "opening the email marks it read in Zoho, once");
+  assert.deepEqual(calls.filter(([n]) => n === "trashEmailInZoho").map(([n, d]) => [n, d.direction, d.toEmail, d.subject, d.receivedAt]), [["trashEmailInZoho", "out", "anne@x.com", "Re: First", "2026-10-01T13:00:00Z"]], "its copy in Zoho goes to Zoho's Trash too");
   await card("Older message").waitFor();
   assert.equal(await card("Duplicate copy").count(), 0);
   assert.deepEqual(page.pageErrors, []);

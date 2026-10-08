@@ -338,6 +338,27 @@ test("deleting an email in the app moves its Zoho copy to Zoho's Trash", async (
   assert.equal((await call(fns.trashEmailInZoho, { subject: "Leak" }, "")).error, "permission-denied");
 });
 
+test("opening an email in the app marks its Zoho copy read", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  zoho.on = true;
+  zoho.search = [
+    { messageId: "z-leak", folderId: "inbox1", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3 - 20e3) },
+    { messageId: "z-other", folderId: "inbox1", subject: "Other thing", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3) },
+    { messageId: "z-gone", folderId: "trash1", subject: "Leak", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3) }
+  ];
+  const open = (data) => call(fns.markEmailReadInZoho, data);
+  assert.deepEqual(await open({ fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: true, marked: 1 });
+  assert.deepEqual(zoho.moved.pop(), { mode: "markAsRead", messageId: ["z-leak"] }, "just that email, not her other one or one in Trash");
+  assert.deepEqual(await open({ fromEmail: "nobody@z.com", subject: "Hi", receivedAt: iso(now) }), { ok: true, marked: 0 });
+  assert.equal((await all("serverAlerts")).length, 0);
+  // Zoho refuses (the connection can't update mail yet): reported.
+  zoho.moveStatus = 400;
+  assert.deepEqual(await open({ fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: false, reason: "not-allowed" });
+  assert.equal((await all("serverAlerts"))[0].source, "zohoRead");
+  assert.equal((await call(fns.markEmailReadInZoho, { subject: "Leak" }, "")).error, "permission-denied");
+});
+
 test("an email moved to Zoho's Trash is removed from the app", async () => {
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();

@@ -75,6 +75,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Deleting an email in the app moves its Zoho copy to Zoho's Trash
   (`trashEmailInZoho`); an email moved to Zoho's Trash is removed from the
   app (`zohoSentMail` checks Trash), so nobody answers it twice.
+- Opening an incoming email in the app marks its Zoho copy read
+  (`markEmailReadInZoho`), so it doesn't still look new in Zoho. Needs the
+  Zoho connection's update permission (same reconnect as deletes).
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
   signature block, blank lines) — display only, stored body untouched.
 
