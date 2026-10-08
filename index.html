@@ -13736,7 +13736,7 @@ function WinterizingReminderModal({ db, persist, rows, actor, onClose, inline })
 // ---------------------------------------------------------------------------
 // Winterizing on a computer: Overview (season cards + table), Plan (a week
 // board to drag cottages between days) and the cottage panel both open.
-// Phones keep the simpler list.
+// Phones (field app, Runs > Winterizing) get the crew's day: FieldWinterTab.
 // ---------------------------------------------------------------------------
 // The day the crew plans to do it: set by dragging on the Plan board, else
 // the day the customer asked for. "" = taken off the schedule.
@@ -14183,7 +14183,7 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
         "div",
         null,
         label("Checklist"),
-        React.createElement("div", { className: "space-y-1.5" }, checklist.map(([k, t]) => React.createElement("label", { key: k, className: `flex items-start gap-2 ${readOnly ? "" : "cursor-pointer"}` }, React.createElement("input", { type: "checkbox", disabled: readOnly, checked: ticked.has(k), onChange: () => tick(k), className: "accent-[#377249] w-4 h-4 mt-0.5 flex-shrink-0" }), React.createElement("span", { className: ticked.has(k) ? "text-[#28633C] line-through" : "" }, t)))),
+        React.createElement("div", { className: "space-y-1.5" }, checklist.map(([k, t]) => React.createElement("label", { key: k, className: `flex items-start gap-2 py-1 sm:py-0 ${readOnly ? "" : "cursor-pointer"}` }, React.createElement("input", { type: "checkbox", disabled: readOnly, checked: ticked.has(k), onChange: () => tick(k), className: "accent-[#377249] w-5 h-5 sm:w-4 sm:h-4 mt-0.5 flex-shrink-0" }), React.createElement("span", { className: ticked.has(k) ? "text-[#28633C] line-through" : "" }, t)))),
         anodeRequested && React.createElement("button", { type: "button", disabled: readOnly || !!request.anodeRodReplacedAt, onClick: () => onAnodeRod(request), className: `mt-2 w-full text-left rounded-md px-3 py-2 border ${request.anodeRodReplacedAt ? "bg-[#DDF1E1] border-[#377249]/30 text-[#28633C]" : "bg-[#F5E3D9]/60 border-[#e0bfa6] text-[#a8532a]"}` }, request.anodeRodReplacedAt ? "✓ Anode rod replaced — invoiced" : "Replace the anode rod — tap when done (creates the invoice)"),
         keyAtReception && React.createElement("div", { className: "mt-2 text-[#9A6B1F]" }, "🔑 Key left with reception")
       ),
@@ -14207,13 +14207,50 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
       !readOnly && React.createElement(
         "div",
         { className: "flex flex-wrap gap-2 pt-1" },
-        request.completed ? React.createElement(React.Fragment, null, !request.completionEmailedAt && info.customer && info.customer.email && React.createElement("button", { type: "button", disabled: emailStatus === "sending", onClick: () => onEmail(request), className: "flex-1 py-2 rounded-md bg-[#377249] text-white font-semibold disabled:opacity-50" }, "Email customer"), React.createElement("button", { type: "button", onClick: () => onReopen(request), className: btn }, "Reopen")) : React.createElement("button", { type: "button", disabled: !allTicked, onClick: () => onComplete(request), className: "flex-1 py-2 rounded-md bg-[#377249] text-white font-semibold disabled:bg-[#E2DED5] disabled:text-[#9A968D]" }, allTicked ? "Mark winterized" : `Mark winterized (${ticked.size}/${checklist.length} checked)`),
-        React.createElement("button", { type: "button", onClick: () => onPrint(request), className: btn }, "Print"),
+        request.completed ? React.createElement(React.Fragment, null, onEmail && !request.completionEmailedAt && info.customer && info.customer.email && React.createElement("button", { type: "button", disabled: emailStatus === "sending", onClick: () => onEmail(request), className: "flex-1 py-2 rounded-md bg-[#377249] text-white font-semibold disabled:opacity-50" }, "Email customer"), React.createElement("button", { type: "button", onClick: () => onReopen(request), className: btn }, "Reopen")) : React.createElement("button", { type: "button", disabled: !allTicked, onClick: () => onComplete(request), className: "flex-1 py-2 rounded-md bg-[#377249] text-white font-semibold disabled:bg-[#E2DED5] disabled:text-[#9A968D]" }, allTicked ? "Mark winterized" : `Mark winterized (${ticked.size}/${checklist.length} checked)`),
+        onPrint && React.createElement("button", { type: "button", onClick: () => onPrint(request), className: btn }, "Print"),
         onProblem && React.createElement("button", { type: "button", onClick: () => onProblem(request), className: "px-3 py-2 rounded-md border border-[#a8532a]/40 text-[#a8532a] text-sm hover:bg-[#a8532a]/10" }, "Found a problem")
       ),
-      !readOnly && React.createElement("div", { className: "flex gap-4 text-xs pt-1 border-t border-[#F1EEE9]" }, React.createElement("button", { type: "button", onClick: () => onEdit(request), className: "text-[#377249] hover:underline pt-2" }, "Edit sign-up"), React.createElement("button", { type: "button", onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline pt-2" }, "Delete"))
+      !readOnly && onEdit && React.createElement("div", { className: "flex gap-4 text-xs pt-1 border-t border-[#F1EEE9]" }, React.createElement("button", { type: "button", onClick: () => onEdit(request), className: "text-[#377249] hover:underline pt-2" }, "Edit sign-up"), React.createElement("button", { type: "button", onClick: () => onDelete(request), className: "text-[#a8532a] hover:underline pt-2" }, "Delete"))
     )
   );
+}
+// Runs wherever winterizing is open (computer or phone): cottages not
+// finished on their day move on to the next workday, and new sign-ups go
+// on the schedule once that's turned on. Returns the carry-over notice.
+function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinterizingRequest }) {
+  const [carryNotice, setCarryNotice] = useState("");
+  const cottageName = (id) => {
+    const c = db.cottages.find((x) => x.id === id);
+    return c ? c.name : "Unknown cottage";
+  };
+  const applyWinterPlan = (changes, logText) => {
+    if (!changes.length) return;
+    changes.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date }));
+    persist({ ...db, activityLog: addLog(db, actor, logText) });
+  };
+  // Not finished on its day: moved on to the next workday by itself.
+  const carriedFor = useRef("");
+  useEffect(() => {
+    if (readOnly || !requests.length) return;
+    const today = todayISO();
+    if (carriedFor.current === today) return;
+    carriedFor.current = today;
+    const changes = carryOverWinter(requests, db, today);
+    if (!changes.length) return;
+    const lateCount = changes.filter((c) => c.request.plannedDate < today).length;
+    applyWinterPlan(changes, `Moved ${lateCount} unfinished winterizing cottage${lateCount === 1 ? "" : "s"} to ${changes[0] && changes.find((c) => c.request.plannedDate < today).date}`);
+    setCarryNotice(`${lateCount} cottage${lateCount === 1 ? " wasn't" : "s weren't"} finished on ${lateCount === 1 ? "its" : "their"} day and moved to ${winterShortDate(changes.find((c) => c.request.plannedDate < today).date, { weekday: "short", month: "short", day: "numeric" })}${changes.length > lateCount ? `; ${changes.length - lateCount} more moved on a day to stay within ${winterSeason(db).limit} a day` : ""}.`);
+  }, [requests.length, readOnly]);
+  // New sign-ups onto the schedule (when that's on), marked New.
+  useEffect(() => {
+    if (readOnly) return;
+    const placed = placeNewWinterSignups(requests, db, todayISO());
+    if (!placed.length) return;
+    placed.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, newOnPlan: true }));
+    persist({ ...db, activityLog: addLog(db, actor, `Put ${placed.length} new winterizing sign-up${placed.length === 1 ? "" : "s"} on the schedule (${placed.map((p) => `${cottageName(p.request.cottageId)} \u2192 ${p.date}`).join(", ")})`) });
+  }, [requests.map((r) => r.id + (r.plannedDate == null ? "?" : "")).join(","), readOnly, !!(db.settings || {}).winterAutoPlaceNew]);
+  return [carryNotice, setCarryNotice];
 }
 function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, saveWorkOrder }) {
   const [filter, setFilter] = useState("");
@@ -14252,7 +14289,6 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const [autoPlanOpen, setAutoPlanOpen] = useState(false);
   const [rainDay, setRainDay] = useState(null);
   const [fullDrop, setFullDrop] = useState(null);
-  const [carryNotice, setCarryNotice] = useState("");
   const [blockDay, setBlockDay] = useState(null);
   const [autoByArea, setAutoByArea] = useState(true);
   const [autoReplanAll, setAutoReplanAll] = useState(false);
@@ -14415,27 +14451,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     while (requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === next).length >= season.limit) next = winterNextWorkday(next, season);
     setFullDrop({ id, date, next, blocked: season.blocked[date] });
   };
-  // Not finished on its day: moved on to the next workday by itself.
-  const carriedFor = useRef("");
-  useEffect(() => {
-    if (readOnly || !requests.length) return;
-    const today = todayISO();
-    if (carriedFor.current === today) return;
-    carriedFor.current = today;
-    const changes = carryOverWinter(requests, db, today);
-    if (!changes.length) return;
-    const lateCount = changes.filter((c) => c.request.plannedDate < today).length;
-    applyWinterPlan(changes, `Moved ${lateCount} unfinished winterizing cottage${lateCount === 1 ? "" : "s"} to ${changes[0] && changes.find((c) => c.request.plannedDate < today).date}`);
-    setCarryNotice(`${lateCount} cottage${lateCount === 1 ? " wasn't" : "s weren't"} finished on ${lateCount === 1 ? "its" : "their"} day and moved to ${winterShortDate(changes.find((c) => c.request.plannedDate < today).date, { weekday: "short", month: "short", day: "numeric" })}${changes.length > lateCount ? `; ${changes.length - lateCount} more moved on a day to stay within ${winterSeason(db).limit} a day` : ""}.`);
-  }, [requests.length, readOnly]);
-  // New sign-ups onto the schedule (when that's on), marked New.
-  useEffect(() => {
-    if (readOnly) return;
-    const placed = placeNewWinterSignups(requests, db, todayISO());
-    if (!placed.length) return;
-    placed.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, newOnPlan: true }));
-    persist({ ...db, activityLog: addLog(db, actor, `Put ${placed.length} new winterizing sign-up${placed.length === 1 ? "" : "s"} on the schedule (${placed.map((p) => `${cottageName(p.request.cottageId)} \u2192 ${p.date}`).join(", ")})`) });
-  }, [requests.map((r) => r.id + (r.plannedDate == null ? "?" : "")).join(","), readOnly, !!(db.settings || {}).winterAutoPlaceNew]);
+  const [carryNotice, setCarryNotice] = useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinterizingRequest });
   const newOnPlan = requests.filter((r) => r.newOnPlan && !r.completed);
   const markSeen = (list) => list.forEach((r) => saveWinterizingRequest({ ...r, newOnPlan: false }));
   const resetSeason = () => {
@@ -19702,9 +19718,19 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
     section("4:00 PM Run", fourPm)
   );
 }
-function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, onGoToDesktopTab, setToast }) {
-  const [confirmComplete, setConfirmComplete] = useState(null);
+// Winterizing on a phone: the crew's day (‹ › to other days), each cottage
+// opening its checklist, plus every sign-up by day with a search.
+function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, onGoToDesktopTab, setToast }) {
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
+  const today = todayISO();
+  const season = winterSeason(db);
+  const [mode, setMode] = useState("day");
+  const [day, setDay] = useState(() => winterBoardStart(season, today));
+  const [search, setSearch] = useState("");
+  const [panelId, setPanelId] = useState(null);
+  const [problemFor, setProblemFor] = useState(null);
+  const [rainDay, setRainDay] = useState(null);
+  const [carryNotice, setCarryNotice] = useWinterAutoMoves({ db, requests, readOnly: false, persist, actor, saveWinterizingRequest });
   const cottageName = (id) => {
     const c = db.cottages.find((x) => x.id === id);
     return c ? c.name : "Unknown cottage";
@@ -19759,75 +19785,207 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     persist({ ...db, activityLog });
     saveWinterizingRequest({ ...request, anodeRodReplacedAt: replacedAt });
   };
-  const pending = requests.filter((r) => !r.completed).sort((a, b) => (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999"));
-  const doneCount = requests.length - pending.length;
+  const doneCount = requests.filter((r) => r.completed).length;
   const pct = requests.length > 0 ? Math.round(doneCount / requests.length * 100) : 0;
+  const placeLabel = (r) => {
+    const info = winterInfo(db, r);
+    return info.site ? `Site ${info.site.number}` : cottageName(r.cottageId);
+  };
   const toggleComplete = (request) => {
-    const cottage = db.cottages.find((c) => c.id === request.cottageId);
     const willBeDone = !request.completed;
     const updated = { ...request, completed: willBeDone, completedDate: willBeDone ? todayISO() : null };
-    const activityLog = addLog(db, actor, willBeDone ? `Marked winterizing complete for ${cottage ? cottage.name : "cottage"}` : `Reopened winterizing sign-up for ${cottage ? cottage.name : "cottage"}`);
+    const activityLog = addLog(db, actor, willBeDone ? `Marked winterizing complete for ${cottageName(request.cottageId)}` : `Reopened winterizing sign-up for ${cottageName(request.cottageId)}`);
     persist({ ...db, activityLog });
     saveWinterizingRequest(updated);
-    setToast(willBeDone ? "Marked winterized" : "Reopened");
+    setToast(willBeDone ? `${placeLabel(request)} winterized` : "Reopened");
+    if (willBeDone) setPanelId(null);
   };
-  const requestToggle = (request) => {
-    if (request.completed) {
-      toggleComplete(request);
-    } else {
-      setConfirmComplete(request);
-    }
+  const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
+  // Moved from the panel's date box; a full or blocked day is still allowed
+  // (the crew may know better) but says so.
+  const schedule = (id, date) => {
+    const request = requests.find((r) => r.id === id);
+    if (!request || request.completed || winterPlannedDate(request) === (date || "")) return;
+    saveWinterizingRequest({ ...request, plannedDate: date || "", newOnPlan: false });
+    persist({ ...db, activityLog: addLog(db, actor, date ? `Planned winterizing for ${cottageName(request.cottageId)} on ${date}` : `Took winterizing for ${cottageName(request.cottageId)} off the schedule`) });
+    if (!date) return setToast("Taken off the schedule");
+    const count = requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length + 1;
+    setToast(season.blocked[date] != null ? `Moved to ${dayLabel(date)} \u2014 that day is blocked` : count > season.limit ? `Moved to ${dayLabel(date)} \u2014 now ${count}, over ${season.limit}` : `Moved to ${dayLabel(date)}`);
   };
+  const todo = requests.filter((r) => !r.completed);
+  const hasWork = (d) => todo.some((r) => winterPlannedDate(r) === d) || requests.some((r) => r.completed && r.completedDate === d);
+  // Weekends are skipped unless something's on them (or it's today).
+  const stepDay = (dir) => {
+    let d = winterAddDays(day, dir);
+    for (let i = 0; i < 6 && !winterIsWeekday(d) && d !== today && !hasWork(d); i++) d = winterAddDays(d, dir);
+    setDay(d);
+  };
+  const dayTodo = todo.filter((r) => winterPlannedDate(r) === day).sort(winterSiteSort(db));
+  const dayDone = requests.filter((r) => r.completed && r.completedDate === day).sort(winterSiteSort(db));
+  const blocked = season.blocked[day];
+  const card = (r) => {
+    const info = winterInfo(db, r);
+    const st = winterStatus(r, today);
+    const accent = r.completed ? "border-l-[#377249]" : st.key === "overdue" ? "border-l-[#a8532a]" : st.key === "today" ? "border-l-[#E9C46A]" : "border-l-[#C7C2B8]";
+    return React.createElement(
+      "button",
+      { key: r.id, type: "button", "data-field-winter": r.id, onClick: () => setPanelId(r.id), className: `w-full text-left rounded-xl border border-[#E2DED5] border-l-4 ${accent} bg-[#FFFDFA] px-3.5 py-3 mb-2.5 active:bg-[#F1EEE9] ${r.completed ? "opacity-80" : ""}` },
+      React.createElement(
+        "div",
+        { className: "flex justify-between items-start gap-2" },
+        React.createElement(
+          "div",
+          { className: "min-w-0" },
+          React.createElement("div", { className: "text-[15px] font-semibold text-[#1E1A13] truncate" }, info.site ? `Site ${info.site.number}` : "No site", React.createElement("span", { className: "font-normal text-[#4B4740]" }, ` \u00B7 ${info.cottage ? info.cottage.name : "Cottage"}`)),
+          React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner linked", " \u00B7 ", info.section)
+        ),
+        r.completed ? React.createElement("span", { className: "flex-none text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "\u2713 Done") : r.newOnPlan ? React.createElement("span", { className: "flex-none text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-[#E9C46A] text-[#1E1A13]" }, "New") : st.key === "overdue" ? React.createElement("span", { className: `flex-none text-[11px] font-semibold px-2 py-0.5 rounded-full ${st.cls}` }, st.label) : null
+      ),
+      info.extras.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mt-2" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))),
+      info.note && !r.completed && React.createElement("div", { className: "mt-2 rounded-md bg-[#FBEEDA]/70 border border-[#E9D3B5] px-2 py-1 text-xs text-[#4B4740] line-clamp-3" }, React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, "Note: "), info.note),
+      r.anodeRodReplacedAt && React.createElement("div", { className: "text-[11px] text-[#28633C] mt-1.5" }, "\u2713 Anode rod replaced")
+    );
+  };
+  const heading = (text, count, tone) => React.createElement("h3", { className: `text-[13px] font-bold mb-2 mt-1 ${tone || "text-[#1E1A13]"}` }, text, count != null ? ` (${count})` : "");
+  // The day's cottages, area by area.
+  const bySection = (list) => {
+    const groups = [];
+    list.forEach((r) => {
+      const sec = winterInfo(db, r).section;
+      const g = groups.find((x) => x.name === sec);
+      if (g) g.list.push(r);
+      else groups.push({ name: sec, list: [r] });
+    });
+    return groups;
+  };
+  const dayEl = React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2 mb-1", "data-field-winter-day": day },
+      React.createElement("button", { type: "button", onClick: () => stepDay(-1), "aria-label": "Previous day", className: "w-11 h-11 flex-none rounded-lg border border-[#E2DED5] bg-[#FFFDFA] text-lg" }, "\u2039"),
+      React.createElement("div", { className: "flex-1 text-center" }, React.createElement("div", { className: "text-[15px] font-semibold" }, day === today ? `Today \u00B7 ${dayLabel(day)}` : dayLabel(day)), React.createElement("div", { className: "text-xs text-[#75716A]" }, blocked != null ? `Blocked${blocked ? ` \u2014 ${blocked}` : ""}` : `${dayTodo.length} to do \u00B7 ${dayDone.length} done`)),
+      React.createElement("button", { type: "button", onClick: () => stepDay(1), "aria-label": "Next day", className: "w-11 h-11 flex-none rounded-lg border border-[#E2DED5] bg-[#FFFDFA] text-lg" }, "\u203A")
+    ),
+    React.createElement("div", { className: "text-center mb-4 min-h-[20px]" }, day !== winterBoardStart(season, today) && React.createElement("button", { type: "button", onClick: () => setDay(winterBoardStart(season, today)), className: "text-xs font-semibold text-[#377249]" }, season.start > today ? "Back to the first day" : "Back to today")),
+    dayTodo.length === 0 && dayDone.length === 0 ? React.createElement("p", { className: "text-sm text-[#9A968D] italic text-center py-6" }, day < today ? "Nothing was done this day." : "Nothing planned for this day.") : null,
+    bySection(dayTodo).map((g) => React.createElement("div", { key: g.name, className: "mb-3" }, heading(g.name, g.list.length, "text-[#4B4740]"), g.list.map(card))),
+    dayDone.length > 0 && React.createElement("div", { className: "mb-3" }, heading(day === today ? "Winterized today" : "Winterized this day", dayDone.length, "text-[#28633C]"), dayDone.map(card)),
+    day >= today && dayTodo.length > 0 && React.createElement("button", { type: "button", onClick: () => setRainDay(day), className: "w-full min-h-[44px] mt-2 rounded-lg border border-[#E2DED5] text-sm font-medium text-[#4B4740]" }, "Rain day \u2014 push this day back\u2026")
+  );
+  const q = search.trim().toLowerCase();
+  const matches = (r) => {
+    if (!q) return true;
+    const info = winterInfo(db, r);
+    return `${info.site ? info.site.number : ""} ${info.cottage ? info.cottage.name : ""} ${info.customer ? info.customer.name : ""} ${info.section}`.toLowerCase().includes(q);
+  };
+  const allEl = () => {
+    const shown = requests.filter(matches);
+    const open = shown.filter((r) => !r.completed);
+    const dates = [...new Set(open.map(winterPlannedDate))].sort((x, y) => (x || "9999").localeCompare(y || "9999"));
+    const done = shown.filter((r) => r.completed).sort((x, y) => (y.completedDate || "").localeCompare(x.completedDate || ""));
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("input", { type: "search", value: search, onChange: (e) => setSearch(e.target.value), placeholder: "Search site, cottage or owner\u2026", className: inputCls + " mb-4", "aria-label": "Search winterizing" }),
+      shown.length === 0 && React.createElement("p", { className: "text-sm text-[#9A968D] italic text-center py-6" }, "Nothing matches."),
+      dates.map((d) => {
+        const list = open.filter((r) => winterPlannedDate(r) === d).sort(winterSiteSort(db));
+        return React.createElement("div", { key: d || "none", className: "mb-3" }, heading(d ? d === today ? `Today \u00B7 ${dayLabel(d)}` : dayLabel(d) : "Not scheduled", list.length, d && d < today ? "text-[#a8532a]" : null), list.map(card));
+      }),
+      done.length > 0 && React.createElement("div", { className: "mb-3" }, heading("Winterized", done.length, "text-[#28633C]"), done.map(card))
+    );
+  };
+  const panelRequest = panelId ? requests.find((r) => r.id === panelId) : null;
+  const rainChanges = rainDay ? pushBackWinterDay(requests, db, rainDay) : [];
   return React.createElement(
     React.Fragment,
     null,
-    confirmComplete && React.createElement(
-      Modal,
-      { title: "Mark Winterizing Complete?", onClose: () => setConfirmComplete(null) },
-      React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "Confirm winterizing complete for this cottage?"),
-      React.createElement(
-        "div",
-        { className: "flex justify-end gap-2" },
-        React.createElement("button", { onClick: () => setConfirmComplete(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
-        React.createElement("button", { onClick: () => {
-          toggleComplete(confirmComplete);
-          setConfirmComplete(null);
-        }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Yes, Mark Complete")
-      )
-    ),
     requests.length > 0 && React.createElement(
       "div",
       { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-3.5 mb-4" },
       React.createElement(
         "div",
         { className: "flex items-center justify-between mb-1.5" },
-        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-[0.06em] text-[#75716A]" }, "Winterized"),
+        React.createElement("span", { className: "text-[10px] font-bold uppercase tracking-[0.06em] text-[#75716A]" }, "Winterized this season"),
         React.createElement("span", { className: "text-[13px] font-semibold text-[#28633C]" }, doneCount, " / ", requests.length)
       ),
       React.createElement("div", { className: "h-2 rounded-full bg-[#F1EEE9] overflow-hidden" }, React.createElement("div", { className: "h-full bg-[#377249]", style: { width: `${pct}%` } }))
     ),
-    requests.length === 0 ? React.createElement(EmptyState, { text: "No winterizing sign-ups yet." }) : requests.slice().sort((a, b) => Number(a.completed) - Number(b.completed) || (winterPlannedDate(a) || "9999").localeCompare(winterPlannedDate(b) || "9999")).map((r) => React.createElement(WinterizingRequestRow, {
-      key: r.id,
-      request: r,
+    carryNotice && React.createElement("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-3 py-2 mb-4 text-sm text-[#4B4740] flex justify-between gap-3", "data-carry-notice": true }, React.createElement("span", null, carryNotice), React.createElement("button", { type: "button", onClick: () => setCarryNotice(""), "aria-label": "Dismiss", className: "text-[#75716A]" }, "\u2715")),
+    requests.length === 0 ? React.createElement(EmptyState, { text: "No winterizing sign-ups yet." }) : React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        "div",
+        { className: "flex rounded-full border border-[#E2DED5] bg-[#FFFDFA] p-1 mb-4", role: "tablist" },
+        [["day", "Day"], ["all", "All sign-ups"]].map(([k, label]) => React.createElement("button", { key: k, type: "button", role: "tab", "aria-selected": mode === k, onClick: () => setMode(k), className: `flex-1 min-h-[36px] rounded-full text-[13px] font-semibold ${mode === k ? "bg-[#1E1A13] text-[#F9F5EC]" : "text-[#4B4740]"}` }, label))
+      ),
+      mode === "day" ? dayEl : allEl()
+    ),
+    panelRequest && React.createElement(WinterizingCottagePanel, {
+      key: panelRequest.id,
+      request: panelRequest,
       db,
       readOnly: false,
-      emailStatus: void 0,
-      selectMode: false,
-      selected: false,
-      onEdit: () => onGoToDesktopTab("winterizing"),
-      onDelete: () => onGoToDesktopTab("winterizing"),
-      onToggle: requestToggle,
-      onDirectComplete: toggleComplete,
-      onToggleSelect: () => {
-      },
-      onPrint: () => onGoToDesktopTab("winterizing"),
-      onEmailCustomer: () => onGoToDesktopTab("winterizing"),
-      onAnodeRodReplaced: markAnodeRodReplaced
-    }))
+      onClose: () => setPanelId(null),
+      onComplete: toggleComplete,
+      onReopen: toggleComplete,
+      onAnodeRod: markAnodeRodReplaced,
+      onSchedule: schedule,
+      onProblem: saveWorkOrder ? (r) => setProblemFor(r) : null
+    }),
+    problemFor && saveWorkOrder && (() => {
+      const info = winterInfo(db, problemFor);
+      return React.createElement(QuickWorkOrderModal, {
+        db,
+        saveWorkOrder: (wo) => {
+          saveWorkOrder(wo);
+          persist({ ...db, activityLog: addLog(db, actor, `Logged a problem found while winterizing ${cottageName(problemFor.cottageId)}: ${wo.title}`) });
+          setToast("Work order created");
+        },
+        onClose: () => setProblemFor(null),
+        initial: { siteId: info.site ? info.site.id : null, cottageId: problemFor.cottageId || null, customerId: problemFor.customerId || null, title: `Found while winterizing \u2014 ${info.cottage ? info.cottage.name : "cottage"}`, description: "" }
+      });
+    })(),
+    rainDay && React.createElement(
+      Modal,
+      { title: "Rain day?", onClose: () => setRainDay(null) },
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, `Move everything planned on ${dayLabel(rainDay)} and after it back one weekday (${rainChanges.length} cottage${rainChanges.length === 1 ? "" : "s"}). Blocked days stay where they are.`),
+      React.createElement(
+        "div",
+        { className: "flex justify-end gap-2" },
+        React.createElement("button", { type: "button", onClick: () => setRainDay(null), className: "px-4 py-2 text-sm text-[#75716A] rounded-md" }, "Cancel"),
+        React.createElement("button", { type: "button", onClick: () => {
+          rainChanges.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date }));
+          persist({ ...db, activityLog: addLog(db, actor, `Rain day: pushed winterizing from ${rainDay} back a day (${rainChanges.length} cottages)`) });
+          setToast(`Pushed back a day (${rainChanges.length})`);
+          setRainDay(null);
+        }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md font-medium" }, "Push back a day")
+      )
+    )
   );
 }
 function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveInvoice, onGoToDesktopTab, setToast }) {
-  const [runTab, setRunTab] = useState("propane");
+  // Opens on the last one used; the first time, Winterizing when cottages
+  // are planned for today.
+  const [runTab, setRunTabState] = useState(() => {
+    try {
+      const saved = localStorage.getItem("qic-field-runs-tab");
+      if (saved === "propane" || saved === "winter") return saved;
+    } catch (e) {
+    }
+    const today = todayISO();
+    return (db.winterizingRequests || []).some((r) => !r.archived && !r.completed && winterPlannedDate(r) === today) ? "winter" : "propane";
+  });
+  const setRunTab = (k) => {
+    setRunTabState(k);
+    try {
+      localStorage.setItem("qic-field-runs-tab", k);
+    } catch (e) {
+    }
+  };
   return React.createElement(
     React.Fragment,
     null,
@@ -19845,7 +20003,7 @@ function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizi
         k === "propane" ? "Propane" : "Winterizing"
       ))
     ),
-    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, onGoToDesktopTab, setToast })
+    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, onGoToDesktopTab, setToast })
   );
 }
 function fieldParkResults(db, term) {
