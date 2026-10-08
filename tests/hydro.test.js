@@ -88,6 +88,35 @@ test("Accounting can correct a baseline without billing, and the next reading's 
   await page.close();
 });
 
+test("A baseline locked by a later bill can still have a mistyped date fixed, kept in order, nothing else changed", async () => {
+  await resetData({
+    ...base("admin"),
+    "hydroReadings/a": { id: "a", siteId: "s42", date: "2025-05-01", reading: 1000, status: "confirmed", isBaseline: true, previousReading: null, usage: null, flagged: false, rolledOver: false },
+    "hydroReadings/b": { id: "b", siteId: "s42", date: "2026-10-01", reading: 1500, status: "invoiced", invoiceNumber: "HYD-26-0001", isBaseline: false, previousReading: 1000, usage: 500, flagged: false, rolledOver: false, amount: 84.75, taxAmount: 9.75 }
+  });
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await mountWithDb(page, asUser("HydroMeterView"), READY(2));
+  await openSection(page);
+  await page.getByRole("button", { name: "History" }).first().click();
+  assert.equal(await page.getByRole("button", { name: "Edit", exact: true }).count(), 0, "nothing can be fully edited");
+  await page.getByRole("button", { name: "Fix date" }).click();
+  await page.getByText("only the date can be fixed", { exact: false }).waitFor();
+  assert.equal(await page.locator('input[type="number"]').last().isDisabled(), true, "the reading itself stays");
+  assert.equal(await page.getByRole("button", { name: "Remove reading" }).count(), 0);
+  // After the billed reading would put it out of order.
+  await page.getByLabel("Reading date").fill("2026-10-05");
+  await page.getByText("out of order", { exact: false }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Save correction" }).isDisabled(), true);
+  await page.getByLabel("Reading date").fill("2026-05-01");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  const fixed = await waitFor(async () => { const a = (await readings()).find((r) => r.id === "a"); return a && a.date === "2026-05-01" ? a : null; }, "the date to be fixed");
+  assert.equal(fixed.reading, 1000);
+  assert.equal(fixed.status, "confirmed");
+  const billed = (await readings()).find((r) => r.id === "b");
+  assert.deepEqual([billed.status, billed.usage, billed.amount], ["invoiced", 500, 84.75], "the bill is untouched");
+  await page.close();
+});
+
 test("A closing reading bills the seller even after the sale is recorded", async () => {
   await resetData({ ...base("office"), "hydroReadings/a": { id: "a", siteId: "s42", date: "2026-09-01", reading: 1000, status: "confirmed", isBaseline: true } });
   const page = await openApp(browser, "emulator", { role: "office", email: EMAIL });
