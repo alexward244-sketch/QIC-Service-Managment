@@ -592,6 +592,7 @@ const SERVER_ALERT_SOURCES = {
   serviceCorrespondence: { label: "Incoming email intake", check: "Check the service inbox in Zoho for emails that didn't show up in the app's Correspondence tab." },
   zohoAttachments: { label: "Email attachments from Zoho", check: "The email arrived but its attachments may be missing - open the email in Zoho to see them. If this keeps happening, the Zoho connection may need to be re-authorized." },
   zohoDelete: { label: "Deleting emails in both the app and Zoho", check: "An email deleted in one place may still be in the other - delete it there by hand. If this keeps happening, the Zoho connection may need re-authorizing with permission to delete mail." },
+  zohoRead: { label: "Marking emails read in Zoho", check: "Emails opened in the app may still look unread in Zoho. If this keeps happening, the Zoho connection needs re-authorizing with permission to update mail (the same step that lets deletes reach Zoho)." },
   zohoSentMail: { label: "Replies sent from Zoho", check: "Replies written in Zoho may not be showing in the app's Correspondence. They're still in Zoho's Sent folder. If this keeps happening, the Zoho connection may need re-authorizing." },
   emailTriage: { label: "Email triage (Claude)", check: "Emails still arrive, just without the suggested flag and summary. Usually a brief Claude outage; nothing to do unless it keeps happening." },
   morningSummary: { label: "Morning summary", check: "The summary may be missing or only have the plain counts today. Check the dashboard; you can regenerate it there." }
@@ -957,11 +958,9 @@ async function zohoMailSend(method, path, accessToken, payload) {
   return { status: response.status, body };
 }
 
-// Moves the Zoho copy of an app entry to Zoho's Trash. Returns how many
-// messages were moved, or { notAllowed } when Zoho refused.
-async function trashZohoCopy(c) {
-  const accessToken = await getZohoAccessToken();
-  const trashId = await zohoFolderId(accessToken, "trash");
+// The Zoho message an app entry was made from (not one already in Trash):
+// { best }, { best: null } when there isn't one, or { notAllowed }.
+async function findZohoCopy(c, accessToken, trashId) {
   const found = new Map();
   for (const addr of zohoAddressesFor(c)) {
     const key = `${c.direction === "out" ? "to" : "sender"}:${addr}`;
@@ -974,10 +973,21 @@ async function trashZohoCopy(c) {
       if (toStr(m.folderId) !== toStr(trashId) && isZohoCopyOf(m, c)) found.set(toStr(m.messageId), m);
     }
   }
-  if (!found.size) return { moved: 0 };
+  if (!found.size) return { best: null };
   // Only the closest one, should the same email have come in twice.
   const at = Date.parse(c.receivedAt) || 0;
-  const best = Array.from(found.values()).sort((a, b) => Math.abs(zohoSentTime(a) - at) - Math.abs(zohoSentTime(b) - at))[0];
+  return { best: Array.from(found.values()).sort((a, b) => Math.abs(zohoSentTime(a) - at) - Math.abs(zohoSentTime(b) - at))[0] };
+}
+
+// Moves the Zoho copy of an app entry to Zoho's Trash. Returns how many
+// messages were moved, or { notAllowed } when Zoho refused.
+async function trashZohoCopy(c) {
+  const accessToken = await getZohoAccessToken();
+  const trashId = await zohoFolderId(accessToken, "trash");
+  const copy = await findZohoCopy(c, accessToken, trashId);
+  if (copy.notAllowed) return { notAllowed: true };
+  if (!copy.best) return { moved: 0 };
+  const best = copy.best;
   const moved = await zohoMailSend("PUT", `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/updatemessage`, accessToken, {
     mode: "moveMessage",
     messageId: [toStr(best.messageId)],
@@ -991,6 +1001,52 @@ async function trashZohoCopy(c) {
   await ZOHO_SENT_STATE.set({ trashSeen: admin.firestore.FieldValue.arrayUnion(toStr(best.messageId)) }, { merge: true });
   return { moved: 1 };
 }
+
+// Marks the Zoho copy of an email read, so an email opened in the app
+// doesn't still look new in Zoho. Returns { marked } or { notAllowed }.
+async function markZohoCopyRead(c) {
+  const accessToken = await getZohoAccessToken();
+  const trashId = await zohoFolderId(accessToken, "trash");
+  const copy = await findZohoCopy(c, accessToken, trashId);
+  if (copy.notAllowed) return { notAllowed: true };
+  if (!copy.best) return { marked: 0 };
+  const result = await zohoMailSend("PUT", `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/updatemessage`, accessToken, { mode: "markAsRead", messageId: [toStr(copy.best.messageId)] });
+  if (!result.response) {
+    if (zohoNotAllowed(result)) return { notAllowed: true };
+    throw new Error(`Zoho wouldn't mark it read (${result.status}): ${toStr(result.body).slice(0, 200)}`);
+  }
+  return { marked: 1 };
+}
+
+// Called by the app when an incoming email is opened.
+exports.markEmailReadInZoho = onCall(
+  { secrets: [ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY] },
+  async (request) => {
+    requireStaff(request, "open emails");
+    const d = request.data || {};
+    const c = {
+      direction: "in",
+      zohoMessageId: toStr(d.zohoMessageId),
+      zohoFrom: toStr(d.zohoFrom),
+      forwardedBy: toStr(d.forwardedBy),
+      fromEmail: toStr(d.fromEmail),
+      subject: toStr(d.subject),
+      receivedAt: toStr(d.receivedAt)
+    };
+    try {
+      const result = await markZohoCopyRead(c);
+      if (result.notAllowed) {
+        await reportServerProblem("zohoRead", `An email opened in the app ("${c.subject || "no subject"}") couldn't be marked read in Zoho - the Zoho connection isn't allowed to update mail yet.`);
+        return { ok: false, reason: "not-allowed" };
+      }
+      return { ok: true, marked: result.marked };
+    } catch (err) {
+      console.error("Couldn't mark the email read in Zoho:", err);
+      await reportServerProblem("zohoRead", `An email opened in the app ("${c.subject || "no subject"}") couldn't be marked read in Zoho: ${err.message || err}`, { email: false });
+      return { ok: false, reason: "error" };
+    }
+  }
+);
 
 // Called by the app's "Delete" on an email, with the entry being deleted.
 exports.trashEmailInZoho = onCall(

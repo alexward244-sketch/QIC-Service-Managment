@@ -18576,6 +18576,16 @@ function trashEmailInZoho(item) {
   const { direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt } = item;
   return functions_.httpsCallable("trashEmailInZoho")({ direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt }).catch((e) => console.error("Couldn't move the email to Zoho's Trash:", e));
 }
+// Opening an incoming email in the app marks its Zoho copy read, so it
+// doesn't still look new there. Once per email per visit; best effort -
+// problems show up in System Health.
+const ZOHO_MARKED_READ = /* @__PURE__ */ new Set();
+function markEmailReadInZoho(item) {
+  if (!item || item.direction === "out" || ZOHO_MARKED_READ.has(item.id)) return;
+  ZOHO_MARKED_READ.add(item.id);
+  const { zohoMessageId, zohoFrom, forwardedBy, fromEmail, subject, receivedAt } = item;
+  functions_.httpsCallable("markEmailReadInZoho")({ zohoMessageId, zohoFrom, forwardedBy, fromEmail, subject, receivedAt }).catch((e) => console.error("Couldn't mark the email read in Zoho:", e));
+}
 function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice }) {
   const actor = useCurrentActor();
   const [selectedId, setSelectedId] = useState(null);
@@ -18623,6 +18633,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
   const selectedVoicemail = correspondenceVoicemail(selectedItem);
   const viewCustomer = viewCustomerId ? (db.customers || []).find((c) => c.id === viewCustomerId) : null;
   const selectItem = (item) => {
+    markEmailReadInZoho(item);
     setComposePickerOpen(false);
     setSelectedId(item.id);
     setReplyTo(null);
