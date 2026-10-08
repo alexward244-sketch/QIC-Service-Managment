@@ -536,13 +536,13 @@ function stripQuotedReplyText(text) {
 
 // Computed in Eastern time (not the server's default UTC) so a submission
 // right around midnight ET doesn't get logged under the wrong day.
-function todayEasternISO() {
+function todayEasternISO(at = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Toronto",
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).formatToParts(new Date());
+  }).formatToParts(at);
   const map = {};
   parts.forEach((p) => {
     map[p.type] = p.value;
@@ -2069,6 +2069,106 @@ exports.morningSummary = onSchedule(
     } catch (err) {
       console.error("Morning summary failed:", err);
       await reportServerProblem("morningSummary", `Today's morning summary couldn't be built: ${err.message || err}`);
+      throw err;
+    }
+  }
+);
+
+// ---- Winterizing keys: on the open day before a winterizing day (Friday for
+// Monday), reception (reserve@qicampark.com) is emailed the cottages planned
+// for it whose keys they need to collect - every one where the site's how-to
+// (from the master list) doesn't say our master key works. Closed days
+// (Thanksgiving Monday, and blocked days marked closed) get no email; the
+// open day before covers through the next open day. Sent once a day;
+// turned off with settings.winterKeyEmailOff. ----
+const WINTER_KEYS_TO = "reserve@qicampark.com";
+function nextWeekdayISO(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  do dt.setUTCDate(dt.getUTCDate() + 1); while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6);
+  return dt.toISOString().slice(0, 10);
+}
+// Canadian Thanksgiving: the second Monday of October.
+function thanksgivingISO(year) {
+  const first = new Date(Date.UTC(year, 9, 1)).getUTCDay();
+  return `${year}-10-${String(1 + (8 - first) % 7 + 7).padStart(2, "0")}`;
+}
+function longDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+}
+async function sendWinterKeyList(today) {
+  const mainSnap = await ROLES_DOC.get();
+  const settings = (mainSnap.exists && mainSnap.data().settings) || {};
+  if (settings.winterKeyEmailOff) return { today, skipped: "turned off" };
+  const closed = new Set((settings.winterBlockedDays || []).filter((b) => b && b.closed).map((b) => b.date));
+  const year = Number(today.slice(0, 4));
+  [year, year + 1].forEach((y) => closed.add(thanksgivingISO(y)));
+  if (closed.has(today)) return { today, skipped: "closed today" };
+  // The days this email covers: the next weekdays up to and including the next open one.
+  const days = [];
+  let d = today;
+  do {
+    d = nextWeekdayISO(d);
+    days.push(d);
+  } while (closed.has(d) && days.length < 10);
+  const sentRef = db.collection("winterKeyEmails").doc(today);
+  const [sentSnap, winterSnap, cottSnap, sitesSnap, custSnap] = await Promise.all([
+    sentRef.get(),
+    db.collection("winterizingRequests").get(),
+    db.collection("cottages").get(),
+    db.collection("sites").get(),
+    db.collection("customers").get()
+  ]);
+  if (sentSnap.exists) return { today, skipped: "already sent" };
+  const byId = (snap) => new Map(snap.docs.map((d) => [d.id, d.data()]));
+  const cottages = byId(cottSnap), sites = byId(sitesSnap), customers = byId(custSnap);
+  const rows = winterSnap.docs.map((d) => d.data())
+    .filter((r) => !r.archived && !r.completed && days.includes(r.plannedDate != null ? r.plannedDate : r.requestedDate || ""))
+    .map((r) => {
+      const cottage = cottages.get(r.cottageId) || null;
+      const site = cottage && cottage.siteId ? sites.get(cottage.siteId) || null : null;
+      const customer = r.customerId ? customers.get(r.customerId) || null : null;
+      const howTo = site && site.winterHowTo;
+      return { r, day: r.plannedDate != null ? r.plannedDate : r.requestedDate, cottage, site, customer, masterKey: !!(howTo && howTo.masterKey), onList: !!(howTo && (howTo.code || howTo.note || howTo.masterKey)) };
+    })
+    .filter((x) => !x.masterKey);
+  if (!rows.length) return { today, days, count: 0 };
+  const section = (x) => toStr(x.site && x.site.section).trim() || "No section";
+  rows.sort((a, b) => a.day.localeCompare(b.day) || section(a).localeCompare(section(b)) || toStr(a.site && a.site.number).localeCompare(toStr(b.site && b.site.number), undefined, { numeric: true }));
+  const withWork = days.filter((x) => rows.some((r) => r.day === x));
+  const lines = [];
+  let last = null;
+  rows.forEach((x) => {
+    const head = withWork.length > 1 ? `${longDate(x.day)} \u2014 ${section(x)}` : section(x);
+    if (head !== last) {
+      if (last != null) lines.push("");
+      lines.push(head);
+      last = head;
+    }
+    const who = x.customer ? [toStr(x.customer.name), toStr(x.customer.phone)].filter(Boolean).join(", ") : "no owner linked";
+    const flags = [x.r.options && x.r.options.keyAtReception ? "customer said the key is at reception" : "", x.onList ? "" : "not on the master list - check"].filter(Boolean);
+    lines.push(`- ${x.site ? `Site ${toStr(x.site.number)}` : "No site"}${x.cottage ? ` · ${toStr(x.cottage.name)}` : ""} · ${who}${flags.length ? ` (${flags.join("; ")})` : ""}`);
+  });
+  const when = withWork.map(longDate).join(" and ");
+  const subject = `Winterizing keys needed for ${when}`;
+  const message = `Hi,\n\nThese ${rows.length} cottage${rows.length === 1 ? " is" : "s are"} being winterized on ${when} and our master key doesn't work for ${rows.length === 1 ? "it" : "them"}. Please collect the keys before then.\n\n${lines.join("\n")}\n\nSent by the QIC Service app.`;
+  const to = toStr(settings.winterKeyEmailTo).trim() || WINTER_KEYS_TO;
+  await sendSummaryEmail(to, subject, message);
+  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString() });
+  return { today, days, count: rows.length };
+}
+
+exports.winterKeyList = onSchedule(
+  { schedule: "0 9 * * 1-5", timeZone: "America/Toronto", secrets: [EMAILJS_PRIVATE_KEY], timeoutSeconds: 120 },
+  async (event) => {
+    const today = todayEasternISO(event && event.scheduleTime ? new Date(event.scheduleTime) : new Date());
+    try {
+      const result = await sendWinterKeyList(today);
+      console.log("Winterizing keys email:", JSON.stringify(result));
+    } catch (err) {
+      console.error("Winterizing keys email failed:", err);
+      await reportServerProblem("winterKeyList", `The winterizing keys email to reception couldn't be sent: ${err.message || err}`);
       throw err;
     }
   }

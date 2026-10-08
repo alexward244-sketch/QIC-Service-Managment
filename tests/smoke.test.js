@@ -485,7 +485,8 @@ async function openWinterizing(page) {
     };
     const root = ReactDOM.createRoot(document.getElementById("root"));
     window.__addRequest = (r) => { db = { ...db, winterizingRequests: [...db.winterizingRequests, r] }; render(); };
-    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
+    const putSites = (list) => { db = { ...db, sites: db.sites.map((x) => list.find((y) => y.id === x.id) || x) }; render(); };
+    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests, sites: db.sites }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), saveSite: (x) => putSites([x]), bulkWriteSites: async (list) => { putSites(list); return true; }, readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
     render();
   });
 }
@@ -509,7 +510,7 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
     const rain = Object.fromEntries(pushBackWinterDay(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
     // It's the 14th and r4, r6 (planned the 13th) weren't finished.
     const carry = Object.fromEntries(carryOverWinter(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
-    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)) };
+    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)), thanksgiving: [winterSeason(db).closed["2026-10-12"], winterWorkday("2026-10-12", winterSeason(db))] };
   });
   // r6 is kept on the 13th (put there by hand); r1, r2 get the day they asked for; r3 overflows past the
   // blocked 15th to the 16th; r4 and r5 (asked for a day before the season) fill the rest in sign-up order.
@@ -518,6 +519,41 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r4: "2026-10-14", r5: "2026-10-19", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend)");
   assert.equal(out.start, "2026-10-13", "the board opens on the season's first day");
   assert.equal(out.blockedIsWorkday, "2026-10-16");
+  assert.deepEqual(out.thanksgiving, [true, "2026-10-13"], "Thanksgiving Monday is closed and never planned");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: a new sign-up for a full day goes on it when its area has the most there; the smallest area's cottage moves a day, marked Moved", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0103", "Front of Park"], ["s4", "0490", "Limestone South"], ["s5", "0495", "Limestone South"], ["s6", "0480", "Limestone South"]].map(([id, number, section]) => ({ id, number, section }));
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 3, winterAutoPlaceNew: true }, sites, cottages: sites.map((x, i) => ({ id: "k" + i, siteId: x.id })), customers: [] };
+    const req = (id, k, extra) => ({ id, cottageId: k, ...extra });
+    // Wed 14th is full: 2 Front of Park, 1 Limestone South (who asked for that day).
+    const base = [req("a", "k0", { plannedDate: "2026-10-14" }), req("b", "k1", { plannedDate: "2026-10-14" }), req("c", "k3", { plannedDate: "2026-10-14", requestedDate: "2026-10-14" })];
+    const run = (fresh) => { const all = [...base, fresh]; db.winterizingRequests = all; return placeNewWinterSignups(all, db, "2026-10-06").map((p) => [p.request.id, p.date, p.moved ? p.moved.from + " for " + p.moved.forSection : ""]); };
+    const frontOfPark = run(req("n", "k2", { requestedDate: "2026-10-14" }));
+    const limestone = run(req("n", "k4", { requestedDate: "2026-10-14" }));
+    // Two Limestone South there (one asked for the day), four Front of Park, limit 6: the one who didn't ask moves.
+    db.settings.winterDailyLimit = 6;
+    base.push(req("d", "k5", { plannedDate: "2026-10-14" }), req("e", "k2", { plannedDate: "2026-10-14" }), req("f", "k2", { plannedDate: "2026-10-14" }));
+    const protectedDate = run(req("n", "k2", { requestedDate: "2026-10-14" }));
+    return { frontOfPark, limestone, protectedDate };
+  });
+  assert.deepEqual(out.frontOfPark, [["n", "2026-10-14", ""], ["c", "2026-10-15", "2026-10-14 for Front of Park"]], "Front of Park has the most that day, so Limestone South's one moves");
+  assert.deepEqual(out.limestone, [["n", "2026-10-15", ""]], "Limestone South is the smaller area there, so the new one goes to the next day with room");
+  assert.deepEqual(out.protectedDate, [["n", "2026-10-14", ""], ["d", "2026-10-15", "2026-10-14 for Front of Park"]], "the Limestone South cottage that asked for the day stays; the other one moves");
+  // On the Plan board and in the notice.
+  await openWinterizing(page);
+  await page.evaluate(() => window.__addRequest({ id: "m1", cottageId: "k2", customerId: "c2", plannedDate: winterAddDays(todayISO(), 1), movedOnPlan: { from: todayISO(), forSection: "Pebble Beach Seasonal" }, options: {} }));
+  await page.getByRole("tab", { name: "Plan" }).click();
+  await page.locator("[data-new-on-plan]").getByText("1 cottage was moved a day to make room").waitFor();
+  await page.locator('[data-moved="m1"]').getByText("to keep Pebble Beach Seasonal together", { exact: false }).waitFor();
+  await page.locator('[data-plan-card="m1"] [data-moved-tag]').waitFor();
+  await page.locator("[data-new-on-plan]").getByRole("button", { name: "Got it" }).click();
+  await page.locator("[data-new-on-plan]").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => window.__saved.filter((r) => r.id === "m1").pop().movedOnPlan), null);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -657,6 +693,56 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
   await page.close();
 });
 
+test("winterizing how-to: the master list's codes in plain words, imported onto sites, shown and edited on the checklist", async () => {
+  const page = await openApp(browser, "stub");
+  // The real SheetJS (the app's own version), so a real .xlsx goes through the import.
+  await page.addScriptTag({ path: require.resolve("xlsx/dist/xlsx.full.min.js", { paths: [__dirname] }) });
+  const decoded = await page.evaluate(() => ["BP", "IN BT P D", "IN KT W", "BP (ot)", "OD", "DT Left of unit", "BP cz1010", "IN P D"].map((c) => winterHowToSteps(c).steps));
+  assert.deepEqual(decoded, [
+    ["Connect outside at the bypass"],
+    ["Connect inside at the bathroom sink, by the patio door"],
+    ["Connect inside at the kitchen sink, by the window"],
+    ["Connect outside at the bypass", "Outside tap too"],
+    ["On-demand hot water heater"],
+    ["Drain tap \u2014 left of unit"],
+    ["Connect outside at the bypass", "Also on the list: cz1010"],
+    ["Connect inside by the patio door"]
+  ]);
+  await openWinterizing(page);
+  // The master list: 126 written without leading zeros still finds its site; 999 isn't one.
+  const file = await page.evaluate(() => {
+    const ws = XLSX.utils.json_to_sheet([
+      { Unit_ID: 126, Master: "X", Instructions: "IN BT P D", Notes: "Outside Shower" },
+      { Unit_ID: 233, Master: "", Instructions: "BP", Notes: "" },
+      { Unit_ID: 107, Master: "", Instructions: "", Notes: "" },
+      { Unit_ID: 999, Master: "", Instructions: "BP", Notes: "" }
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "list");
+    return XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+  });
+  await page.getByRole("button", { name: "How-to list\u2026" }).click();
+  await page.getByLabel("Master list file").setInputFiles({ name: "winterization_master_list.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(file, "base64") });
+  await page.getByText("2 sites matched").waitFor();
+  await page.getByText("Not found in Sites (skipped): 999").waitFor();
+  await page.getByRole("button", { name: "Save to 2 sites" }).click();
+  await page.getByText("Saved \u2014 2 sites updated", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
+  // On Willow's checklist (site 126), first thing.
+  await page.locator('[data-winter-row="r1"]').click();
+  const box = page.locator("[data-winter-howto]");
+  await box.getByText("Connect inside at the bathroom sink, by the patio door").waitFor();
+  await box.getByText("Outside Shower").waitFor();
+  await box.getByText("Our master key works", { exact: false }).waitFor();
+  // A one-off change.
+  await box.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("How-to code").fill("BP");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator("[data-winter-howto]").getByText("Connect outside at the bypass").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing on a phone keeps the simple list", async () => {
   const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
   await openWinterizing(page);
@@ -676,7 +762,7 @@ test("winterizing in the field app: the crew's day, a checklist to finish each c
     const add = (n) => winterAddDays(today, n);
     let db = {
       settings: { winterSeasonStart: add(-10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
-      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal" }, { id: "s2", number: "0233", section: "Limestone South" }, { id: "s3", number: "0107", section: "Pebble Beach Seasonal" }],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal", winterHowTo: { code: "IN KT W", note: "", masterKey: true } }, { id: "s2", number: "0233", section: "Limestone South" }, { id: "s3", number: "0107", section: "Pebble Beach Seasonal" }],
       cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
       customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", siteIds: ["s1"] }, { id: "c2", name: "Gary C", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", siteIds: ["s3"] }],
       winterizingRequests: [
@@ -699,10 +785,12 @@ test("winterizing in the field app: the crew's day, a checklist to finish each c
   assert.equal(await page.locator("[data-field-winter-day]").getAttribute("data-field-winter-day"), info.today);
   const willow = page.locator('[data-field-winter="r1"]');
   await willow.getByText("Dog in the yard", { exact: false }).waitFor();
+  await willow.getByText("Inside \u00B7 kitchen sink \u00B7 \uD83D\uDD11 master key", { exact: false }).waitFor();
   await page.getByRole("heading", { name: "Pebble Beach Seasonal", exact: false }).first().waitFor();
   // Open it: the checklist has to be ticked before it can be marked done.
   await willow.click();
   const done = page.getByRole("button", { name: /^Mark winterized/ });
+  await page.locator("[data-winter-howto]").getByText("Connect inside at the kitchen sink, by the window").waitFor();
   assert.equal(await done.isDisabled(), true);
   assert.equal(await page.getByRole("button", { name: "Print" }).count(), 0, "no printing from the phone");
   assert.equal(await page.getByRole("button", { name: "Edit sign-up" }).count(), 0);

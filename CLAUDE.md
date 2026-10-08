@@ -104,10 +104,33 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Once auto-plan has run (`winterAutoPlaceNew`), new sign-ups go on a day
   by themselves, flagged `newOnPlan` ("New" tag + note) until someone sees
   them - so nothing slips by unnoticed.
+- A new sign-up asking for a full day still goes on it when its area has
+  the most cottages that day; one from the area with the fewest moves to the
+  next workday with room, flagged `movedOnPlan` ("Moved from …" + the same
+  notice) for the office. The customer isn't told. Someone who asked for
+  that day is only moved if everyone in the smaller areas asked for it.
+- `winterKeyList` (Cloud Function, 9am weekdays) emails reserve@qicampark.com
+  the next workday's cottages (Friday → Monday) whose site's how-to doesn't
+  say our master key works, so reception collects the keys. Once per day
+  (`winterKeyEmails/{date sent}`); off with `settings.winterKeyEmailOff`
+  (checkbox on the Plan board).
+- Closed days: Thanksgiving Monday automatically, plus blocked days ticked
+  "We're closed" (`winterBlockedDays[].closed`). Nothing is planned on them,
+  no keys email goes out that morning, and the open day before covers
+  through the next open day (we're closed Thanksgiving, so Friday's email
+  covers Tuesday).
 - The crew works from phones (field app → Runs → Winterizing: a Day view
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the
   computer screen.
+- How to winterize each cottage comes from Alex's master list, kept on the
+  site as `winterHowTo { code, note, masterKey }` (Winterizing → "How-to
+  list…" imports the Excel; edit one on the checklist). Codes: BP = bypass,
+  tool connects outside; IN = tool connects inside at the KT/K kitchen or
+  BT bathroom sink, by the W window / PD patio door / FD front door / SR
+  sunroom / D door; DT drain tap; OD on-demand hot water heater; (ot)
+  outside tap; Master X = our master key works. Unknown bits (e.g.
+  "cz1010") show as written - don't guess at them.
 
 **Parts**
 - Each part is its own document in the `parts` collection (not in
