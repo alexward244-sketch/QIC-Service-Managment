@@ -16975,14 +16975,22 @@ function hydroReadingLock(history, r) {
   const newerInvoiced = history.some((o) => o.id !== r.id && o.status === "invoiced" && (o.date > r.date || o.date === r.date && o.id > r.id));
   return newerInvoiced ? "Locked \u2014 a later reading was invoiced" : null;
 }
-function HydroReadingEditModal({ db, persist, reading, site, history, onClose }) {
+// dateOnly: a reading locked by a later bill can still have its date
+// fixed (a typo) - the number stays, and it must stay in the same place
+// among the site's readings, so no usage or bill changes.
+function HydroReadingEditModal({ db, persist, reading, site, history, onClose, dateOnly }) {
   const actor = useCurrentActor();
   const [value, setValue] = useState(String(reading.reading));
   const [date, setDate] = useState(reading.date);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState(null);
   const num = Number(value);
-  const valid = value !== "" && Number.isFinite(num) && num >= 0 && /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const before = (o) => o.date < reading.date || o.date === reading.date && o.id < reading.id;
+  const others = history.filter((o) => o.id !== reading.id);
+  const earliest = others.filter(before).reduce((m, o) => o.date > m ? o.date : m, "");
+  const latest = others.filter((o) => !before(o)).reduce((m, o) => !m || o.date < m ? o.date : m, "");
+  const inOrder = (!earliest || date >= earliest) && (!latest || date <= latest);
+  const valid = value !== "" && Number.isFinite(num) && num >= 0 && /^\d{4}-\d{2}-\d{2}$/.test(date) && (!dateOnly || inOrder);
   const saveAll = async (records, removeId) => {
     try {
       if (removeId) await HYDRO_READINGS_REF.doc(removeId).delete();
@@ -16995,6 +17003,12 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
   };
   const save = async () => {
     if (!valid) return;
+    if (dateOnly) {
+      if (date === reading.date) return onClose();
+      if (!await saveAll([{ ...reading, date, editedBy: actor, editedAt: (/* @__PURE__ */ new Date()).toISOString() }])) return;
+      persist({ ...db, activityLog: addLog(db, actor, `Corrected hydro reading date for site ${site ? site.number : "?"}: ${reading.date} \u2192 ${date}`) });
+      return onClose();
+    }
     const edited = { ...reading, reading: num, date, editedBy: actor, editedAt: (/* @__PURE__ */ new Date()).toISOString() };
     const others = history.filter((r) => r.id !== reading.id);
     const changed = recomputeHydroChain([...others, edited], site && site.meterDigits);
@@ -17012,14 +17026,15 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
   };
   return React.createElement(
     Modal,
-    { title: `Edit reading \u2014 Site ${site ? site.number : ""}`, onClose },
-    React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Corrections don't send or create a bill. Usage for this reading and the ones after it is worked out again; anything pending still goes through Hydro Review as usual."),
+    { title: `${dateOnly ? "Fix date" : "Edit reading"} \u2014 Site ${site ? site.number : ""}`, onClose },
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, dateOnly ? `A later reading has been billed, so only the date can be fixed${earliest || latest ? ` (between ${earliest || "the start"} and ${latest || "today"})` : ""}. Bills already sent aren't changed.` : "Corrections don't send or create a bill. Usage for this reading and the ones after it is worked out again; anything pending still goes through Hydro Review as usual."),
     React.createElement(
       "div",
       { className: "grid grid-cols-2 gap-3" },
-      React.createElement(Field, { label: "Reading" }, React.createElement("input", { type: "number", min: "0", inputMode: "decimal", className: inputCls, value, onChange: (e) => setValue(e.target.value) })),
-      React.createElement(Field, { label: "Date" }, React.createElement("input", { type: "date", className: inputCls, value: date, onChange: (e) => setDate(e.target.value) }))
+      React.createElement(Field, { label: "Reading" }, React.createElement("input", { type: "number", min: "0", inputMode: "decimal", className: inputCls + (dateOnly ? " bg-[#F1EEE9] text-[#75716A]" : ""), value, disabled: !!dateOnly, onChange: (e) => setValue(e.target.value) })),
+      React.createElement(Field, { label: "Date" }, React.createElement("input", { type: "date", className: inputCls, value: date, min: dateOnly && earliest || void 0, max: dateOnly && latest || void 0, onChange: (e) => setDate(e.target.value), "aria-label": "Reading date" }))
     ),
+    dateOnly && !inOrder && React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, "That date would put it out of order with the site's other readings."),
     error && React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, error),
     confirmDelete ? React.createElement(
       "div",
@@ -17030,7 +17045,7 @@ function HydroReadingEditModal({ db, persist, reading, site, history, onClose })
     React.createElement(
       "div",
       { className: "flex justify-between gap-2 mt-4" },
-      React.createElement("button", { type: "button", onClick: () => setConfirmDelete(true), className: "px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Remove reading"),
+      dateOnly ? React.createElement("span", null) : React.createElement("button", { type: "button", onClick: () => setConfirmDelete(true), className: "px-3 py-2 text-sm text-[#a8532a] hover:bg-[#F5E3D9] rounded-md" }, "Remove reading"),
       React.createElement(
         "span",
         { className: "flex gap-2" },
@@ -17065,7 +17080,7 @@ function HydroHistoryTable({ db, siteId, persist }) {
     let action = void 0;
     if (canEdit) {
       const lock = hydroReadingLock(history, r);
-      action = lock ? React.createElement("span", { className: "text-[11px] text-[#9A968D]", title: "Can't be changed once billed" }, lock === "Invoiced" ? "" : "Locked") : React.createElement("button", { type: "button", onClick: () => setEditing(r), className: "text-xs text-[#377249] hover:underline font-medium" }, "Edit");
+      action = lock === "Invoiced" ? React.createElement("span", { className: "text-[11px] text-[#9A968D]", title: "Can't be changed once billed" }, "") : lock ? React.createElement("button", { type: "button", onClick: () => setEditing({ ...r, __dateOnly: true }), title: "A later reading was billed - only the date can be fixed", className: "text-xs text-[#2E6E8E] hover:underline font-medium" }, "Fix date") : React.createElement("button", { type: "button", onClick: () => setEditing(r), className: "text-xs text-[#377249] hover:underline font-medium" }, "Edit");
     }
     return /* @__PURE__ */ React.createElement(HydroHistoryRow, { key: r.id, db, r, action });
   });
@@ -17088,7 +17103,7 @@ function HydroHistoryTable({ db, siteId, persist }) {
     { key: "t-" + (item.t.id || item.date + item.t.toCustomerName) },
     React.createElement("td", { colSpan: colCount, className: "py-1.5 px-2 text-xs bg-[#FBF3E6] text-[#9A6B1F] border-b border-[#F1EEE9]" }, "\uD83D\uDD11 ", React.createElement("b", null, item.date || "Date unknown"), " \u2014 ", item.t.cottageName ? `${item.t.cottageName}: ` : "", item.t.toCustomerName === "Taken off-site" ? `sold by ${item.t.fromCustomerName || "previous owner"} and taken off-site` : `transferred from ${item.t.fromCustomerName || "previous owner"} to ${item.t.toCustomerName || "new owner"}`)
   ) : item);
-  return /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, headerRow), /* @__PURE__ */ React.createElement("tbody", null, body)), editing && React.createElement(HydroReadingEditModal, { db, persist, reading: editing, site, history, onClose: () => setEditing(null) }));
+  return /* @__PURE__ */ React.createElement("div", { className: "overflow-x-auto" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, headerRow), /* @__PURE__ */ React.createElement("tbody", null, body)), editing && React.createElement(HydroReadingEditModal, { db, persist, reading: (({ __dateOnly, ...r }) => r)(editing), dateOnly: !!editing.__dateOnly, site, history, onClose: () => setEditing(null) }));
 }
 function HydroSiteCard({ site, owner, last, onEnterReading, onViewHistory }) {
   return /* @__PURE__ */ React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-start justify-between gap-2 mb-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "font-serif text-lg font-semibold text-[#1E1A13]" }, "Site ", site.number), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#75716A]" }, (owner == null ? void 0 : owner.name) || "\u2014")), /* @__PURE__ */ React.createElement("div", { className: "text-right" }, /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D] uppercase tracking-wide" }, "Last Reading"), /* @__PURE__ */ React.createElement("div", { className: "text-base font-semibold text-[#1E1A13]" }, last ? last.reading : "\u2014"), last && /* @__PURE__ */ React.createElement("div", { className: "text-xs text-[#9A968D]" }, last.date))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mt-3" }, /* @__PURE__ */ React.createElement(
