@@ -158,6 +158,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
   accounting but not shown on the invoice form or anything customers see.
+- Shop supplies (default 5%) is a share of parts + labour + the service
+  call (lines with `withServiceCall`). Older lines and the old
+  shop-supplies fields stay parts + labour, so invoices already sent keep
+  their totals.
 
 ## Ideas parked for later
 

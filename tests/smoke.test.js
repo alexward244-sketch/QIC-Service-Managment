@@ -946,12 +946,12 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   assert.equal(await desc().count(), 5);
 
   // Shop supplies: 5% of parts + labour, kept up to date; it can be picked by typing too.
-  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$12.00", "5% of $20 parts + $220 labour");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$15.50", "5% of $20 parts + $220 labour + $70 service call");
   await page.getByLabel("Hours").fill("3");
-  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$17.50");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$21.00", "5% of $20 + $330 labour + $70 service call");
   await page.getByLabel("Hours").fill("2");
   await desc().nth(4).fill("shop");
-  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).waitFor();
+  await page.getByRole("option", { name: /Shop supplies.*5% of parts, labour \+ service call/ }).waitFor();
   await desc().nth(4).fill("");
   assert.equal(await page.getByText("Shop Supplies", { exact: true }).count(), 0, "no separate shop supplies box");
   assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
@@ -959,12 +959,15 @@ test("invoice form: typing in a line's description offers parts, labour rates an
 
   await page.getByRole("button", { name: "Save Invoice" }).click();
   const inv = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 12, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 15.5, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
   assert.equal(inv.lineItems[0].percent, 5);
   assert.equal(inv.shopSuppliesPercent, 0, "shop supplies is the line, not the old field");
   const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
-  // Shop supplies: 5% of parts + labour, not the service call.
-  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 12, 70, 322]);
+  // Shop supplies: 5% of parts + labour + the service call.
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 15.5, 70, 325.5]);
+  // An invoice saved before the change keeps its amount (its line isn't marked withServiceCall).
+  const old = await page.evaluate(() => computeQuoteTotals({ lineItems: [{ description: "Caulking Tube", quantity: 2, unitPrice: 18.21 }, { kind: "serviceCall", description: "Service call", quantity: 1, unitPrice: 50 }, { kind: "shopSupplies", description: "Shop supplies", percent: 5, quantity: 1, unitPrice: 1.82 }] }, 13));
+  assert.deepEqual([old.shopSupplies, Math.round(old.total * 100) / 100], [1.82, 99.71]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

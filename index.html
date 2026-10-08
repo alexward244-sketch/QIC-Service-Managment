@@ -6554,7 +6554,7 @@ function isPropaneWorkOrder(wo, propaneRequests) {
   return wo.source === "propane" || /^\s*propane fill\s*$/i.test(wo.title || "") || (propaneRequests || []).some((r) => r.workOrderId === wo.id);
 }
 function shopSuppliesInvoiceLine(percent) {
-  return { id: uid(), kind: "shopSupplies", description: "Shop supplies", percent: percent != null ? percent : 5, quantity: 1, unitPrice: 0, account: "" };
+  return { id: uid(), kind: "shopSupplies", description: "Shop supplies", percent: percent != null ? percent : 5, withServiceCall: true, quantity: 1, unitPrice: 0, account: "" };
 }
 function partInvoiceLine(part, quantity) {
   return { id: uid(), description: part.name, quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
@@ -6575,7 +6575,7 @@ function invoiceFormLines(initial, rateOptions, serviceCallOptions, newShopSuppl
     lines.push({ ...serviceCallInvoiceLine(opt), unitPrice: initial.serviceCall != null ? Number(initial.serviceCall) : Number(opt.rate) || 0 });
   }
   if (initial && initial.shopSuppliesMode === "flat" ? Number(initial.shopSuppliesAmount) > 0 : Number(initial && initial.shopSuppliesPercent) > 0) {
-    lines.push(initial.shopSuppliesMode === "flat" ? { ...shopSuppliesInvoiceLine(), percent: null, unitPrice: Number(initial.shopSuppliesAmount) } : shopSuppliesInvoiceLine(Number(initial.shopSuppliesPercent)));
+    lines.push(initial.shopSuppliesMode === "flat" ? { ...shopSuppliesInvoiceLine(), percent: null, withServiceCall: false, unitPrice: Number(initial.shopSuppliesAmount) } : { ...shopSuppliesInvoiceLine(Number(initial.shopSuppliesPercent)), withServiceCall: false });
   }
   if (!initial && newShopSuppliesPercent) lines.push(shopSuppliesInvoiceLine(newShopSuppliesPercent));
   return [...lines, blankInvoiceLine()];
@@ -6590,7 +6590,7 @@ function invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions, sh
   const labour = rateOptions.filter((r) => r.label !== "N/A" && hit(`labour labor hours ${r.label}`)).map((r) => ({ key: `labour:${r.label}`, label: `Labour — ${r.label}`, detail: `${formatPrice(r.rate)}/hr`, line: () => labourInvoiceLine(r) }));
   const calls = serviceCallOptions.filter((o) => o.label !== "None" && hit(`service call ${o.label}`)).map((o) => ({ key: `call:${o.label}`, label: `Service call — ${o.label}`, detail: formatPrice(o.rate), line: () => serviceCallInvoiceLine(o) }));
   const pct = shopSuppliesPercent != null ? shopSuppliesPercent : 5;
-  const shop = hit("shop supplies") ? [{ key: "shop", label: "Shop supplies", detail: `${pct}% of parts + labour`, line: () => shopSuppliesInvoiceLine(pct) }] : [];
+  const shop = hit("shop supplies") ? [{ key: "shop", label: "Shop supplies", detail: `${pct}% of parts, labour + service call`, line: () => shopSuppliesInvoiceLine(pct) }] : [];
   const partHits = (parts || []).filter((p) => hit(`${p.name || ""} ${p.sku || ""}`)).slice(0, 8).map((p) => ({ key: `part:${p.id}`, label: p.name, detail: [p.sku, formatPrice(p.price)].filter(Boolean).join(" · "), line: () => partInvoiceLine(p) }));
   return [...labour, ...calls, ...shop, ...partHits];
 }
@@ -6598,13 +6598,13 @@ function invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions, sh
 // arrow keys + Enter. Anything typed that isn't picked stays as typed.
 // The quantity and price boxes of a line. A shop supplies line shows its
 // percent and the amount it works out to instead.
-function InvoiceLineAmounts({ li, partsAndLabour, updateLine }) {
+function InvoiceLineAmounts({ li, partsAndLabour, serviceCall, updateLine }) {
   const narrow = inputCls.replace("w-full ", "");
   if (li.kind === "shopSupplies" && li.percent != null) {
     return React.createElement(React.Fragment, null,
       React.createElement("input", { type: "number", min: "0", step: "0.5", className: narrow + " w-20", value: li.percent, onChange: (e) => updateLine(li.id, "percent", e.target.value), "aria-label": "Shop supplies percent" }),
       React.createElement("span", { className: "text-xs text-[#75716A]" }, "%"),
-      React.createElement("span", { className: "w-24 text-sm text-right text-[#1E1A13]", "data-shop-amount": true }, formatPrice(shopSuppliesLineAmount(li, partsAndLabour))));
+      React.createElement("span", { className: "w-24 text-sm text-right text-[#1E1A13]", "data-shop-amount": true }, formatPrice(shopSuppliesLineAmount(li, partsAndLabour, serviceCall))));
   }
   return React.createElement(React.Fragment, null,
     li.kind === "labour" && React.createElement("span", { className: "text-[11px] text-[#75716A]" }, "Hours"),
@@ -6613,11 +6613,11 @@ function InvoiceLineAmounts({ li, partsAndLabour, updateLine }) {
 }
 // Saved form of a form line (shop supplies keeps its percent and the
 // amount it came to).
-function cleanInvoiceLine(li, partsAndLabour) {
+function cleanInvoiceLine(li, partsAndLabour, serviceCall) {
   const base = { id: li.id, description: li.description.trim(), quantity: Number(li.quantity) || 0, unitPrice: Number(li.unitPrice) || 0, account: (li.account || "").trim() };
   if (li.partId) base.partId = li.partId;
   if (li.kind) Object.assign(base, { kind: li.kind, rateType: li.rateType || "" });
-  if (li.kind === "shopSupplies" && li.percent != null && li.percent !== "") Object.assign(base, { percent: Number(li.percent) || 0, quantity: 1, unitPrice: shopSuppliesLineAmount(li, partsAndLabour) });
+  if (li.kind === "shopSupplies" && li.percent != null && li.percent !== "") Object.assign(base, { percent: Number(li.percent) || 0, ...(li.withServiceCall ? { withServiceCall: true } : {}), quantity: 1, unitPrice: shopSuppliesLineAmount(li, partsAndLabour, serviceCall) });
   return base;
 }
 function InvoiceLineDescription({ value, onChange, onPick, suggest, placeholder }) {
@@ -6758,7 +6758,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   const balance = total - (Number(depositAmount) || 0);
   const submit = () => {
     if (!title.trim()) return;
-    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost));
+    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost, serviceCallAmt));
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
       invoiceNumber: (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber,
@@ -6839,7 +6839,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     onPick: (picked) => pickLine(li.id, picked),
     suggest: suggestLines,
     placeholder: "Description \u2014 type a part, \"labour\" or \"service call\""
-  }), React.createElement(InvoiceLineAmounts, { li, partsAndLabour: lineItemsSubtotal + laborCost, updateLine }), /* @__PURE__ */ React.createElement(
+  }), React.createElement(InvoiceLineAmounts, { li, partsAndLabour: lineItemsSubtotal + laborCost, serviceCall: serviceCallAmt, updateLine }), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -8075,7 +8075,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals({ lineItems }, taxRate);
   const submit = () => {
     if (!title.trim()) return;
-    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost));
+    const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost, serviceCallAmt));
     onSave({
       id: (initial == null ? void 0 : initial.id) || uid(),
       title: title.trim(),
@@ -8155,7 +8155,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     onPick: (picked) => pickLine(li.id, picked),
     suggest: suggestLines,
     placeholder: "Description \u2014 type a part, \"labour\" or \"service call\""
-  }), React.createElement(InvoiceLineAmounts, { li, partsAndLabour: lineItemsSubtotal + laborCost, updateLine }), /* @__PURE__ */ React.createElement(
+  }), React.createElement(InvoiceLineAmounts, { li, partsAndLabour: lineItemsSubtotal + laborCost, serviceCall: serviceCallAmt, updateLine }), /* @__PURE__ */ React.createElement(
     "button",
     {
       type: "button",
@@ -8220,22 +8220,24 @@ function buildWorkOrderHtml(wo, db) {
 // Line items can be parts (no kind), labour ("labour": quantity = hours)
 // or a service call ("serviceCall"); older invoices and quotes keep labour
 // and the service call in their own fields instead. Either way they add up
-// the same, and shop supplies are a share of parts + labour only.
+// the same. Shop supplies are a share of parts + labour + the service call
+// (lines marked withServiceCall); older lines, and the old shop supplies
+// fields, stay parts + labour so invoices already sent don't change.
 function computeQuoteTotals(quote, taxRate) {
   const lineTotal = (kind) => (quote.lineItems || []).filter((li) => (li.kind || "part") === kind).reduce((sum, li) => sum + (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0), 0);
   const lineItemsSubtotal = lineTotal("part");
   const laborCost = (Number(quote.laborHours) || 0) * (Number(quote.laborRate) || 0) + lineTotal("labour");
-  // A shop supplies line ("shopSupplies") is a percent of parts + labour,
-  // or a flat amount when it has no percent.
-  const shopLines = (quote.lineItems || []).filter((li) => li.kind === "shopSupplies").reduce((sum, li) => sum + shopSuppliesLineAmount(li, lineItemsSubtotal + laborCost), 0);
-  const shopSupplies = shopLines + (quote.shopSuppliesMode === "flat" ? Number(quote.shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(quote.shopSuppliesPercent) || 0) / 100));
   const serviceCall = (Number(quote.serviceCall) || 0) + lineTotal("serviceCall");
+  // A shop supplies line ("shopSupplies") is a percent, or a flat amount
+  // when it has no percent.
+  const shopLines = (quote.lineItems || []).filter((li) => li.kind === "shopSupplies").reduce((sum, li) => sum + shopSuppliesLineAmount(li, lineItemsSubtotal + laborCost, serviceCall), 0);
+  const shopSupplies = shopLines + (quote.shopSuppliesMode === "flat" ? Number(quote.shopSuppliesAmount) || 0 : (lineItemsSubtotal + laborCost) * ((Number(quote.shopSuppliesPercent) || 0) / 100));
   const subtotal = lineItemsSubtotal + laborCost + shopSupplies + serviceCall;
   const tax = subtotal * (taxRate / 100);
   return { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total: subtotal + tax };
 }
-function shopSuppliesLineAmount(li, partsAndLabour) {
-  if (li.percent != null && li.percent !== "") return Math.round(partsAndLabour * (Number(li.percent) || 0)) / 100;
+function shopSuppliesLineAmount(li, partsAndLabour, serviceCall) {
+  if (li.percent != null && li.percent !== "") return Math.round((partsAndLabour + (li.withServiceCall ? Number(serviceCall) || 0 : 0)) * (Number(li.percent) || 0)) / 100;
   return (Number(li.quantity) || 0) * (Number(li.unitPrice) || 0);
 }
 function buildQuoteHtml(quote, db, taxRate) {
