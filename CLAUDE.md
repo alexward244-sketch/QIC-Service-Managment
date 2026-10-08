@@ -104,6 +104,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Once auto-plan has run (`winterAutoPlaceNew`), new sign-ups go on a day
   by themselves, flagged `newOnPlan` ("New" tag + note) until someone sees
   them - so nothing slips by unnoticed.
+- A new sign-up asking for a full day still goes on it when its area has
+  the most cottages that day; one from the area with the fewest moves to the
+  next workday with room, flagged `movedOnPlan` ("Moved from …" + the same
+  notice) for the office. The customer isn't told.
 - The crew works from phones (field app → Runs → Winterizing: a Day view
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the

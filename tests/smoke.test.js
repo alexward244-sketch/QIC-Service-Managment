@@ -523,6 +523,36 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   await page.close();
 });
 
+test("winterizing: a new sign-up for a full day goes on it when its area has the most there; the smallest area's cottage moves a day, marked Moved", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0103", "Front of Park"], ["s4", "0490", "Limestone South"], ["s5", "0495", "Limestone South"]].map(([id, number, section]) => ({ id, number, section }));
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 3, winterAutoPlaceNew: true }, sites, cottages: sites.map((x, i) => ({ id: "k" + i, siteId: x.id })), customers: [] };
+    const req = (id, k, extra) => ({ id, cottageId: k, ...extra });
+    // Wed 14th is full: 2 Front of Park, 1 Limestone South (who asked for that day).
+    const base = [req("a", "k0", { plannedDate: "2026-10-14" }), req("b", "k1", { plannedDate: "2026-10-14" }), req("c", "k3", { plannedDate: "2026-10-14", requestedDate: "2026-10-14" })];
+    const run = (fresh) => { const all = [...base, fresh]; db.winterizingRequests = all; return placeNewWinterSignups(all, db, "2026-10-06").map((p) => [p.request.id, p.date, p.moved ? p.moved.from + " for " + p.moved.forSection : ""]); };
+    return {
+      frontOfPark: run(req("n", "k2", { requestedDate: "2026-10-14" })),
+      limestone: run(req("n", "k4", { requestedDate: "2026-10-14" }))
+    };
+  });
+  assert.deepEqual(out.frontOfPark, [["n", "2026-10-14", ""], ["c", "2026-10-15", "2026-10-14 for Front of Park"]], "Front of Park has the most that day, so Limestone South's one moves");
+  assert.deepEqual(out.limestone, [["n", "2026-10-15", ""]], "Limestone South is the smaller area there, so the new one goes to the next day with room");
+  // On the Plan board and in the notice.
+  await openWinterizing(page);
+  await page.evaluate(() => window.__addRequest({ id: "m1", cottageId: "k2", customerId: "c2", plannedDate: winterAddDays(todayISO(), 1), movedOnPlan: { from: todayISO(), forSection: "Pebble Beach Seasonal" }, options: {} }));
+  await page.getByRole("tab", { name: "Plan" }).click();
+  await page.locator("[data-new-on-plan]").getByText("1 cottage was moved a day to make room").waitFor();
+  await page.locator('[data-moved="m1"]').getByText("to keep Pebble Beach Seasonal together", { exact: false }).waitFor();
+  await page.locator('[data-plan-card="m1"] [data-moved-tag]').waitFor();
+  await page.locator("[data-new-on-plan]").getByRole("button", { name: "Got it" }).click();
+  await page.locator("[data-new-on-plan]").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => window.__saved.filter((r) => r.id === "m1").pop().movedOnPlan), null);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing: once auto-plan has run, a new sign-up goes on the schedule by itself, marked New until seen", async () => {
   const page = await openApp(browser, "stub");
   await openWinterizing(page);
