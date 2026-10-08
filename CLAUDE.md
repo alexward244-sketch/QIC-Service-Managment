@@ -107,7 +107,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - A new sign-up asking for a full day still goes on it when its area has
   the most cottages that day; one from the area with the fewest moves to the
   next workday with room, flagged `movedOnPlan` ("Moved from …" + the same
-  notice) for the office. The customer isn't told.
+  notice) for the office. The customer isn't told. Someone who asked for
+  that day is only moved if everyone in the smaller areas asked for it.
+- `winterKeyList` (Cloud Function, 9am weekdays) emails reserve@qicampark.com
+  the next workday's cottages (Friday → Monday) whose site's how-to doesn't
+  say our master key works, so reception collects the keys. Once per day
+  (`winterKeyEmails/{day}`); off with `settings.winterKeyEmailOff` (checkbox
+  on the Plan board).
 - The crew works from phones (field app → Runs → Winterizing: a Day view
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the

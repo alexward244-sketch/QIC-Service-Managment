@@ -13869,7 +13869,8 @@ function autoPlanWinter(requests, db, { today, byArea, replanAll }) {
 // day by the same rules as auto-plan, once auto-placing is on, marked
 // newOnPlan ("New") until someone looks at it. A full requested day takes
 // it anyway when its area has the most cottages there: one from the area
-// with the fewest moves to the next day with room, marked movedOnPlan.
+// with the fewest (someone who didn't ask for that day, when there is one)
+// moves to the next day with room, marked movedOnPlan.
 // Returns [{ request, date, moved? }].
 function placeNewWinterSignups(requests, db, today) {
   if (!(db.settings || {}).winterAutoPlaceNew) return [];
@@ -13902,7 +13903,11 @@ function placeNewWinterSignups(requests, db, today) {
       const others = sortWinterSections(Object.keys(counts).filter((k) => k !== sectionOf(r)));
       const fewest = others.reduce((best, k) => best == null || counts[k] <= counts[best] ? k : best, null);
       if (mine > 0 && fewest != null && others.every((k) => counts[k] <= mine) && counts[fewest] < mine) {
-        const bumped = list.filter((x) => sectionOf(x) === fewest).sort(sortSites).pop();
+        // Someone who didn't ask for this day goes first - from the smallest
+        // area that has one; only if everyone asked for it, the smallest area's last.
+        const smaller = others.filter((k) => counts[k] < mine).sort((x, y) => counts[x] - counts[y] || others.indexOf(y) - others.indexOf(x));
+        const free = smaller.map((k) => list.filter((x) => sectionOf(x) === k && x.requestedDate !== want).sort(sortSites).pop()).find(Boolean);
+        const bumped = free || list.filter((x) => sectionOf(x) === fewest).sort(sortSites).pop();
         dateOf.set(r, want);
         const to = roomFrom(winterNextWorkday(want, season));
         dateOf.set(bumped, to);
@@ -14164,6 +14169,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       React.createElement("label", { className: "flex items-center gap-2" }, React.createElement("span", { className: "text-[#75716A]" }, "Max per day"), React.createElement("input", { type: "number", min: "1", className: inputCls.replace("w-full ", "") + " w-20 py-1", value: season.limit, onChange: (e) => Number(e.target.value) > 0 && onSaveSeason({ winterDailyLimit: Number(e.target.value) }), "aria-label": "Max per day" })),
       React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Weekdays only"),
       React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "New sign-ups go on the next day with room (their requested day if possible), marked New" }, React.createElement("input", { type: "checkbox", checked: !!(db.settings || {}).winterAutoPlaceNew, onChange: (e) => onSaveSeason({ winterAutoPlaceNew: e.target.checked }), className: "accent-[#377249]" }), "Put new sign-ups on the schedule"),
+      React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "Each weekday morning (Friday for Monday), reception gets the next day's cottages where our master key doesn't work, so the keys can be collected" }, React.createElement("input", { type: "checkbox", checked: !(db.settings || {}).winterKeyEmailOff, onChange: (e) => onSaveSeason({ winterKeyEmailOff: !e.target.checked }), className: "accent-[#377249]", "aria-label": "Email reception the keys needed" }), "Email reserve@ the keys needed the day before"),
       React.createElement("button", { type: "button", onClick: onAutoPlan, className: "ml-auto px-4 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]" }, "Auto-plan\u2026")
     ),
     React.createElement(

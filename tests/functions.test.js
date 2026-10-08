@@ -370,3 +370,40 @@ test("an email moved to Zoho's Trash is removed from the app", async () => {
   await fns.zohoSentMail();
   assert.deepEqual((await all("correspondence")).map((c) => c.id).sort(), ["in-leak", "in-other"]);
 });
+
+test("winterizing keys: the workday before (Friday for Monday), reception gets the cottages our master key doesn't open, once", async () => {
+  const set = (c, id, data) => db.collection(c).doc(id).set(data);
+  await Promise.all([
+    set("sites", "s1", { number: "0010", section: "Front of Park", winterHowTo: { code: "IN BT FD", note: "", masterKey: false } }),
+    set("sites", "s2", { number: "0009", section: "Front of Park", winterHowTo: { code: "BP", note: "", masterKey: true } }),
+    set("sites", "s3", { number: "0490", section: "Limestone South" }),
+    set("cottages", "k1", { name: "Willow", siteId: "s1" }),
+    set("cottages", "k2", { name: "Cedar", siteId: "s2" }),
+    set("cottages", "k3", { name: "Birch", siteId: "s3" }),
+    set("customers", "c1", { name: "Bo Day", phone: "6135550177" }),
+    // Monday the 19th: Willow (key needed), Cedar (master key works), Birch (not on the list, key at reception).
+    set("winterizingRequests", "r1", { cottageId: "k1", customerId: "c1", plannedDate: "2026-10-19" }),
+    set("winterizingRequests", "r2", { cottageId: "k2", plannedDate: "2026-10-19" }),
+    set("winterizingRequests", "r3", { cottageId: "k3", requestedDate: "2026-10-19", options: { keyAtReception: true } }),
+    set("winterizingRequests", "r4", { cottageId: "k1", plannedDate: "2026-10-19", completed: true }),
+    set("winterizingRequests", "r5", { cottageId: "k1", plannedDate: "2026-10-20" })
+  ]);
+  // Friday Oct 16, 9am Toronto.
+  await fns.winterKeyList({ scheduleTime: "2026-10-16T13:00:00Z" });
+  assert.equal(emails.length, 1);
+  assert.equal(emails[0].to, "reserve@qicampark.com");
+  assert.equal(emails[0].subject, "Winterizing keys needed for Monday, October 19");
+  assert.match(emails[0].message, /These 2 cottages are being winterized on Monday, October 19/);
+  assert.match(emails[0].message, /Front of Park\n- Site 0010 · Willow · Bo Day, 6135550177\n\nLimestone South\n- Site 0490 · Birch · no owner linked \(customer said the key is at reception; not on the master list - check\)/);
+  assert.doesNotMatch(emails[0].message, /Cedar/);
+  // Once per day, and not at all when turned off or nothing needs a key.
+  await fns.winterKeyList({ scheduleTime: "2026-10-16T13:00:00Z" });
+  assert.equal(emails.length, 1);
+  await fns.winterKeyList({ scheduleTime: "2026-10-19T13:00:00Z" });
+  assert.equal(emails.length, 2, "Monday sends Tuesday's");
+  assert.match(emails[1].subject, /Tuesday, October 20/);
+  await db.doc("campground/data").set({ settings: { winterKeyEmailOff: true } }, { merge: true });
+  await db.collection("winterizingRequests").doc("r6").set({ cottageId: "k1", plannedDate: "2026-10-21" });
+  await fns.winterKeyList({ scheduleTime: "2026-10-20T13:00:00Z" });
+  assert.equal(emails.length, 2);
+});
