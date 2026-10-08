@@ -8455,6 +8455,12 @@ function buildWinterizingHtml(request, db) {
         <tr><td class="k">Site</td><td>${site ? escapeHtml(site.number) : "\u2014"}</td></tr>
         ${customer ? `<tr><td class="k">Customer</td><td>${escapeHtml(customer.name)}${customer.phone ? " \xB7 " + escapeHtml(customer.phone) : ""}</td></tr>` : ""}
       </table>
+      ${(() => {
+        const howTo = siteWinterHowTo(site);
+        if (!howTo) return "";
+        const steps = winterHowToSteps(howTo.code).steps;
+        return `<div style="border:2px solid #2E6E8E;background:#E4EEF2;padding:8px 12px;margin-bottom:14px;"><div style="font-size:11px;font-weight:bold;letter-spacing:.05em;text-transform:uppercase;color:#2E6E8E;margin-bottom:4px;">How to winterize</div>${steps.map((t) => `<div style="font-size:14px;font-weight:bold;">${escapeHtml(t)}</div>`).join("")}${howTo.note ? `<div style="font-size:13px;">${escapeHtml(howTo.note)}</div>` : ""}${howTo.masterKey ? `<div style="font-size:13px;font-weight:bold;color:#28633C;">Our master key works</div>` : ""}</div>`;
+      })()}
       ${keyAtReception ? `<div style="border:1px solid #9A6B1F;background:#FBEEDA;color:#9A6B1F;padding:8px 12px;font-size:13px;font-weight:bold;margin-bottom:14px;">Key left with reception</div>` : ""}
       <div class="label">What's Included</div>
       ${checkedOptions.length ? `<table class="wo-table">${checkedOptions.map((opt) => `<tr><td style="width:24px;">\u2610</td><td>${escapeHtml(opt.label)}</td></tr>`).join("")}</table>` : `<p class="desc" style="min-height:0;border:none;padding-bottom:0;">None specified.</p>`}
@@ -14064,7 +14070,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
         e.dataTransfer.setData("text/plain", r.id);
         e.dataTransfer.effectAllowed = "move";
       }, onClick: () => onOpen(r.id), className: `rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-2.5 mb-2 shadow-sm cursor-pointer hover:border-[#377249]/50 ${!readOnly && !r.completed ? "active:cursor-grabbing" : ""}` },
-      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner", " · ", info.section), r.newOnPlan && !r.completed && React.createElement("span", { "data-new-tag": true, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E9C46A] text-[#1E1A13]" }, "New")), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
+      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner", " · ", info.section), winterHowToShort(info.site) && React.createElement("div", { className: "text-[11px] font-semibold text-[#2E6E8E] truncate", "data-howto-short": true }, winterHowToShort(info.site)), r.newOnPlan && !r.completed && React.createElement("span", { "data-new-tag": true, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E9C46A] text-[#1E1A13]" }, "New")), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
       poolLabel && React.createElement("div", { className: `text-[11px] mt-1 font-semibold ${poolLabel.tone}` }, poolLabel.text),
       info.extras.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mt-1.5" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))),
       info.note && React.createElement("div", { className: "mt-1.5 rounded-md bg-[#FBEEDA]/70 border border-[#E9D3B5] px-2 py-1 text-[11px] text-[#4B4740] line-clamp-3" }, React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, "Note: "), info.note),
@@ -14139,7 +14145,130 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
     )
   );
 }
-function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, onComplete, onReopen, onEmail, onAnodeRod, onSchedule, onEdit, onDelete, onPrint, onProblem }) {
+// ---- How to winterize each cottage, from the master list (kept on the
+// site as winterHowTo: { code, note, masterKey }). Codes: BP = bypass, the
+// winterizing tool connects outside; IN = it connects inside, at the KT/K
+// kitchen or BT bathroom sink, by the W window, PD patio door, FD front
+// door, SR sunroom or D door; DT = drain tap; OD = on-demand hot water
+// heater; (ot) = outside tap. Anything else shows as written. ----
+const WINTER_HOWTO_ROOMS = { KT: "kitchen sink", K: "kitchen sink", BT: "bathroom sink" };
+const WINTER_HOWTO_ENTRY = { W: "window", PD: "patio door", FD: "front door", SR: "sunroom", D: "door", K: "kitchen", KT: "kitchen", BT: "bathroom" };
+function winterHowToSteps(code) {
+  const raw = String(code || "").trim();
+  if (!raw) return { inside: null, steps: [], short: "" };
+  const extras = [];
+  const text = raw.replace(/\(\s*ot\s*\)/i, () => {
+    extras.push("Outside tap too");
+    return " ";
+  });
+  // "P D" and "F D" are written both ways.
+  const tokens = text.replace(/\bP\s+D\b/gi, "PD").replace(/\bF\s+D\b/gi, "FD").split(/\s+/).filter(Boolean);
+  const steps = [];
+  let inside = null;
+  let short = "";
+  let i = 0;
+  const rest = () => tokens.slice(i).join(" ");
+  while (i < tokens.length) {
+    const t = tokens[i].toUpperCase();
+    if (t === "BP") {
+      inside = false;
+      steps.push("Connect outside at the bypass");
+      short = short || "Bypass · outside";
+      i++;
+    } else if (t === "DT") {
+      steps.push("Drain tap");
+      short = short || "Drain tap";
+      i++;
+    } else if (t === "OD") {
+      steps.push("On-demand hot water heater");
+      short = short || "On-demand heater";
+      i++;
+    } else if (t === "IN") {
+      inside = true;
+      i++;
+      let room = "";
+      if (tokens[i] && WINTER_HOWTO_ROOMS[tokens[i].toUpperCase()]) room = WINTER_HOWTO_ROOMS[tokens[i++].toUpperCase()];
+      const by = [];
+      while (tokens[i] && WINTER_HOWTO_ENTRY[tokens[i].toUpperCase()]) by.push(WINTER_HOWTO_ENTRY[tokens[i++].toUpperCase()]);
+      const where = by.join(" ");
+      steps.push(`Connect inside${room ? ` at the ${room}` : ""}${where ? `${room ? "," : ""} by the ${where}` : ""}`);
+      short = short || `Inside · ${room || where || "see how-to"}`;
+    } else {
+      // Words that aren't codes ("Left of unit", "cz1010") go with the step before.
+      const words = rest();
+      if (steps.length && /^[a-z]/i.test(words) && !/\d/.test(words)) steps[steps.length - 1] += ` — ${words.toLowerCase()}`;
+      else steps.push(`Also on the list: ${words}`);
+      break;
+    }
+  }
+  return { inside, steps: [...steps, ...extras], short };
+}
+function siteWinterHowTo(site) {
+  const h = site && site.winterHowTo;
+  return h && (String(h.code || "").trim() || String(h.note || "").trim() || h.masterKey) ? h : null;
+}
+// Reads the master list spreadsheet's rows (Unit_ID, Master, Instructions,
+// Notes) and matches each to a site. Returns { matched: [{ site, howTo }], unmatched: [unit] }.
+function matchWinterHowToRows(rows, sites) {
+  const col = (row, re) => {
+    const k = Object.keys(row).find((x) => re.test(x));
+    return k ? String(row[k] == null ? "" : row[k]).trim() : "";
+  };
+  const matched = [], unmatched = [];
+  rows.forEach((row) => {
+    const unit = col(row, /unit|site/i);
+    if (!unit) return;
+    const howTo = { code: col(row, /instruction|how/i), note: col(row, /note/i), masterKey: /^(x|y|yes|true)$/i.test(col(row, /master/i)) };
+    if (!howTo.code && !howTo.note && !howTo.masterKey) return;
+    const site = findSiteByTypedNumber(sites, unit);
+    if (site) matched.push({ site, howTo });
+    else unmatched.push(unit);
+  });
+  return { matched, unmatched };
+}
+function WinterHowToBox({ site, onSave }) {
+  const howTo = siteWinterHowTo(site);
+  const [editing, setEditing] = useState(null);
+  if (!site) return null;
+  if (editing) {
+    return React.createElement(
+      "div",
+      { className: "rounded-lg border-2 border-[#2E6E8E]/40 bg-[#E4EEF2] p-3 space-y-2", "data-winter-howto-edit": true },
+      React.createElement("div", { className: "text-[11px] uppercase tracking-wider font-bold text-[#2E6E8E]" }, "How to winterize — edit"),
+      React.createElement("input", { className: inputCls, value: editing.code, onChange: (e) => setEditing({ ...editing, code: e.target.value }), placeholder: "Code, e.g. BP or IN KT W", "aria-label": "How-to code" }),
+      React.createElement("input", { className: inputCls, value: editing.note, onChange: (e) => setEditing({ ...editing, note: e.target.value }), placeholder: "Note, e.g. Outside shower", "aria-label": "How-to note" }),
+      React.createElement("label", { className: "flex items-center gap-2 text-sm" }, React.createElement("input", { type: "checkbox", checked: editing.masterKey, onChange: (e) => setEditing({ ...editing, masterKey: e.target.checked }), className: "accent-[#377249] w-4 h-4" }), "Our master key works"),
+      React.createElement(
+        "div",
+        { className: "flex justify-end gap-2" },
+        React.createElement("button", { type: "button", onClick: () => setEditing(null), className: "px-3 py-1.5 text-sm text-[#75716A] rounded-md" }, "Cancel"),
+        React.createElement("button", { type: "button", onClick: () => {
+          onSave({ ...site, winterHowTo: { code: editing.code.trim(), note: editing.note.trim(), masterKey: editing.masterKey, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } });
+          setEditing(null);
+        }, className: "px-3 py-1.5 text-sm bg-[#377249] text-[#F9F5EC] rounded-md font-medium" }, "Save")
+      )
+    );
+  }
+  const edit = onSave && React.createElement("button", { type: "button", onClick: () => setEditing({ code: howTo ? howTo.code || "" : "", note: howTo ? howTo.note || "" : "", masterKey: !!(howTo && howTo.masterKey) }), className: "text-xs font-semibold text-[#2E6E8E] hover:underline" }, howTo ? "Edit" : "Add how-to");
+  if (!howTo) return React.createElement("div", { className: "flex justify-between items-center gap-2 rounded-lg border border-dashed border-[#C7C2B8] px-3 py-2 text-xs text-[#75716A]", "data-winter-howto": "none" }, "No how-to on the master list for this site", edit);
+  const { steps } = winterHowToSteps(howTo.code);
+  return React.createElement(
+    "div",
+    { className: "rounded-lg border-2 border-[#2E6E8E]/40 bg-[#E4EEF2] p-3", "data-winter-howto": site.number },
+    React.createElement("div", { className: "flex justify-between items-center gap-2 mb-1.5" }, React.createElement("span", { className: "text-[11px] uppercase tracking-wider font-bold text-[#2E6E8E]" }, "How to winterize"), edit),
+    steps.map((t, i) => React.createElement("div", { key: i, className: "text-[15px] font-semibold text-[#1E1A13] leading-snug" }, t)),
+    howTo.note && React.createElement("div", { className: "text-sm text-[#1E1A13] mt-1" }, howTo.note),
+    howTo.masterKey && React.createElement("div", { className: "text-sm font-semibold text-[#28633C] mt-1.5" }, "🔑 Our master key works"),
+    howTo.code && React.createElement("div", { className: "text-[11px] text-[#75716A] mt-1.5" }, `Master list: ${howTo.code}`)
+  );
+}
+// One line for a card: "Inside · kitchen sink · 🔑".
+function winterHowToShort(site) {
+  const howTo = siteWinterHowTo(site);
+  if (!howTo) return "";
+  return [winterHowToSteps(howTo.code).short || howTo.note, howTo.masterKey ? "🔑 master key" : ""].filter(Boolean).join(" · ");
+}
+function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, onComplete, onReopen, onEmail, onAnodeRod, onSchedule, onEdit, onDelete, onPrint, onProblem, onSaveSite }) {
   const info = winterInfo(db, request);
   const today = todayISO();
   const gateItems = info.extras.filter((o) => !o.gateExempt);
@@ -14170,6 +14299,7 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
     React.createElement(
       "div",
       { className: "space-y-5 text-sm", "data-winter-panel": request.id },
+      React.createElement(WinterHowToBox, { site: info.site, onSave: !readOnly && onSaveSite ? onSaveSite : null }),
       React.createElement(
         "div",
         null,
@@ -14252,7 +14382,7 @@ function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinter
   }, [requests.map((r) => r.id + (r.plannedDate == null ? "?" : "")).join(","), readOnly, !!(db.settings || {}).winterAutoPlaceNew]);
   return [carryNotice, setCarryNotice];
 }
-function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, saveWorkOrder }) {
+function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite, bulkWriteSites }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [emailStatus, setEmailStatus] = useState({});
@@ -14293,6 +14423,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const [autoByArea, setAutoByArea] = useState(true);
   const [autoReplanAll, setAutoReplanAll] = useState(false);
   const [problemFor, setProblemFor] = useState(null);
+  const [howToImport, setHowToImport] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
@@ -14555,7 +14686,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   }, batchEmail && batchEmail.total && batchEmail.sent == null ? `Emailing ${batchEmail.done + 1} of ${batchEmail.total}\u2026` : `Email ${finishedTodayToEmail.length} finished today`), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setResetOpen(true),
     className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
-  }, "Reset for New Season"), !readOnly && /* @__PURE__ */ React.createElement("button", {
+  }, "Reset for New Season"), !readOnly && bulkWriteSites && React.createElement("button", {
+    type: "button",
+    onClick: () => setHowToImport({}),
+    className: "hidden sm:inline-flex px-3 py-2 rounded-md border border-[#2E6E8E]/30 text-[#2E6E8E] text-sm font-medium hover:bg-[#2E6E8E]/10 transition whitespace-nowrap"
+  }, "How-to list\u2026"), !readOnly && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setModal({ mode: "new" }),
     className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
   }, "+ New Sign-Up"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mt-3" }, selectMode && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, selectedIds.size, " selected"), /* @__PURE__ */ React.createElement("button", {
@@ -14661,6 +14796,60 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       batchEmail.confirm && React.createElement("button", { type: "button", onClick: () => emailFinishedToday(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, `Send ${finishedTodayToEmail.length} email${finishedTodayToEmail.length === 1 ? "" : "s"}`)
     )
   );
+  // The winterizing master list (Unit_ID, Master, Instructions, Notes) onto
+  // each site's how-to. Rows that match no site are listed, not lost.
+  const howToCount = db.sites.filter((x) => siteWinterHowTo(x)).length;
+  const readHowToFile = (file) => {
+    if (!file) return;
+    setHowToImport({ reading: true });
+    file.arrayBuffer().then((buf) => {
+      const wb = XLSX.read(buf, { type: "array" });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
+      setHowToImport({ fileName: file.name, ...matchWinterHowToRows(rows, db.sites) });
+    }).catch(() => setHowToImport({ error: "Couldn't read that file \u2014 is it the Excel master list?" }));
+  };
+  const saveHowToImport = async () => {
+    const changed = howToImport.matched.filter(({ site, howTo }) => {
+      const old = siteWinterHowTo(site) || {};
+      return (old.code || "") !== howTo.code || (old.note || "") !== howTo.note || !!old.masterKey !== howTo.masterKey;
+    }).map(({ site, howTo }) => ({ ...site, winterHowTo: { ...howTo, updatedAt: (/* @__PURE__ */ new Date()).toISOString() } }));
+    if (changed.length) {
+      const ok = await bulkWriteSites(changed);
+      if (!ok) return;
+    }
+    persist({ ...db, activityLog: addLog(db, actor, `Imported the winterizing how-to list (${changed.length} site${changed.length === 1 ? "" : "s"} updated)`) });
+    setHowToImport({ done: changed.length });
+  };
+  const howToEl = !readOnly && howToImport && React.createElement(
+    Modal,
+    { title: "Winterizing how-to list", onClose: () => setHowToImport(null), wide: true },
+    howToImport.done != null ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-4", role: "status" }, howToImport.done ? `Saved \u2014 ${howToImport.done} site${howToImport.done === 1 ? "" : "s"} updated. The how-to now shows on each cottage's checklist.` : "Nothing changed \u2014 every site already matches the list.") : React.createElement(
+      React.Fragment,
+      null,
+      React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `${howToCount} site${howToCount === 1 ? " has" : "s have"} a how-to. Choose the master list (Excel, with Unit_ID, Master, Instructions and Notes columns) to add or update them. Sites not on the list are left as they are, and one-off changes can be made on a cottage's checklist.`),
+      React.createElement("input", { type: "file", accept: ".xlsx,.xls,.csv", onChange: (e) => readHowToFile(e.target.files && e.target.files[0]), "aria-label": "Master list file", className: "text-sm mb-3" }),
+      howToImport.reading && React.createElement("p", { className: "text-sm text-[#75716A]" }, "Reading\u2026"),
+      howToImport.error && React.createElement("p", { className: "text-sm text-[#a8532a]" }, howToImport.error),
+      howToImport.matched && React.createElement(
+        "div",
+        { className: "mb-3", "data-howto-preview": true },
+        React.createElement("p", { className: "text-sm font-semibold mb-2" }, `${howToImport.matched.length} site${howToImport.matched.length === 1 ? "" : "s"} matched`),
+        React.createElement("div", { className: "max-h-64 overflow-y-auto rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] text-sm" }, howToImport.matched.map(({ site, howTo }) => React.createElement(
+          "div",
+          { key: site.id, className: "px-3 py-1.5 flex gap-3" },
+          React.createElement("span", { className: "w-16 flex-none font-semibold" }, site.number),
+          React.createElement("span", { className: "flex-1 text-[#4B4740]" }, [winterHowToSteps(howTo.code).steps.join("; "), howTo.note, howTo.masterKey ? "master key works" : ""].filter(Boolean).join(" \u00B7 "))
+        ))),
+        howToImport.unmatched.length > 0 && React.createElement("p", { className: "text-xs text-[#a8532a] mt-2" }, `Not found in Sites (skipped): ${howToImport.unmatched.join(", ")}`)
+      )
+    ),
+    React.createElement(
+      "div",
+      { className: "flex justify-end gap-2" },
+      React.createElement("button", { type: "button", onClick: () => setHowToImport(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, howToImport.done != null ? "Close" : "Cancel"),
+      howToImport.matched && howToImport.done == null && React.createElement("button", { type: "button", disabled: !howToImport.matched.length, onClick: saveHowToImport, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-40" }, `Save to ${howToImport.matched.length} site${howToImport.matched.length === 1 ? "" : "s"}`)
+    )
+  );
   if (isMobile) {
     return /* @__PURE__ */ React.createElement("div", null, header, notSignedUpBanner, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, remindersEl, batchEl);
   }
@@ -14691,7 +14880,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       confirm.ask(r.id);
     },
     onPrint: printOne,
-    onProblem: saveWorkOrder ? (r) => setProblemFor(r) : null
+    onProblem: saveWorkOrder ? (r) => setProblemFor(r) : null,
+    onSaveSite: saveSite ? (site) => {
+      saveSite(site);
+      persist({ ...db, activityLog: addLog(db, actor, `Updated the winterizing how-to for site ${site.number}`) });
+    } : null
   });
   const problemEl = problemFor && saveWorkOrder && (() => {
     const info = winterInfo(db, problemFor);
@@ -14751,7 +14944,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       const info = winterInfo(db, r);
       return React.createElement("li", { key: r.id, className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", null, `${info.site ? `Site ${info.site.number}` : info.cottage ? info.cottage.name : "Cottage"}${info.customer ? ` (${info.customer.name})` : ""} \u2192 ${winterShortDate(winterPlannedDate(r), { weekday: "short", month: "short", day: "numeric" })}`), React.createElement("button", { type: "button", onClick: () => setPanelId(r.id), className: "text-xs text-[#2E6E8E] hover:underline" }, "Change day"));
     })));
-  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, newEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl, autoPlanEl, rainEl, fullDropEl, blockEl);
+  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, newEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl, autoPlanEl, rainEl, fullDropEl, blockEl, howToEl);
 }
 function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpired, onMoveRun, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
@@ -19720,7 +19913,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
 }
 // Winterizing on a phone: the crew's day (‹ › to other days), each cottage
 // opening its checklist, plus every sign-up by day with a search.
-function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, onGoToDesktopTab, setToast }) {
+function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, saveSite, onGoToDesktopTab, setToast }) {
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
   const today = todayISO();
   const season = winterSeason(db);
@@ -19800,6 +19993,11 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     setToast(willBeDone ? `${placeLabel(request)} winterized` : "Reopened");
     if (willBeDone) setPanelId(null);
   };
+  const saveHowTo = (site) => {
+    saveSite(site);
+    persist({ ...db, activityLog: addLog(db, actor, `Updated the winterizing how-to for site ${site.number}`) });
+    setToast("How-to saved");
+  };
   const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
   // Moved from the panel's date box; a full or blocked day is still allowed
   // (the crew may know better) but says so.
@@ -19837,7 +20035,8 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
           "div",
           { className: "min-w-0" },
           React.createElement("div", { className: "text-[15px] font-semibold text-[#1E1A13] truncate" }, info.site ? `Site ${info.site.number}` : "No site", React.createElement("span", { className: "font-normal text-[#4B4740]" }, ` \u00B7 ${info.cottage ? info.cottage.name : "Cottage"}`)),
-          React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner linked", " \u00B7 ", info.section)
+          React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner linked", " \u00B7 ", info.section),
+          !r.completed && winterHowToShort(info.site) && React.createElement("div", { className: "text-[13px] font-semibold text-[#2E6E8E] mt-0.5", "data-howto-short": true }, "\uD83D\uDD27 ", winterHowToShort(info.site))
         ),
         r.completed ? React.createElement("span", { className: "flex-none text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "\u2713 Done") : r.newOnPlan ? React.createElement("span", { className: "flex-none text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-[#E9C46A] text-[#1E1A13]" }, "New") : st.key === "overdue" ? React.createElement("span", { className: `flex-none text-[11px] font-semibold px-2 py-0.5 rounded-full ${st.cls}` }, st.label) : null
       ),
@@ -19934,7 +20133,8 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
       onReopen: toggleComplete,
       onAnodeRod: markAnodeRodReplaced,
       onSchedule: schedule,
-      onProblem: saveWorkOrder ? (r) => setProblemFor(r) : null
+      onProblem: saveWorkOrder ? (r) => setProblemFor(r) : null,
+      onSaveSite: saveSite ? saveHowTo : null
     }),
     problemFor && saveWorkOrder && (() => {
       const info = winterInfo(db, problemFor);
@@ -19967,7 +20167,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     )
   );
 }
-function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveInvoice, onGoToDesktopTab, setToast }) {
+function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveSite, onGoToDesktopTab, setToast }) {
   // Opens on the last one used; the first time, Winterizing when cottages
   // are planned for today.
   const [runTab, setRunTabState] = useState(() => {
@@ -20003,7 +20203,7 @@ function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizi
         k === "propane" ? "Propane" : "Winterizing"
       ))
     ),
-    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, onGoToDesktopTab, setToast })
+    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, saveSite, onGoToDesktopTab, setToast })
   );
 }
 function fieldParkResults(db, term) {
@@ -20723,6 +20923,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         saveWinterizingRequest,
         saveWorkOrder,
         saveInvoice,
+        saveSite,
         onGoToDesktopTab,
         setToast
       }),
@@ -21921,7 +22122,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite: isAdminOrManager ? saveSite : null, bulkWriteSites: isAdminOrManager ? bulkWriteSites : null }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),

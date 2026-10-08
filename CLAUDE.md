@@ -108,6 +108,14 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the
   computer screen.
+- How to winterize each cottage comes from Alex's master list, kept on the
+  site as `winterHowTo { code, note, masterKey }` (Winterizing → "How-to
+  list…" imports the Excel; edit one on the checklist). Codes: BP = bypass,
+  tool connects outside; IN = tool connects inside at the KT/K kitchen or
+  BT bathroom sink, by the W window / PD patio door / FD front door / SR
+  sunroom / D door; DT drain tap; OD on-demand hot water heater; (ot)
+  outside tap; Master X = our master key works. Unknown bits (e.g.
+  "cz1010") show as written - don't guess at them.
 
 **Parts**
 - Each part is its own document in the `parts` collection (not in
