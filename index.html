@@ -676,7 +676,11 @@ function findTankPart(parts, tankName) {
   if (!m) return null;
   const size = m[1];
   const bySize = new RegExp(`(^|\\D)${size}\\s*(lb|lbs|pound)`, "i");
-  return (parts || []).find((p) => /propane/i.test(p.name || "") && bySize.test(p.name || "")) || null;
+  const sameSize = (parts || []).filter((p) => /propane/i.test(p.name || "") && bySize.test(p.name || ""));
+  // A refill/fill is wanted, not a new tank: "100lb Propane Refill" over
+  // "100lb Propane Tank (New)", whichever comes first in Parts.
+  const score = (p) => (/\bnew\b|purchase|buy/i.test(p.name) ? 0 : 2) + (/refill/i.test(tankName) && /refill/i.test(p.name) ? 1 : 0);
+  return sameSize.sort((x, y) => score(y) - score(x))[0] || null;
 }
 function tankPartsFor(db) {
   return TANK_PART_NAMES.map((name) => findTankPart(db.parts, name)).filter(Boolean);
