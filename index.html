@@ -6048,6 +6048,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
   const [creatingQuote, setCreatingQuote] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const role = useUserRole(db);
+  const [viewingHydro, setViewingHydro] = useState(null);
   if (!customer) return null;
   const siteIds = customerSiteIds(customer);
   const linkedSites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
@@ -6124,7 +6125,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
         React.createElement("div", { className: "font-medium text-[#1E1A13]" }, `${r.invoiceNumber || "Hydro bill"} \u00B7 Site ${p.site.number}`),
         React.createElement("div", { className: "text-xs text-[#75716A]" }, `${String(r.invoicedAt || r.date).slice(0, 10)} \u00B7 ${p.meter.previousReading != null ? `${p.meter.previousReading} \u2192 ` : ""}${p.meter.currentReading} \u00B7 ${p.usage != null ? `${p.usage} kWh` : "\u2014"} \u00B7 ${sent}`)
       ),
-      React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, formatPrice(p.total)), React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Print"))
+      React.createElement("div", { className: "flex items-center gap-3 flex-shrink-0" }, React.createElement("span", { className: "font-semibold text-[#1E1A13]" }, formatPrice(p.total)), React.createElement("button", { type: "button", onClick: () => setViewingHydro(r), className: "text-xs font-semibold text-[#2E6E8E] hover:underline" }, "View"), React.createElement("button", { type: "button", onClick: () => printHydroBills([r], db), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Print"))
     );
   }));
   const TABS = [
@@ -6173,7 +6174,17 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
       )
     )
   ) : /* @__PURE__ */ React.createElement(React.Fragment, null, contactInfo, cottagesSection, workOrdersSection, quotesSection, invoicesSection, hydroSection, correspondenceSection);
-  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, body, footer, viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" }), viewingCottageId && /* @__PURE__ */ React.createElement(
+  // The bill exactly as the customer got it (the emailed version).
+  const hydroViewEl = viewingHydro && (() => {
+    const p = hydroBillParts(db, viewingHydro);
+    return React.createElement(
+      Modal,
+      { title: `${viewingHydro.invoiceNumber || "Hydro bill"} \u00B7 Site ${p.site.number}`, onClose: () => setViewingHydro(null), wide: true },
+      React.createElement("iframe", { title: "Hydro bill", "data-hydro-bill-view": viewingHydro.id, srcDoc: buildHydroInvoiceEmailText(p.site, p.owner, p.usage, p.rate, p.subtotal, p.taxAmount, p.total, p.taxRate, db, p.meter, viewingHydro.invoiceNumber), className: "w-full h-[70vh] rounded-lg border border-[#E2DED5] bg-white" }),
+      React.createElement("div", { className: "flex justify-end gap-2 mt-3" }, React.createElement("button", { type: "button", onClick: () => setViewingHydro(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), React.createElement("button", { type: "button", onClick: () => printHydroBills([viewingHydro], db), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print"))
+    );
+  })();
+  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, body, footer, hydroViewEl, viewingWO && /* @__PURE__ */ React.createElement(WorkOrderViewModal, { wo: viewingWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewingWO(null), variant: "drawer" }), viewingCottageId && /* @__PURE__ */ React.createElement(
     CottageDetailModal,
     {
       cottage: db.cottages.find((c) => c.id === viewingCottageId),

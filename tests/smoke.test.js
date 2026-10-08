@@ -840,6 +840,11 @@ test("customer page: hydro bills for Admin, Accounting, the Service Manager and 
     await bill.getByText("$45.20").waitFor();
     await bill.getByText("1200 \u2192 1450 \u00B7 250 kWh \u00B7 Not emailed", { exact: false }).waitFor();
     assert.equal(await page.locator("[data-customer-hydro-bill]").count(), 1, `only this customer's billed readings (${who})`);
+    await bill.getByRole("button", { name: "View" }).click();
+    const frame = page.frameLocator('[data-hydro-bill-view="h1"]');
+    await frame.getByText("HYD-26-0003", { exact: false }).first().waitFor();
+    await page.getByRole("button", { name: "Close", exact: true }).last().click();
+    await page.locator("[data-hydro-bill-view]").waitFor({ state: "detached" });
   }
   await show("sales@qicampark.com");
   await page.getByRole("button", { name: /^Work Orders/ }).waitFor();
