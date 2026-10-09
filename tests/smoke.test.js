@@ -1385,3 +1385,18 @@ test("editing a record keeps the fields its form doesn't show (plan dates, extra
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("a Save that can't save yet says what's missing", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = null;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    ReactDOM.createRoot(host).render(React.createElement(SiteForm, { initial: null, sites: [], onSave: (x) => { window.__saved = x; }, onCancel() {} }));
+  });
+  await page.getByRole("button", { name: "Save Site" }).click();
+  await page.getByRole("alert").filter({ hasText: "Add a site number to save." }).waitFor();
+  assert.equal(await page.evaluate(() => window.__saved), null);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
