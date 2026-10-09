@@ -4822,7 +4822,7 @@ function ApplianceLogForm({ cottage, db, initial, onSave, onCancel }) {
   const submit = () => {
     if (!description.trim() || !date) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       date,
       description: description.trim(),
       workOrderId: workOrderId || null,
@@ -6459,7 +6459,7 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
     if (!name.trim()) return;
     const finalShipping = shippingSameAsBilling ? billingAddress : shippingAddress;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       customerType,
       salutation,
       firstName: firstName.trim(),
@@ -7014,7 +7014,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
     if (!title.trim()) return;
     const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost, serviceCallAmt));
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       invoiceNumber: (initial == null ? void 0 : initial.invoiceNumber) || invoiceNumber,
       sourceType: linkedWorkOrderId ? "workOrder" : (initial == null ? void 0 : initial.sourceType) || "standalone",
       sourceId: linkedWorkOrderId || (initial == null ? void 0 : initial.sourceId) || null,
@@ -7484,7 +7484,7 @@ function PartForm({ initial, onSave, onCancel }) {
   const submit = () => {
     if (!name.trim()) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
       sku: sku.trim(),
       price: price === "" ? 0 : Number(price),
@@ -8015,7 +8015,7 @@ function StaffForm({ initial, onSave, onCancel }) {
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "Available");
   const submit = () => {
     if (!name.trim()) return;
-    onSave({ id: (initial == null ? void 0 : initial.id) || uid(), name: name.trim(), phone: phone.trim(), email: email.trim(), status });
+    onSave({ ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(), name: name.trim(), phone: phone.trim(), email: email.trim(), status });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter") submit();
@@ -8334,7 +8334,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
     if (!title.trim()) return;
     const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost, serviceCallAmt));
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       title: title.trim(),
       date,
       status,
@@ -9299,7 +9299,7 @@ function AppointmentForm({ initial, db, onSave, onCancel }) {
   const submit = () => {
     if (!title.trim() || !date) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       title: title.trim(),
       date,
       time,
@@ -9962,7 +9962,7 @@ function CottageOrderForm({ initial, sites, customers, onSave, onCancel, onDirty
   const balance = (Number(totalPrice) || 0) - (Number(depositAmount) || 0);
   const submit = () => {
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       type: lockedType || type,
       condition: (lockedType || type) === "Display Model" ? condition : null,
       status,
@@ -10070,7 +10070,7 @@ function SunspaceOrderForm({ initial, sites, customers, cottages, onSave, onCanc
   const cottageOptions = (cottages || []).filter((c) => !siteId || c.siteId === siteId).map((c) => ({ value: c.id, label: c.name }));
   const submit = () => {
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       customerId: customerId || null,
       siteId: siteId || null,
       cottageId: cottageId || null,
@@ -10529,7 +10529,7 @@ function ConsignmentForm({ initial, cottages, sites, commissionPercent, onSave, 
   const submit = () => {
     if (!cottageId) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       cottageId,
       status,
       askingPrice: Number(askingPrice) || 0,
@@ -11513,7 +11513,7 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   const submit = () => {
     if (!name.trim()) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
       phone: phone.trim(),
       email: email.trim(),
@@ -12309,7 +12309,7 @@ function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
   const submit = () => {
     if (!title.trim()) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       title: title.trim(),
       description: description.trim(),
       siteId: siteId || null,
@@ -12371,7 +12371,7 @@ function WorkOrderTemplateForm({ initial, parts, onSave, onCancel }) {
   const submit = () => {
     if (!name.trim() || !title.trim()) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
       title: title.trim(),
       description: description.trim(),
@@ -12460,7 +12460,7 @@ function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, on
       ...li.partId ? { partId: li.partId } : {}
     }));
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
       title: title.trim(),
       notes: notes.trim(),
@@ -13039,7 +13039,7 @@ function ServiceAppointmentForm({ initial, defaultDate, onSave, onCancel }) {
   const submit = () => {
     if (!title.trim() || !date) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       kind,
       title: title.trim(),
       date,
@@ -13252,7 +13252,7 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   const submit = () => {
     if (!cottageId || !requestedDate) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       cottageId,
       customerId: customerId || null,
       requestedDate,
@@ -13689,7 +13689,7 @@ function WinterizingRequestForm({ initial, db, onSave, onCancel }) {
   const submit = () => {
     if (!cottageId || !requestedDate) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       cottageId,
       customerId: customerId || null,
       requestedDate,
@@ -15640,7 +15640,7 @@ function TreeRequestForm({ initial, db, onSave, onCancel }) {
   const submit = () => {
     if (!description.trim()) return;
     onSave({
-      id: (initial == null ? void 0 : initial.id) || uid(),
+      ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       siteId: siteId || null,
       cottageId: cottageId || null,
       customerId: customerId || null,

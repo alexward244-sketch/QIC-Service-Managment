@@ -1361,3 +1361,27 @@ test("correspondence: messages not linked to anyone are grouped by the other per
   assert.deepEqual(rows, [["1", "2"], ["3"], ["4", "5"]]);
   await page.close();
 });
+
+test("editing a record keeps the fields its form doesn't show (plan dates, extra emails, links)", async () => {
+  const page = await openApp(browser, "stub");
+  const db = { sites: [{ id: "a", number: "1051" }], cottages: [{ id: "k1", name: "Loon", siteId: "a" }], customers: [{ id: "c1", name: "Rob", siteIds: ["a"] }], settings: {} };
+  const cases = [
+    { form: "WinterizingRequestForm", props: { db }, initial: { id: "w1", cottageId: "k1", customerId: "c1", requestedDate: "2026-10-20", options: {}, plannedDate: "2026-10-21", newOnPlan: true }, button: "Save Sign-Up", kept: ["plannedDate", "newOnPlan"] },
+    { form: "PropaneRequestForm", props: { db }, initial: { id: "p1", cottageId: "k1", requestedDate: "2026-10-20", run: "Tuesday", payment: "Bill", partsUsed: [], archived: true }, button: "Save Request", kept: ["archived"] },
+    { form: "CustomerForm", props: { sites: db.sites, customers: db.customers }, initial: { id: "c1", name: "Rob", siteIds: ["a"], matchEmails: ["bob@y.com"] }, button: "Save Customer", kept: ["matchEmails"] },
+    { form: "QuoteForm", props: { sites: db.sites, cottages: db.cottages, customers: db.customers, parts: [], quotes: [], taxRate: 13, templates: [], rateOptions: [], serviceCallOptions: [] }, initial: { id: "q1", title: "Deck", date: "2026-10-01", status: "Accepted", lineItems: [], commentLog: [], workOrderId: "w9" }, button: "Save Quote", kept: ["workOrderId"] }
+  ];
+  for (const c of cases) {
+    await page.evaluate(({ form, props, initial }) => {
+      window.__saved = null;
+      document.getElementById("root").innerHTML = "";
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(window[form] || eval(form), { ...props, initial, onSave: (x) => { window.__saved = x; }, onCancel() {} }));
+    }, c);
+    await page.getByRole("button", { name: c.button }).click();
+    const saved = await page.evaluate(() => window.__saved);
+    assert.ok(saved, `${c.form} saved`);
+    for (const k of c.kept) assert.deepEqual(saved[k], c.initial[k], `${c.form} keeps ${k}`);
+  }
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
