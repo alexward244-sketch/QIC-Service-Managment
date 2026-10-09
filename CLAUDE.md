@@ -183,6 +183,17 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   overwritten unless ticked (it may have been replaced since the factory).
   The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
   at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
+- Cottages tab: list on the left, the cottage's page on the right (wide
+  screens; a pop-up on narrow ones). Top boxes are just total cottages and
+  "with serial #" - Alex didn't want more. The page shows serial/model/
+  year/maker in their own boxes, appliances, owners and a history timeline
+  (`cottageHistory`: work orders + invoice, winterizing, propane, trees,
+  quotes, sunspace, ownership, nameplate scan).
+- Clicking an appliance opens its card; "+ Work order for this …" starts a
+  work order tagged `applianceId`. When a tagged work order is completed it
+  goes in that appliance's service log by itself, once
+  (`logWorkOrderToAppliance` in `saveWorkOrder`); untagged ones still get
+  the "Log to an Appliance?" prompt.
 
 **Forms**
 - Saves replace the whole Firestore document, so every edit form spreads

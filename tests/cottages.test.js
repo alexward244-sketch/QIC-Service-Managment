@@ -5,7 +5,7 @@ const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
 const { launch, openApp } = require("./helpers/app");
-const { resetData, readDoc, cleanup } = require("./helpers/emulator");
+const { resetData, readDoc, readCollection, cleanup } = require("./helpers/emulator");
 const { mountWithDb, waitFor } = require("./helpers/screens");
 
 let browser;
@@ -29,9 +29,10 @@ test("Missing serial # lists cottages without one, and a serial can be typed str
   await seed();
   const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
   await mountWithDb(page, cottagesView, READY);
+  assert.ok(await page.getByText("1 / 3").isVisible(), "the With serial # box counts 1 of 3");
   await page.getByRole("button", { name: "Missing serial # (2)" }).click();
-  await page.getByText("1 of 3 cottages have a serial number.").waitFor();
-  assert.equal(await page.getByRole("button", { name: "Heron" }).count(), 0, "Heron has a serial, so it's hidden");
+  assert.equal(await page.getByRole("button", { name: /Heron/ }).count(), 0, "Heron has a serial, so it's hidden");
+  // The first one (Loon) is open beside the list, with a box to type its serial.
 
   // Same number written differently is caught as a duplicate.
   const loon = page.getByLabel("Serial number for Loon");
@@ -47,9 +48,10 @@ test("Missing serial # lists cottages without one, and a serial can be typed str
   const log = (await readDoc("campground/data")).activityLog;
   assert.ok(log.some((l) => /Added serial # ZX-9 to Loon/.test(l.action || l.text || JSON.stringify(l))));
 
-  // The edit form warns about a serial already on another cottage.
-  await page.getByRole("button", { name: "Missing serial # (1)" }).click();
-  await page.getByRole("row", { name: /Osprey/ }).getByRole("button", { name: "Edit" }).click();
+  // Loon drops off the list and the next one (Osprey) opens. The edit form
+  // warns about a serial already on another cottage.
+  await page.getByLabel("Serial number for Osprey").waitFor();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByLabel("Serial Number", { exact: true }).fill("zx9");
   await page.getByText("That serial number is already on Loon").waitFor();
   assert.deepEqual(page.pageErrors, []);
@@ -60,15 +62,17 @@ test("renaming a cottage keeps its ownership history", async () => {
   await seed();
   const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
   await mountWithDb(page, cottagesView, READY);
-  await page.getByRole("row", { name: /Loon/ }).getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: /Loon/ }).first().click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByLabel("Cottage Name / Number").fill("Loon Lodge");
   await page.getByRole("button", { name: "Save Cottage" }).click();
   await waitFor(async () => (await readDoc("cottages/k1")).name === "Loon Lodge", "the rename to save");
   const site = await waitFor(async () => { const x = await readDoc("sites/a"); return x.transferHistory[0].cottageId ? x : null; }, "the transfer to get the cottage's id");
   assert.equal(site.transferHistory[0].cottageId, "k1");
   assert.equal((await readDoc("cottages/k1")).appliances.length, 2, "editing a cottage keeps its appliances");
-  await page.getByRole("button", { name: "Loon Lodge" }).first().click();
+  await page.getByRole("heading", { name: "Loon Lodge" }).waitFor();
   await page.getByText("Transferred from Old Owner to Robert Smith").waitFor();
+  await page.getByText("Ownership: Old Owner \u2192 Robert Smith").waitFor();
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -79,7 +83,8 @@ test("a cottage off the park keeps its own owner, and a sale off-site takes its 
   await mountWithDb(page, cottagesView, READY);
 
   // Osprey isn't on a site: give it an owner from its form.
-  await page.getByRole("row", { name: /Osprey/ }).getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("button", { name: /Osprey/ }).first().click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   const owner = page.getByLabel("Owner (not on a site)");
   await owner.fill("Robert Smith");
   await owner.press("Tab");
@@ -88,14 +93,12 @@ test("a cottage off the park keeps its own owner, and a sale off-site takes its 
   const osprey = await waitFor(async () => { const x = await readDoc("cottages/k3"); return x.ownerCustomerId ? x : null; }, "the owner to save");
   assert.equal(osprey.ownerCustomerId, "c1");
   assert.equal(osprey.transferHistory[0].toCustomerName, "Robert Smith");
-  await page.getByRole("button", { name: "Osprey" }).first().click();
-  await page.getByText("Current Owner").waitFor();
+  await page.getByRole("heading", { name: "Osprey" }).waitFor();
   assert.ok(await page.getByRole("button", { name: "Robert Smith" }).first().isVisible(), "owner shows on the cottage");
   await page.getByText("Transferred from — to Robert Smith").waitFor();
-  await page.keyboard.press("Escape");
 
   // Loon is sold out of the park: its site history goes with it.
-  await page.getByRole("button", { name: "Loon" }).first().click();
+  await page.getByRole("button", { name: /Loon/ }).first().click();
   await page.getByRole("button", { name: "Transfer Ownership" }).click();
   await page.getByRole("button", { name: "Taking It Off-Site" }).click();
   await page.getByLabel("Please enter the location this cottage is being sold to").fill("Belleville, ON");
@@ -125,7 +128,7 @@ test("Scan nameplate: Claude's reading is checked, then fills in the cottage and
         ] } } };
     };
   });
-  await page.getByRole("button", { name: "Loon" }).first().click();
+  await page.getByRole("button", { name: /Loon/ }).first().click();
   await page.getByRole("button", { name: "Scan nameplate" }).click();
   await page.getByLabel("Nameplate photo").setInputFiles(path.join(__dirname, "fixtures", "nameplate.jpg"));
   await page.getByText("Check these against the plate").waitFor();
@@ -147,7 +150,37 @@ test("Scan nameplate: Claude's reading is checked, then fills in the cottage and
   assert.equal(byType.Refrigerator.model, "GTE18GSHHRSS1", "staff corrections are saved");
   assert.equal(k1.appliances.length, 4);
   assert.equal(k1.nameplatePhoto, null, "test pages have no file storage; the readings save anyway");
-  await page.getByText("Made by: Northlander Industries \u00b7 Cottager Escape").waitFor();
+  await page.getByText("Northlander Industries \u00b7 Cottager Escape").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("an appliance opens its card, starts a work order for it, and the finished job lands in its log", async () => {
+  await seed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await mountWithDb(page, cottagesView, READY);
+  await page.getByRole("button", { name: /Loon/ }).first().click();
+  await page.getByRole("button", { name: /^Furnace/ }).click();
+  await page.getByText("Nothing logged yet.").waitFor();
+  await page.getByRole("button", { name: "+ Work order for this furnace" }).click();
+  // The new work order is filled in for this cottage, its owner and the furnace.
+  assert.equal(await page.getByLabel("Appliance (optional)").inputValue(), "ap1");
+  await page.getByLabel("Title").fill("Furnace \u2014 no heat");
+  await page.getByRole("button", { name: /Save Work Order|Create Work Order/ }).click();
+  const open = await waitFor(async () => (await readCollection("workOrders")).find((w) => w.applianceId === "ap1"), "the work order to save");
+  assert.deepEqual([open.cottageId, open.siteId, open.customerId, open.status], ["k1", "a", "c1", "Open"]);
+  assert.equal((await readDoc("cottages/k1")).appliances[0].serviceLog.length, 0, "not logged until it's done");
+  // The crew finishes the job.
+  await page.evaluate((w) => window.__api.saveWorkOrder({ ...w, status: "Completed", completedDate: "2026-10-09" }), open);
+  const wo = { ...open, status: "Completed" };
+  const k1 = await waitFor(async () => { const x = await readDoc("cottages/k1"); return (x.appliances[0].serviceLog || []).length ? x : null; }, "the job to be logged on the furnace");
+  assert.deepEqual([k1.appliances[0].serviceLog[0].workOrderId, k1.appliances[0].serviceLog[0].description], [wo.id, "Furnace \u2014 no heat"]);
+  // Saving it again doesn't log it twice.
+  await page.evaluate((w) => window.__api.saveWorkOrder({ ...w, title: "Furnace \u2014 no heat (fixed)" }), wo);
+  await page.waitForTimeout(800);
+  assert.equal((await readDoc("cottages/k1")).appliances[0].serviceLog.length, 1);
+  // It shows in the history beside the list.
+  await page.getByText(/Furnace — no heat/).first().waitFor();
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
