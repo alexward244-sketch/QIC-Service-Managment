@@ -18320,6 +18320,47 @@ const ADMIN_SETTINGS_NAV = [
 // forwards are always brought in. Read by serviceCorrespondence; the default
 // matches DEFAULT_SKIPPED_SENDERS in functions/index.js.
 const DEFAULT_SKIPPED_SENDERS = ["service@qicampark.com"];
+// Reading the inbox straight from Zoho (the zohoInbox Cloud Function):
+// first it only compares with what Zoho Flow brings in, then a switch here
+// (settings.emailIntakeDirect) makes it bring emails in itself.
+function ZohoInboxIntake({ db, persist }) {
+  const [state, setState] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const actor = useCurrentActor();
+  useEffect(() => db_.collection("serverState").doc("zohoInbox").onSnapshot((d) => setState(d.exists ? d.data() : {}), () => setLoadError("Couldn't load the Zoho inbox check.")), []);
+  const on = !!(db.settings || {}).emailIntakeDirect;
+  const setOn = (v) => {
+    persist({ ...db, settings: { ...db.settings || {}, emailIntakeDirect: v }, activityLog: addLog(db, actor, v ? "Turned on reading email straight from Zoho" : "Turned off reading email straight from Zoho (back to Zoho Flow)") });
+    setConfirming(false);
+  };
+  const c = state && state.compare || {};
+  const when = (iso) => iso ? new Date(iso).toLocaleString(void 0, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  return React.createElement(
+    "div",
+    { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-6", "data-zoho-inbox": true },
+    React.createElement("div", { className: "flex items-center justify-between gap-3 mb-1" }, React.createElement("span", { className: "text-sm font-semibold text-[#1E1A13]" }, "Read email straight from Zoho"), React.createElement("span", { className: `text-[11px] font-semibold px-2 py-0.5 rounded-full ${on ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#F1EEE9] text-[#75716A]"}` }, on ? "On" : "Comparing")),
+    loadError ? React.createElement("p", { className: "text-xs text-[#a8532a]" }, loadError) : !state ? React.createElement("p", { className: "text-xs text-[#9A968D]" }, "Loading\u2026") : !state.checkedAt ? React.createElement("p", { className: "text-xs text-[#75716A]" }, "Waiting for the first check \u2014 it runs every minute once the zohoInbox function is deployed.") : on ? React.createElement(
+      "div",
+      { className: "text-xs text-[#4B4740] space-y-1" },
+      React.createElement("p", null, `New emails are read from the Zoho inbox every minute (last checked ${when(state.checkedAt)}; ${state.addedTotal || 0} brought in so far). Zoho Flow's email copies are ignored, so its email flow can be turned off in Zoho Flow \u2014 keep the website form flows.`),
+      React.createElement("button", { type: "button", onClick: () => setOn(false), className: "text-[#a8532a] hover:underline" }, "Turn off (go back to Zoho Flow)")
+    ) : React.createElement(
+      "div",
+      { className: "text-xs text-[#4B4740]" },
+      React.createElement("p", { className: "mb-2" }, `Checking the Zoho inbox against what Zoho Flow brings in, without adding anything (since ${when(c.since)}; last checked ${when(state.checkedAt)}).`),
+      React.createElement("p", { className: "mb-2", "data-zoho-compare": true }, React.createElement("b", null, `${c.matched || 0} of ${c.checked || 0}`), " emails matched what Flow brought in. ", c.missedCount ? React.createElement("span", { className: "text-[#9A6B1F] font-semibold" }, `${c.missedCount} Flow didn't bring in:`) : "Flow didn't miss any."),
+      (c.missed || []).length > 0 && React.createElement("ul", { className: "mb-2 space-y-0.5 max-h-40 overflow-y-auto" }, c.missed.map((m) => React.createElement("li", { key: m.messageId, className: "truncate" }, `${when(m.at)} \u00B7 ${m.from} \u00B7 ${m.subject || "(no subject)"}`))),
+      React.createElement("p", { className: "text-[#75716A] mb-3" }, "Emails Flow didn't bring in may be ones its filter skips on purpose (newsletters, notices) \u2014 add those senders to the ignore list below before switching on. Emails the app always skips (website form notices, our own replies) aren't counted."),
+      confirming ? React.createElement(
+        "div",
+        { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-3 py-2 flex items-center justify-between gap-2 flex-wrap" },
+        React.createElement("span", null, "Switch email intake to reading Zoho directly? Zoho Flow's email copies will be ignored from now on."),
+        React.createElement("span", { className: "flex gap-2" }, React.createElement("button", { type: "button", onClick: () => setOn(true), className: "px-3 py-1.5 rounded-md bg-[#377249] text-white font-semibold" }, "Yes, switch on"), React.createElement("button", { type: "button", onClick: () => setConfirming(false), className: "px-3 py-1.5 rounded-md text-[#75716A]" }, "Cancel"))
+      ) : React.createElement("button", { type: "button", onClick: () => setConfirming(true), className: "px-3 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] font-semibold" }, "Switch on")
+    )
+  );
+}
 function EmailIntakePane({ db, persist }) {
   const saved = (db.settings || {}).correspondenceSkipSenders;
   const list = Array.isArray(saved) ? saved : DEFAULT_SKIPPED_SENDERS;
@@ -18339,8 +18380,9 @@ function EmailIntakePane({ db, persist }) {
   return React.createElement(
     "div",
     null,
-    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Email Intake"),
-    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Emails from work addresses (@qicampark.com, @quintesisle.ca) come into Correspondence marked \u201cFrom staff\u201d, and forwarded emails always come in. Add an address below to ignore its emails instead \u2014 for example, the service inbox itself, so the replies you send don't show up again."),
+    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-3" }, "Email Intake"),
+    React.createElement(ZohoInboxIntake, { db, persist }),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Emails from work addresses (@qicampark.com, @quintesisle.ca) come into Correspondence marked \u201cFrom staff\u201d, and forwarded emails always come in. Add an address below to ignore its emails \u2014 any sender: for example, the service inbox itself, so the replies you send don't show up again, or a newsletter."),
     React.createElement("div", { className: "text-[11px] font-semibold uppercase tracking-wider text-[#75716A] mb-1.5" }, "Ignore emails from"),
     list.length === 0 ? React.createElement("p", { className: "text-xs text-[#9A968D] italic mb-3" }, "No addresses \u2014 every work email comes in.") : React.createElement(
       "div",
