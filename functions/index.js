@@ -593,6 +593,7 @@ const SERVER_ALERT_SOURCES = {
   zohoAttachments: { label: "Email attachments from Zoho", check: "The email arrived but its attachments may be missing - open the email in Zoho to see them. If this keeps happening, the Zoho connection may need to be re-authorized." },
   zohoDelete: { label: "Deleting emails in both the app and Zoho", check: "An email deleted in one place may still be in the other - delete it there by hand. If this keeps happening, the Zoho connection may need re-authorizing with permission to delete mail." },
   zohoRead: { label: "Marking emails read in Zoho", check: "Emails opened in the app may still look unread in Zoho. If this keeps happening, the Zoho connection needs re-authorizing with permission to update mail (the same step that lets deletes reach Zoho)." },
+  zohoInbox: { label: "Reading the inbox from Zoho", check: "New emails may be late showing in Correspondence - check the service inbox in Zoho. If this keeps happening, the Zoho connection may need re-authorizing." },
   zohoSentMail: { label: "Replies sent from Zoho", check: "Replies written in Zoho may not be showing in the app's Correspondence. They're still in Zoho's Sent folder. If this keeps happening, the Zoho connection may need re-authorizing." },
   emailTriage: { label: "Email triage (Claude)", check: "Emails still arrive, just without the suggested flag and summary. Usually a brief Claude outage; nothing to do unless it keeps happening." },
   morningSummary: { label: "Morning summary", check: "The summary may be missing or only have the plain counts today. Check the dashboard; you can regenerate it there." }
@@ -1018,6 +1019,112 @@ async function markZohoCopyRead(c) {
   return { marked: 1 };
 }
 
+// ---------------------------------------------------------------------
+// Reading the service inbox straight from Zoho (instead of Zoho Flow
+// forwarding a copy of each email). Every minute, new inbox messages go
+// through the same rules as Flow's (classifyIncomingEmail) and are saved
+// as zoho_in_<Zoho message id>, so each one is tied to its Zoho message.
+// Until settings.emailIntakeDirect is turned on (Admin > Email Intake) it
+// only compares: emails Flow already brought in get their Zoho id, and any
+// Flow didn't bring in are listed (serverState/zohoInbox) for review -
+// nothing is added. Once on, Flow's email copies are ignored.
+const ZOHO_INBOX_STATE = db.collection("serverState").doc("zohoInbox");
+// While comparing, give Flow this long to deliver an email first.
+const ZOHO_INBOX_COMPARE_DELAY_MS = 5 * 60 * 1000;
+const ZOHO_INBOX_FIRST_LOOKBACK_MS = 30 * 60 * 1000;
+
+async function directIntakeOn() {
+  const snap = await ROLES_DOC.get();
+  return Boolean(snap.exists && snap.data().settings && snap.data().settings.emailIntakeDirect);
+}
+
+// The Correspondence entry Flow made for a Zoho inbox message, if any.
+async function flowEntryFor(m) {
+  const t = zohoSentTime(m);
+  const lo = new Date(t - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
+  const hi = new Date(t + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
+  const nearby = await db.collection("correspondence").where("receivedAt", ">=", lo).where("receivedAt", "<=", hi).get();
+  return nearby.docs.find((d) => {
+    const c = d.data();
+    return c.direction !== "out" && !c.zohoMessageId && isZohoCopyOf(m, c);
+  }) || null;
+}
+
+async function syncZohoInbox(now = Date.now()) {
+  const direct = await directIntakeOn();
+  const accessToken = await getZohoAccessToken();
+  const stateSnap = await ZOHO_INBOX_STATE.get();
+  const state = stateSnap.exists ? stateSnap.data() : {};
+  const since = Number(state.lastReceivedAt) || now - ZOHO_INBOX_FIRST_LOOKBACK_MS;
+  const until = direct ? Infinity : now - ZOHO_INBOX_COMPARE_DELAY_MS;
+  const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${ZOHO_MAIL_INBOX_FOLDER_ID}&limit=50&sortBy=date`, accessToken);
+  if (!listed.response) throw new Error(`Zoho wouldn't list the inbox (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
+  const messages = ((await listed.response.json()).data || [])
+    .filter((m) => zohoSentTime(m) > since && zohoSentTime(m) <= until)
+    .sort((a, b) => zohoSentTime(a) - zohoSentTime(b));
+  let newest = since;
+  const counts = { checked: 0, matched: 0, skipped: 0, added: 0 };
+  const missed = [];
+  for (const m of messages) {
+    newest = Math.max(newest, zohoSentTime(m));
+    const messageId = toStr(m.messageId);
+    const from = emailsIn(m.fromAddress)[0];
+    if (!from || !messageId) continue;
+    counts.checked++;
+    const id = `zoho_in_${messageId}`;
+    if ((await db.collection("correspondence").doc(id).get()).exists) continue;
+    if (!(await db.collection("correspondence").where("zohoMessageId", "==", messageId).limit(1).get()).empty) continue;
+    const flow = await flowEntryFor(m);
+    if (flow) {
+      await flow.ref.update({ zohoMessageId: messageId });
+      counts.matched++;
+      continue;
+    }
+    const content = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders/${ZOHO_MAIL_INBOX_FOLDER_ID}/messages/${messageId}/content`, accessToken);
+    const html = content.response ? toStr(((await content.response.json()).data || {}).content) : toStr(m.summary);
+    const f = await classifyIncomingEmail({ fromEmail: from, subject: m.subject, html });
+    if (f.skip) {
+      counts.skipped++;
+      continue;
+    }
+    const at = new Date(zohoSentTime(m)).toISOString();
+    if (!direct) {
+      missed.push({ messageId, from, subject: toStr(m.subject).slice(0, 150), at });
+      continue;
+    }
+    await saveIncomingEmail(f, {
+      id,
+      receivedAt: at,
+      zohoMessageId: messageId,
+      attachments: () => (toBool(m.hasAttachment) || /<img/i.test(html) ? fetchZohoAttachments({ fromEmail: from, messageId }) : Promise.resolve([]))
+    });
+    counts.added++;
+  }
+  const prior = state.compare || {};
+  const compare = direct ? prior : {
+    since: prior.since || new Date(now).toISOString(),
+    checked: (prior.checked || 0) + counts.checked,
+    matched: (prior.matched || 0) + counts.matched,
+    missed: [...missed, ...(prior.missed || [])].slice(0, 30),
+    missedCount: (prior.missedCount || 0) + missed.length
+  };
+  await ZOHO_INBOX_STATE.set({ lastReceivedAt: newest, checkedAt: new Date(now).toISOString(), direct, compare, ...(direct ? { addedTotal: (state.addedTotal || 0) + counts.added } : {}) }, { merge: true });
+  return { direct, ...counts, missed: missed.length };
+}
+
+exports.zohoInbox = onSchedule(
+  { schedule: "every 1 minutes", secrets: [ANTHROPIC_API_KEY, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY], timeoutSeconds: 120 },
+  async () => {
+    try {
+      const result = await syncZohoInbox();
+      if (result.checked) console.log("Zoho inbox:", JSON.stringify(result));
+    } catch (err) {
+      console.error("Reading the Zoho inbox failed:", err);
+      await reportServerProblem("zohoInbox", `Couldn't read the service inbox from Zoho: ${err.message || err}`, { email: false });
+    }
+  }
+);
+
 // Called by the app when an incoming email is opened.
 exports.markEmailReadInZoho = onCall(
   { secrets: [ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY] },
@@ -1095,8 +1202,11 @@ async function syncZohoTrash(accessToken) {
     const ours = emailsIn(m.fromAddress).some((e) => e === OWN_INBOX);
     let target = null;
     const sent = await db.collection("correspondence").doc(`zoho_sent_${m.messageId}`).get();
+    const byId = sent.exists ? null : await db.collection("correspondence").where("zohoMessageId", "==", toStr(m.messageId)).limit(1).get();
     if (sent.exists) {
       target = sent.ref;
+    } else if (byId && !byId.empty) {
+      target = byId.docs[0].ref;
     } else {
       const addrs = ours ? emailsIn(m.toAddress) : emailsIn(m.fromAddress);
       const field = ours ? ["toEmail"] : ["fromEmail", "forwardedBy", "zohoFrom"];
@@ -1207,8 +1317,18 @@ async function customerFromEarlierEmails(email) {
 // grant (rate-limited to 10 per 10 minutes) on every inbound email.
 let cachedZohoToken = null; // { token, expiresAt }
 
+// Shared between function instances too (serverState/zohoToken, which no
+// app user can read), since the inbox is now checked every minute and each
+// fresh instance would otherwise spend one of Zoho's 10 refreshes per 10
+// minutes.
+const ZOHO_TOKEN_DOC = db.collection("serverState").doc("zohoToken");
 async function getZohoAccessToken() {
   if (cachedZohoToken && cachedZohoToken.expiresAt > Date.now() + 60 * 1000) {
+    return cachedZohoToken.token;
+  }
+  const saved = await ZOHO_TOKEN_DOC.get().catch(() => null);
+  if (saved && saved.exists && Number(saved.data().expiresAt) > Date.now() + 2 * 60 * 1000) {
+    cachedZohoToken = { token: saved.data().token, expiresAt: Number(saved.data().expiresAt) };
     return cachedZohoToken.token;
   }
   const params = new URLSearchParams({
@@ -1225,6 +1345,7 @@ async function getZohoAccessToken() {
     throw new Error(`Zoho token refresh failed: ${response.status} ${JSON.stringify(data)}`);
   }
   cachedZohoToken = { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 };
+  await ZOHO_TOKEN_DOC.set(cachedZohoToken).catch(() => {});
   return cachedZohoToken.token;
 }
 
@@ -1308,11 +1429,11 @@ async function findRealMessageId(accessToken, fromEmail) {
 // Best-effort: any failure here (bad OAuth setup, a huge attachment, a
 // transient Zoho error) is logged and skipped rather than blocking the
 // correspondence entry from being written.
-async function fetchZohoAttachments({ fromEmail }) {
-  if (!fromEmail) return [];
+async function fetchZohoAttachments({ fromEmail, messageId: knownId }) {
+  if (!fromEmail && !knownId) return [];
   try {
     const accessToken = await getZohoAccessToken();
-    const messageId = await findRealMessageId(accessToken, fromEmail);
+    const messageId = knownId || await findRealMessageId(accessToken, fromEmail);
     if (!messageId) {
       console.error("Couldn't find a matching Zoho message for attachment lookup:", fromEmail);
       await reportServerProblem("zohoAttachments", `Couldn't find the email from ${fromEmail} in Zoho to check it for attachments.`, { email: false });
@@ -1363,6 +1484,130 @@ async function fetchZohoAttachments({ fromEmail }) {
   }
 }
 
+// ---------------------------------------------------------------------
+// Incoming email: the rules that decide whether an email in the service
+// inbox becomes Correspondence, and under whom - shared by the Zoho Flow
+// webhook (serviceCorrespondence) and reading the inbox directly
+// (zohoInbox). Returns { skip: reason } or the fields of the entry.
+async function classifyIncomingEmail({ fromEmail, subject, html }) {
+  fromEmail = toStr(fromEmail).toLowerCase();
+  subject = toStr(subject);
+  // An address on the Email Intake ignore list is never brought in.
+  if (!isInternalSender(fromEmail) && fromEmail !== OWN_INBOX && (await skippedSenders()).includes(fromEmail)) return { skip: "skipped-sender" };
+  const plainBody = htmlToPlainText(html);
+
+  // Mail from our own domains is either a reply we sent echoing back
+  // through the inbox, a form notification, or a staff member manually
+  // forwarding a real customer email in (e.g. sales relaying a question
+  // to service). Try to recover the original sender from a forwarded
+  // block before deciding to skip - that's the only case where internal
+  // mail should still count as real correspondence.
+  let effectiveFrom = fromEmail;
+  let forwardedBy = null;
+  let fromStaff = false;
+  // A reply ("Re: ...", including "Re: Fwd: ...") from our own domain
+  // is a reply going out with the earlier messages quoted under it -
+  // e.g. a reply sent from Zoho to a customer echoing back into the
+  // inbox - never a forward. Its quoted "From: customer / Sent: ..."
+  // header must not be read as a forwarded sender, or our own reply is
+  // filed as a new email from the customer. (Replies sent from Zoho are
+  // already recorded by zohoSentMail.)
+  const isReplySubject = /^\s*re\s*:/i.test(subject);
+  // A reply or forward sent FROM the service inbox's own address is our
+  // own outgoing mail (sent from Zoho) echoing back in -
+  // zohoSentMail already records it under the person it went to. A
+  // forward from service@ used to be filed as a new email, and could
+  // land in an unrelated customer's conversation.
+  if (fromEmail === OWN_INBOX && (isReplySubject || looksForwarded(subject, plainBody))) {
+    return { skip: "own-outgoing" };
+  }
+  const isForward = !isReplySubject && looksForwarded(subject, plainBody);
+  if (isInternalSender(fromEmail)) {
+    const forwardedSender = isReplySubject ? null : extractForwardedSender(plainBody);
+    if (forwardedSender && !isInternalSender(forwardedSender)) {
+      effectiveFrom = forwardedSender;
+      forwardedBy = fromEmail;
+    } else if (isForward) {
+      // A staff forward whose original sender couldn't be read (or was
+      // also staff): keep it, under the forwarder, rather than lose it.
+      forwardedBy = fromEmail;
+      fromStaff = true;
+    } else if ((await skippedSenders()).includes(fromEmail)) {
+      return { skip: "skipped-sender" };
+    } else {
+      // A coworker emailing the service inbox directly.
+      fromStaff = true;
+    }
+  }
+
+  // A website contact form (direct from the site's address, or forwarded
+  // by a coworker): the person who filled it in is the sender.
+  const webForm = isInternalSender(effectiveFrom) ? parseWebFormSubmission(plainBody) : null;
+  if (webForm && !isInternalSender(webForm.email)) {
+    if (fromEmail !== effectiveFrom || isForward) forwardedBy = forwardedBy || fromEmail;
+    effectiveFrom = webForm.email;
+    fromStaff = false;
+  }
+
+  // Zoho Forms' own "someone submitted your form" notifications use this
+  // boilerplate across every form on the account. They can slip through
+  // the Zoho Flow sender filter, so this is a second, independent check
+  // - skip writing these as correspondence even if the Flow-side filter
+  // has a gap.
+  // The website's own form notices ("Dave Quickert has filled out a
+  // Propane Request Form") are the same: propane, winterizing and other
+  // sign-up forms already arrive under Sign-ups. Only its contact /
+  // general information form is a real message to keep (read above).
+  const lowerBody = plainBody.toLowerCase();
+  const siteForm = websiteFormName(plainBody);
+  if (lowerBody.includes("has submitted the following") || (siteForm !== null && !isContactFormName(siteForm))) {
+    return { skip: "form-notification" };
+  }
+
+  // A staff-forwarded message's content IS the forwarded block, not a
+  // redundant quote riding along under it, so only trim the reply chain
+  // for a direct customer message.
+  // A customer forwarding something to us (e.g. their contractor's
+  // email) is the same: the forwarded part is the context.
+  const storedBody = webForm && !fromStaff ? webForm.text : forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
+
+  return { fromEmail, subject, plainBody, effectiveFrom, forwardedBy, fromStaff, webForm, isForward, storedBody };
+}
+
+// Builds and saves a Correspondence entry from classifyIncomingEmail's
+// fields: customer match, Claude triage, attachments.
+async function saveIncomingEmail(f, { id, receivedAt, zohoMessageId, attachments }) {
+  const voicemail = parseVoicemail(f.subject, f.plainBody);
+  const customerId = voicemail ? null : (await findCustomerByEmail(f.effectiveFrom)) || (await customerFromEarlierEmails(f.effectiveFrom));
+  const [{ suggestedFlag, needsReply, triage }, files] = await Promise.all([
+    triageCorrespondence(f.subject, f.storedBody),
+    attachments()
+  ]);
+  const entry = {
+    id,
+    customerId: customerId || null,
+    direction: "in",
+    status: "new",
+    fromEmail: f.effectiveFrom,
+    // Zoho's sender, when the app files it under someone else.
+    ...(f.fromEmail !== f.effectiveFrom && f.fromEmail !== f.forwardedBy ? { zohoFrom: f.fromEmail } : {}),
+    forwardedBy: f.forwardedBy,
+    fromStaff: f.fromStaff,
+    ...(voicemail ? { voicemail } : {}),
+    ...(f.webForm && !f.fromStaff ? { webForm: { name: f.webForm.name, phone: f.webForm.phone, siteNumber: f.webForm.siteNumber, department: f.webForm.department } } : {}),
+    ...(zohoMessageId ? { zohoMessageId } : {}),
+    suggestedFlag,
+    needsReply,
+    triage,
+    subject: f.subject,
+    body: f.storedBody,
+    receivedAt,
+    attachments: files
+  };
+  await db.collection("correspondence").doc(entry.id).set(entry);
+  return { entry, customerId };
+}
+
 exports.serviceCorrespondence = onRequest(
   { secrets: [WEBHOOK_SECRET, ANTHROPIC_API_KEY, ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY], cors: false, timeoutSeconds: 120 },
   async (req, res) => {
@@ -1395,116 +1640,23 @@ exports.serviceCorrespondence = onRequest(
     }
 
     try {
-      const plainBody = htmlToPlainText(toStr(body.body));
-
-      // Mail from our own domains is either a reply we sent echoing back
-      // through the inbox, a form notification, or a staff member manually
-      // forwarding a real customer email in (e.g. sales relaying a question
-      // to service). Try to recover the original sender from a forwarded
-      // block before deciding to skip - that's the only case where internal
-      // mail should still count as real correspondence.
-      let effectiveFrom = fromEmail;
-      let forwardedBy = null;
-      let fromStaff = false;
-      // A reply ("Re: ...", including "Re: Fwd: ...") from our own domain
-      // is a reply going out with the earlier messages quoted under it -
-      // e.g. a reply sent from Zoho to a customer echoing back into the
-      // inbox - never a forward. Its quoted "From: customer / Sent: ..."
-      // header must not be read as a forwarded sender, or our own reply is
-      // filed as a new email from the customer. (Replies sent from Zoho are
-      // already recorded by zohoSentMail.)
-      const isReplySubject = /^\s*re\s*:/i.test(toStr(body.subject));
-      // A reply or forward sent FROM the service inbox's own address is our
-      // own outgoing mail (sent from Zoho) echoing back in -
-      // zohoSentMail already records it under the person it went to. A
-      // forward from service@ used to be filed as a new email, and could
-      // land in an unrelated customer's conversation.
-      if (fromEmail === OWN_INBOX && (isReplySubject || looksForwarded(body.subject, plainBody))) {
-        res.status(200).json({ ok: true, skipped: true, reason: "own-outgoing" });
+      // Once the inbox is read directly (zohoInbox), Flow's copies would be
+      // duplicates.
+      if (await directIntakeOn()) {
+        res.status(200).json({ ok: true, skipped: true, reason: "direct-intake" });
         return;
       }
-      const isForward = !isReplySubject && looksForwarded(body.subject, plainBody);
-      if (isInternalSender(fromEmail)) {
-        const forwardedSender = isReplySubject ? null : extractForwardedSender(plainBody);
-        if (forwardedSender && !isInternalSender(forwardedSender)) {
-          effectiveFrom = forwardedSender;
-          forwardedBy = fromEmail;
-        } else if (isForward) {
-          // A staff forward whose original sender couldn't be read (or was
-          // also staff): keep it, under the forwarder, rather than lose it.
-          forwardedBy = fromEmail;
-          fromStaff = true;
-        } else if ((await skippedSenders()).includes(fromEmail)) {
-          res.status(200).json({ ok: true, skipped: true, reason: "skipped-sender" });
-          return;
-        } else {
-          // A coworker emailing the service inbox directly.
-          fromStaff = true;
-        }
-      }
-
-      // A website contact form (direct from the site's address, or forwarded
-      // by a coworker): the person who filled it in is the sender.
-      const webForm = isInternalSender(effectiveFrom) ? parseWebFormSubmission(plainBody) : null;
-      if (webForm && !isInternalSender(webForm.email)) {
-        if (fromEmail !== effectiveFrom || isForward) forwardedBy = forwardedBy || fromEmail;
-        effectiveFrom = webForm.email;
-        fromStaff = false;
-      }
-
-      // Zoho Forms' own "someone submitted your form" notifications use this
-      // boilerplate across every form on the account. They can slip through
-      // the Zoho Flow sender filter, so this is a second, independent check
-      // - skip writing these as correspondence even if the Flow-side filter
-      // has a gap.
-      // The website's own form notices ("Dave Quickert has filled out a
-      // Propane Request Form") are the same: propane, winterizing and other
-      // sign-up forms already arrive under Sign-ups. Only its contact /
-      // general information form is a real message to keep (read above).
-      const lowerBody = plainBody.toLowerCase();
-      const siteForm = websiteFormName(plainBody);
-      if (lowerBody.includes("has submitted the following") || (siteForm !== null && !isContactFormName(siteForm))) {
-        res.status(200).json({ ok: true, skipped: true, reason: "form-notification" });
+      const f = await classifyIncomingEmail({ fromEmail, subject: body.subject, html: body.body });
+      if (f.skip) {
+        res.status(200).json({ ok: true, skipped: true, reason: f.skip });
         return;
       }
-
-      // A staff-forwarded message's content IS the forwarded block, not a
-      // redundant quote riding along under it, so only trim the reply chain
-      // for a direct customer message.
-      // A customer forwarding something to us (e.g. their contractor's
-      // email) is the same: the forwarded part is the context.
-      const storedBody = webForm && !fromStaff ? webForm.text : forwardedBy || isForward ? plainBody : stripQuotedReplyText(plainBody);
-
-      const voicemail = parseVoicemail(body.subject, plainBody);
-      const customerId = voicemail ? null : (await findCustomerByEmail(effectiveFrom)) || (await customerFromEarlierEmails(effectiveFrom));
-      const [{ suggestedFlag, needsReply, triage }, attachments] = await Promise.all([
-        triageCorrespondence(toStr(body.subject), storedBody),
-        fetchZohoAttachments({ fromEmail })
-      ]);
-
-      const entry = {
+      const { entry, customerId } = await saveIncomingEmail(f, {
         id: `corr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        customerId: customerId || null,
-        direction: "in",
-        status: "new",
-        fromEmail: effectiveFrom,
-        // Zoho's sender, when the app files it under someone else.
-        ...(fromEmail !== effectiveFrom && fromEmail !== forwardedBy ? { zohoFrom: fromEmail } : {}),
-        forwardedBy,
-        fromStaff,
-        ...(voicemail ? { voicemail } : {}),
-        ...(webForm && !fromStaff ? { webForm: { name: webForm.name, phone: webForm.phone, siteNumber: webForm.siteNumber, department: webForm.department } } : {}),
-        suggestedFlag,
-        needsReply,
-        triage,
-        subject: toStr(body.subject),
-        body: storedBody,
         receivedAt: new Date().toISOString(),
-        attachments
-      };
-
-      await db.collection("correspondence").doc(entry.id).set(entry);
-      res.status(200).json({ ok: true, id: entry.id, matched: Boolean(customerId), forwardedBy, suggestedFlag, needsReply });
+        attachments: () => fetchZohoAttachments({ fromEmail })
+      });
+      res.status(200).json({ ok: true, id: entry.id, matched: Boolean(customerId), forwardedBy: entry.forwardedBy, suggestedFlag: entry.suggestedFlag, needsReply: entry.needsReply });
     } catch (err) {
       console.error("Failed to write correspondence:", err);
       await reportServerProblem("serviceCorrespondence", `Couldn't save an incoming email from ${toStr(body.fromEmail) || "unknown sender"} (subject: ${toStr(body.subject) || "none"}): ${err.message || err}`);

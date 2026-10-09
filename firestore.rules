@@ -145,6 +145,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
       allow update: if false;
     }
+    // How reading the inbox straight from Zoho is going (Admin > Email
+    // Intake). Written only by the zohoInbox Cloud Function; the rest of
+    // serverState (e.g. the Zoho login) stays unreadable.
+    match /serverState/zohoInbox {
+      allow read: if role() in ['admin', 'manager'];
+      allow write: if false;
+    }
     match /serverAlerts/{id} {
       allow read: if role() in ['admin', 'manager'];
       allow delete: if isAdmin();

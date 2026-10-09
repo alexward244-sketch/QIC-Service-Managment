@@ -359,6 +359,43 @@ test("opening an email in the app marks its Zoho copy read", async () => {
   assert.equal((await call(fns.markEmailReadInZoho, { subject: "Leak" }, "")).error, "permission-denied");
 });
 
+test("reading the inbox from Zoho: first only compares with Flow; once switched on it brings emails in itself, once each", async () => {
+  const now = Date.now();
+  const at = (minAgo) => String(now - minAgo * 60e3);
+  zoho.on = true;
+  // Flow delivered Anne's email; Bob's never came through Flow; a form notice; one too new to compare yet.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips." });
+  zoho.inbox = [
+    { messageId: "m-anne", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
+    { messageId: "m-bob", subject: "Deck boards", fromAddress: "bob@y.com", receivedTime: at(9) },
+    { messageId: "m-form", subject: "New entry", fromAddress: "forms@zoho.com", receivedTime: at(8) },
+    { messageId: "m-new", subject: "Hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
+  ];
+  zoho.inboxContent = { "m-bob": "<p>Two boards are soft.</p>", "m-form": "<p>Jo has submitted the following</p>", "m-new": "<p>When is my reading?</p>" };
+  await fns.zohoInbox();
+  let corr = await all("correspondence");
+  assert.equal(corr.length, 1, "nothing is added while comparing");
+  assert.equal(corr[0].zohoMessageId, "m-anne", "Flow's entry is tied to its Zoho message");
+  const compare = (await db.doc("serverState/zohoInbox").get()).data().compare;
+  assert.deepEqual([compare.checked, compare.matched, compare.missedCount, compare.missed.map((x) => x.from)], [3, 1, 1, ["bob@y.com"]], "Bob's is listed as missed by Flow; the form notice isn't; the newest waits");
+
+  // Switched on: Flow's copies are ignored, the inbox is read directly.
+  await db.doc("campground/data").set({ settings: { emailIntakeDirect: true } }, { merge: true });
+  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Hydro question", body: "When is my reading?" });
+  assert.equal(flow.body.reason, "direct-intake");
+  await fns.zohoInbox();
+  await fns.zohoInbox();
+  corr = await all("correspondence");
+  const cy = corr.filter((c) => c.fromEmail === "cy@z.com");
+  assert.equal(cy.length, 1, "once, however often it runs");
+  assert.equal(cy[0].id, "zoho_in_m-new");
+  assert.equal(cy[0].zohoMessageId, "m-new");
+  assert.equal(cy[0].status, "new");
+  assert.equal(cy[0].body, "When is my reading?");
+  assert.equal(cy[0].receivedAt, new Date(Number(at(1))).toISOString(), "Zoho's own time");
+  assert.equal(corr.length, 2);
+});
+
 test("an email moved to Zoho's Trash is removed from the app", async () => {
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();

@@ -4,7 +4,7 @@
 const { test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { launch, openApp } = require("./helpers/app");
-const { resetData, readCollection, writeDoc, cleanup } = require("./helpers/emulator");
+const { resetData, readCollection, readDoc, writeDoc, cleanup } = require("./helpers/emulator");
 const { mountWithDb, waitFor } = require("./helpers/screens");
 
 let browser;
@@ -78,5 +78,19 @@ test("Admins see errors grouped in System Health and can clear them", async () =
   await waitFor(async () => !(await readCollection("clientErrors")).some((e) => e.message === "Ancient"), "records over 30 days old to be cleared");
   await page.getByRole("button", { name: "Clear" }).first().click();
   await waitFor(async () => (await readCollection("clientErrors")).length === 2 || (await readCollection("clientErrors")).length === 1, "a group to be cleared");
+  await page.close();
+});
+
+test("Email Intake: the Zoho inbox check shows how it compares with Flow, and switches on with a confirm", async () => {
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), compare: { since: "2026-10-09T12:00:00Z", checked: 12, matched: 11, missedCount: 1, missed: [{ messageId: "m1", from: "news@shop.com", subject: "Fall sale", at: "2026-10-09T13:00:00Z" }] } });
+  const page = await openApp(browser, "emulator", { role: "admin", email: "boss@qicampark.com" });
+  await mountWithDb(page, `(api) => React.createElement(CurrentUserContext.Provider, { value: "boss@qicampark.com" }, React.createElement(EmailIntakePane, { db: api.db, persist: api.persist }))`);
+  const box = page.locator("[data-zoho-inbox]");
+  await box.locator("[data-zoho-compare]").getByText("11 of 12").waitFor();
+  await box.getByText("news@shop.com", { exact: false }).waitFor();
+  await box.getByRole("button", { name: "Switch on" }).click();
+  await box.getByRole("button", { name: "Yes, switch on" }).click();
+  await box.getByText("On", { exact: true }).waitFor();
+  await waitFor(async () => { const d = await readDoc("campground/data"); return d && d.settings && d.settings.emailIntakeDirect === true; }, "the switch to be saved");
   await page.close();
 });
