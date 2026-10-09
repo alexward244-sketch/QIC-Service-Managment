@@ -178,8 +178,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   overwritten unless ticked (it may have been replaced since the factory).
   The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
   at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
-- Forms that save a whole record (`CottageForm`, `ApplianceForm`) spread
-  `initial` first, so fields they don't show (appliances, history) survive.
+
+**Forms**
+- Saves replace the whole Firestore document, so every edit form spreads
+  the original record first (`...initial && initial.id ? initial : {}`)
+  and fields it doesn't show (a sign-up's plan date, a customer's extra
+  emails, a quote's work order link, a cottage's appliances) survive. Do
+  the same in any new form.
 
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
