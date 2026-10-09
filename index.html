@@ -4153,7 +4153,7 @@ function SiteForm({ initial, sites, onSave, onCancel }) {
   const [rmsSiteId, setRmsSiteId] = useState((initial == null ? void 0 : initial.rmsSiteId) || "");
   const isDuplicate = number.trim() && (sites || []).some((s) => s.id !== (initial == null ? void 0 : initial.id) && sameSiteNumber(s.number, number));
   const submit = () => {
-    if (!number.trim()) return;
+    if (!number.trim()) return needToSave("a site number");
     const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
     // Spread the original so fields this form doesn't show (seasonal fee
     // history, map position...) aren't lost when a site is edited.
@@ -4820,7 +4820,7 @@ function ApplianceLogForm({ cottage, db, initial, onSave, onCancel }) {
     }
   };
   const submit = () => {
-    if (!description.trim() || !date) return;
+    if (!description.trim() || !date) return needToSave(!date ? "a date" : "what was done");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       date,
@@ -5045,7 +5045,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   const serialTwin = cottageWithSerial(cottages, serialNumber, initial == null ? void 0 : initial.id);
   const [ownerCustomerId, setOwnerCustomerId] = useState((initial == null ? void 0 : initial.ownerCustomerId) || "");
   const submit = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) return needToSave("a cottage name or number");
     let ownerAction = null;
     if (ownerMode === "existing" && existingCustomerId) {
       ownerAction = { type: "existing", customerId: existingCustomerId };
@@ -6456,7 +6456,7 @@ function CustomerForm({ initial, sites, customers, onSave, onCancel }) {
     setSiteIds((ids) => ids.filter((sId) => sId !== id));
   };
   const submit = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) return needToSave("the customer's name");
     const finalShipping = shippingSameAsBilling ? billingAddress : shippingAddress;
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
@@ -7011,7 +7011,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals(totalsInput, taxRate);
   const balance = total - (Number(depositAmount) || 0);
   const submit = () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return needToSave("a title");
     const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost, serviceCallAmt));
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
@@ -7482,7 +7482,7 @@ function PartForm({ initial, onSave, onCancel }) {
   const [purchaseAccount, setPurchaseAccount] = useState((initial == null ? void 0 : initial.purchaseAccount) || "");
   const [purchaseDescription, setPurchaseDescription] = useState((initial == null ? void 0 : initial.purchaseDescription) || "");
   const submit = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) return needToSave("the part name");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
@@ -8014,7 +8014,7 @@ function StaffForm({ initial, onSave, onCancel }) {
   const [email, setEmail] = useState((initial == null ? void 0 : initial.email) || "");
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "Available");
   const submit = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) return needToSave("a name");
     onSave({ ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(), name: name.trim(), phone: phone.trim(), email: email.trim(), status });
   };
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
@@ -8331,7 +8331,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
   const suggestLines = (text) => invoiceLineSuggestions(text, parts, rateOptions, serviceCallOptions, shopPct);
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall: serviceCallAmt, subtotal, tax, total } = computeQuoteTotals({ lineItems }, taxRate);
   const submit = () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return needToSave("a title");
     const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => cleanInvoiceLine(li, lineItemsSubtotal + laborCost, serviceCallAmt));
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
@@ -10527,7 +10527,7 @@ function ConsignmentForm({ initial, cottages, sites, commissionPercent, onSave, 
     setCommentText("");
   };
   const submit = () => {
-    if (!cottageId) return;
+    if (!cottageId) return needToSave("the cottage");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       cottageId,
@@ -11511,7 +11511,7 @@ function DealForm({ initial, consignmentListings, cottages, customers, sites, on
   };
   const activeListings = (consignmentListings || []).filter((l) => l.status === "Listed" || l.status === "Pending Offer");
   const submit = () => {
-    if (!name.trim()) return;
+    if (!name.trim()) return needToSave("the buyer's name");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
@@ -12307,7 +12307,7 @@ function RecurringTaskForm({ initial, sites, cottages, onSave, onCancel }) {
   const [frequencyDays, setFrequencyDays] = useState((initial == null ? void 0 : initial.frequencyDays) || 30);
   const [nextDueDate, setNextDueDate] = useState((initial == null ? void 0 : initial.nextDueDate) || todayISO());
   const submit = () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return needToSave("a title");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       title: title.trim(),
@@ -12369,7 +12369,7 @@ function WorkOrderTemplateForm({ initial, parts, onSave, onCancel }) {
     setDefaultParts((items) => items.filter((pu) => pu.partId !== partId));
   };
   const submit = () => {
-    if (!name.trim() || !title.trim()) return;
+    if (!name.trim() || !title.trim()) return needToSave(!name.trim() ? "a template name" : "a work order title");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       name: name.trim(),
@@ -12451,7 +12451,7 @@ function QuoteTemplateForm({ initial, parts, rateOptions, serviceCallOptions, on
     setLineItems((items) => [...items, { id: uid(), description: part.name, quantity: 1, unitPrice: Number(part.price) || 0, partId: part.id }]);
   };
   const submit = () => {
-    if (!name.trim() || !title.trim()) return;
+    if (!name.trim() || !title.trim()) return needToSave(!name.trim() ? "a template name" : "a quote title");
     const cleanItems = lineItems.filter((li) => li.description.trim()).map((li) => ({
       id: li.id,
       description: li.description.trim(),
@@ -12903,7 +12903,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
     setPartsUsed((items) => items.filter((pu) => pu.partId !== partId));
   };
   const submit = () => {
-    if (!title.trim()) return;
+    if (!title.trim()) return needToSave("a title");
     onSave({
       // When editing, keep everything this form doesn't manage (the notes
       // log, links set elsewhere) - saving replaces the whole Firestore
@@ -15638,7 +15638,7 @@ function TreeRequestForm({ initial, db, onSave, onCancel }) {
     }
   };
   const submit = () => {
-    if (!description.trim()) return;
+    if (!description.trim()) return needToSave("a description");
     onSave({
       ...initial && initial.id ? initial : {}, id: (initial == null ? void 0 : initial.id) || uid(),
       siteId: siteId || null,
@@ -22809,8 +22809,31 @@ function UpdateAvailableBar({ fetchPage = fetchCurrentPage, intervalMs = APP_UPD
     React.createElement("button", { type: "button", onClick: () => location.reload(), className: "rounded-full bg-[#377249] hover:bg-[#135C30] px-3 py-1 font-semibold whitespace-nowrap" }, "Reload")
   );
 }
+// A Save that can't save yet says why, instead of doing nothing. Shown by
+// FormHintToast (rendered once by App).
+function needToSave(what) {
+  window.dispatchEvent(new CustomEvent("qic-form-hint", { detail: `Add ${what} to save.` }));
+}
+function FormHintToast() {
+  const [text, setText] = useState(null);
+  useEffect(() => {
+    let timer = null;
+    const show = (e) => {
+      setText(e.detail);
+      clearTimeout(timer);
+      timer = setTimeout(() => setText(null), 4e3);
+    };
+    window.addEventListener("qic-form-hint", show);
+    return () => {
+      window.removeEventListener("qic-form-hint", show);
+      clearTimeout(timer);
+    };
+  }, []);
+  if (!text) return null;
+  return React.createElement("div", { role: "alert", className: "fixed bottom-6 inset-x-0 mx-auto w-fit max-w-[calc(100vw-2rem)] z-[200] rounded-full bg-[#a8532a] text-white text-sm font-medium px-4 py-2 shadow-lg" }, text);
+}
 function App() {
-  return /* @__PURE__ */ React.createElement(ErrorBoundary, null, React.createElement(UpdateAvailableBar, null), /* @__PURE__ */ React.createElement(AuthGate, null));
+  return /* @__PURE__ */ React.createElement(ErrorBoundary, null, React.createElement(UpdateAvailableBar, null), React.createElement(FormHintToast, null), /* @__PURE__ */ React.createElement(AuthGate, null));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(App, null));
 
