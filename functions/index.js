@@ -2110,6 +2110,109 @@ exports.suggestSignupMatch = onCall(
   }
 );
 
+// ---------------------------------------------------------------------------
+// Cottage nameplate reader. A photo of the "Park Model Trailer Specification
+// Nameplate" (inside a cupboard or by the panel) is read by Claude into the
+// cottage's serial number, model, maker, year and factory appliances. The
+// app shows it for checking before anything is saved - nothing is written
+// here.
+// ---------------------------------------------------------------------------
+const NAMEPLATE_APPLIANCE_TYPES = ["Furnace", "Hot Water Tank", "Range", "Refrigerator", "Microwave", "AC Unit", "Fireplace", "Generator", "Other"];
+const NAMEPLATE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["isNameplate", "manufacturer", "tradeName", "modelNumber", "serialNumber", "year", "appliances", "notes"],
+  properties: {
+    isNameplate: { type: "boolean" },
+    manufacturer: { type: "string" },
+    tradeName: { type: "string" },
+    modelNumber: { type: "string" },
+    serialNumber: { type: "string" },
+    year: { type: "string" },
+    appliances: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["type", "label", "make", "model", "fuel"],
+        properties: {
+          type: { type: "string", enum: NAMEPLATE_APPLIANCE_TYPES },
+          label: { type: "string" },
+          make: { type: "string" },
+          model: { type: "string" },
+          fuel: { type: "string" }
+        }
+      }
+    },
+    notes: { type: "string" }
+  }
+};
+const NAMEPLATE_SYSTEM_PROMPT = `You read photos of the specification nameplate on a park model trailer (cottage) at a campground, so staff don't have to type it in.
+
+Copy values exactly as printed - same letters, digits, dots and dashes. If a value is missing, unreadable or you're unsure of a character, return "" for it (and say which in notes) rather than guessing; a wrong serial number is worse than a blank one.
+
+- manufacturer: the company name without any leading licence/plant number (e.g. "533438 NORTHLANDER INDUSTRIES" -> "Northlander Industries", in normal capitalisation).
+- tradeName: the trade name / "marque de commerce", normal capitalisation.
+- modelNumber and serialNumber: from the MODEL NO. and SERIAL NO. fields. The boxed "ISSUE NO. / NO. DE SERIE" number printed sideways on the plate is the plate's issue number, not the serial - never use it as the serial.
+- year: the date (year) of manufacture, 4 digits.
+- appliances: one entry per factory-installed appliance line that has a make. Skip lines marked N/A or left blank. type: the closest of the allowed types (water heater -> "Hot Water Tank", refrigerator -> "Refrigerator", microwave oven -> "Microwave", air conditioner -> "AC Unit"). label: the line's name as printed in English. make: normal capitalisation, but keep short brands as printed (G.E. -> "GE"). model: exactly as printed. fuel: "Gas" or "Electric" (or "" if not given).
+- isNameplate: false if the photo isn't such a plate or is too blurry to read; then leave the rest blank.
+- notes: one short plain sentence for staff about anything uncertain, or "".`;
+
+exports.readCottageNameplate = onCall(
+  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: "512MiB" },
+  async (request) => {
+    requireStaff(request, "read a nameplate");
+    const image = toStr((request.data || {}).image);
+    if (!image || image.length > 7 * 1024 * 1024 || !/^[A-Za-z0-9+/=]+$/.test(image)) {
+      throw new HttpsError("invalid-argument", "Send one photo (JPEG) of the nameplate.");
+    }
+    await checkAiRateLimit(request.auth.uid, "nameplate", 60);
+    try {
+      const response = await getAnthropicClient().beta.messages.create({
+        model: "claude-opus-5-5",
+        max_tokens: 16000,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        output_config: { effort: "high", format: { type: "json_schema", schema: NAMEPLATE_SCHEMA } },
+        system: NAMEPLATE_SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } },
+            { type: "text", text: "Read this nameplate." }
+          ]
+        }]
+      }, { timeout: 100000 });
+      if (response.stop_reason !== "end_turn") throw new Error(`stopped early: ${response.stop_reason}`);
+      const textBlock = (response.content || []).filter((b) => b.type === "text").pop();
+      const out = JSON.parse(textBlock ? textBlock.text : "");
+      const clean = (v, max = 80) => toStr(v).trim().slice(0, max);
+      return {
+        plate: {
+          isNameplate: Boolean(out.isNameplate),
+          manufacturer: clean(out.manufacturer),
+          tradeName: clean(out.tradeName),
+          modelNumber: clean(out.modelNumber),
+          serialNumber: clean(out.serialNumber),
+          year: /^\d{4}$/.test(clean(out.year)) ? clean(out.year) : "",
+          appliances: (Array.isArray(out.appliances) ? out.appliances : []).slice(0, 12).map((a) => ({
+            type: NAMEPLATE_APPLIANCE_TYPES.includes(a.type) ? a.type : "Other",
+            label: clean(a.label),
+            make: clean(a.make),
+            model: clean(a.model),
+            fuel: clean(a.fuel, 20)
+          })).filter((a) => a.make || a.model),
+          notes: clean(out.notes, 300)
+        }
+      };
+    } catch (err) {
+      console.error("Nameplate read failed:", err instanceof Anthropic.APIError ? `${err.status} ${err.message}` : err);
+      throw new HttpsError("unavailable", "Claude couldn't read that photo right now - try again, or type it in.");
+    }
+  }
+);
+
 exports.morningSummary = onSchedule(
   { schedule: "45 7 * * *", timeZone: "America/Toronto", secrets: [ANTHROPIC_API_KEY, EMAILJS_PRIVATE_KEY], timeoutSeconds: 300 },
   async () => {

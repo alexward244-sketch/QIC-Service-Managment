@@ -171,6 +171,15 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   the site) - use `cottageOwners`. Leaving a site, it takes its transfer
   history along (`cottage.transferHistory`); read it with
   `cottageTransferHistory`. A new unit sold off-site gets a cottage record.
+- "Scan nameplate" (cottage page, also in the field app) sends a photo of
+  the spec plate to `readCottageNameplate` (Claude reads it; nothing is
+  saved server-side). Staff check it, then it fills serial/model/year/
+  maker and the factory appliances. An appliance already filled in isn't
+  overwritten unless ticked (it may have been replaced since the factory).
+  The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
+  at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
+- Forms that save a whole record (`CottageForm`, `ApplianceForm`) spread
+  `initial` first, so fields they don't show (appliances, history) survive.
 
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
