@@ -3,6 +3,7 @@
 // rename.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("path");
 const { launch, openApp } = require("./helpers/app");
 const { resetData, readDoc, cleanup } = require("./helpers/emulator");
 const { mountWithDb, waitFor } = require("./helpers/screens");
@@ -16,7 +17,7 @@ const seed = () => resetData({
   "campground/data": { settings: { taxRate: 13 }, activityLog: [], staff: [], parts: [], workOrderTemplates: [], userRoles: { [EMAIL]: "admin" } },
   "sites/a": { id: "a", number: "0101", section: "Limestone South", tags: [], transferHistory: [{ id: "t1", date: "2024-05-01", fromCustomerName: "Old Owner", toCustomerName: "Robert Smith", cottageName: "Loon" }] },
   "sites/b": { id: "b", number: "0102", section: "Limestone South", tags: [] },
-  "cottages/k1": { id: "k1", name: "Loon", siteId: "a", serialNumber: "" },
+  "cottages/k1": { id: "k1", name: "Loon", siteId: "a", serialNumber: "", appliances: [{ id: "ap1", type: "Furnace", make: "Carrier", model: "X1", serviceLog: [] }, { id: "ap2", type: "Range", make: "", model: "", serviceLog: [] }] },
   "cottages/k2": { id: "k2", name: "Heron", siteId: "b", serialNumber: "AB-1234" },
   "cottages/k3": { id: "k3", name: "Osprey", siteId: null },
   "customers/c1": { id: "c1", name: "Robert Smith", siteIds: ["a"] }
@@ -65,6 +66,7 @@ test("renaming a cottage keeps its ownership history", async () => {
   await waitFor(async () => (await readDoc("cottages/k1")).name === "Loon Lodge", "the rename to save");
   const site = await waitFor(async () => { const x = await readDoc("sites/a"); return x.transferHistory[0].cottageId ? x : null; }, "the transfer to get the cottage's id");
   assert.equal(site.transferHistory[0].cottageId, "k1");
+  assert.equal((await readDoc("cottages/k1")).appliances.length, 2, "editing a cottage keeps its appliances");
   await page.getByRole("button", { name: "Loon Lodge" }).first().click();
   await page.getByText("Transferred from Old Owner to Robert Smith").waitFor();
   assert.deepEqual(page.pageErrors, []);
@@ -101,6 +103,51 @@ test("a cottage off the park keeps its own owner, and a sale off-site takes its 
   const loon = await waitFor(async () => { const x = await readDoc("cottages/k1"); return x.siteId === null && x.transferHistory ? x : null; }, "the off-site sale to save");
   assert.deepEqual(loon.transferHistory.map((t) => t.toCustomerName), ["Taken off-site", "Robert Smith"]);
   await page.getByText("Transferred from Old Owner to Robert Smith").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("Scan nameplate: Claude's reading is checked, then fills in the cottage and its appliances", async () => {
+  await seed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await mountWithDb(page, cottagesView, READY);
+  // Stand-in for the readCottageNameplate function (the site 1051 plate).
+  await page.evaluate(() => {
+    window.__nameplateCalls = [];
+    functions_.httpsCallable = (name) => async (data) => {
+      window.__nameplateCalls.push({ name, size: data.image.length });
+      return { data: { plate: { isNameplate: true, manufacturer: "Northlander Industries", tradeName: "Cottager Escape", modelNumber: "SW.16-4513-3Y", serialNumber: "2165117532", year: "2016", notes: "",
+        appliances: [
+          { type: "Furnace", label: "Furnace", make: "Suburban", model: "P-40", fuel: "Gas" },
+          { type: "Hot Water Tank", label: "Water Heater", make: "Suburban", model: "SW16V", fuel: "Gas" },
+          { type: "Range", label: "Range", make: "GE", model: "JCGB660SEJ1SS", fuel: "Gas" },
+          { type: "Refrigerator", label: "Refrigerator", make: "GE", model: "GTE18GSHHRSS", fuel: "Electric" }
+        ] } } };
+    };
+  });
+  await page.getByRole("button", { name: "Loon" }).first().click();
+  await page.getByRole("button", { name: "Scan nameplate" }).click();
+  await page.getByLabel("Nameplate photo").setInputFiles(path.join(__dirname, "fixtures", "nameplate.jpg"));
+  await page.getByText("Check these against the plate").waitFor();
+  const calls = await page.evaluate(() => window.__nameplateCalls);
+  assert.equal(calls[0].name, "readCottageNameplate");
+  assert.ok(calls[0].size > 1000, "the photo is sent");
+  await page.getByText(/already listed as Carrier X1; tick to replace/).waitFor();
+  assert.equal(await page.getByLabel("Save Furnace").isChecked(), false, "a furnace already on file isn't overwritten by default");
+  assert.equal(await page.getByLabel("Save Range").isChecked(), true);
+  await page.getByLabel("Model for Refrigerator").fill("GTE18GSHHRSS1");
+  await page.getByRole("button", { name: "Save to cottage" }).click();
+  const k1 = await waitFor(async () => { const x = await readDoc("cottages/k1"); return x.serialNumber ? x : null; }, "the nameplate to save");
+  assert.deepEqual([k1.serialNumber, k1.modelNumber, k1.year, k1.manufacturer, k1.tradeName], ["2165117532", "SW.16-4513-3Y", "2016", "Northlander Industries", "Cottager Escape"]);
+  const byType = Object.fromEntries(k1.appliances.map((a) => [a.type, a]));
+  assert.equal(byType.Furnace.make, "Carrier", "left alone");
+  assert.equal(byType.Range.model, "JCGB660SEJ1SS");
+  assert.equal(byType.Range.id, "ap2", "filled in the blank range already listed");
+  assert.equal(byType["Hot Water Tank"].fuel, "Gas");
+  assert.equal(byType.Refrigerator.model, "GTE18GSHHRSS1", "staff corrections are saved");
+  assert.equal(k1.appliances.length, 4);
+  assert.equal(k1.nameplatePhoto, null, "test pages have no file storage; the readings save anyway");
+  await page.getByText("Made by: Northlander Industries \u00b7 Cottager Escape").waitFor();
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

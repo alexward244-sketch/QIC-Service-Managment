@@ -123,4 +123,8 @@ test("work order photos: staff can add images, not other files or huge ones; no 
   await assertFails(st("noRole").ref("work-order-photos/w1/c.jpg").put(jpeg, { contentType: "image/jpeg" }));
   await assertFails(st("noRole").ref("work-order-photos/w1/a.jpg").getMetadata());
   await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").delete());
+  // Cottage nameplate photos follow the same rules.
+  await assertSucceeds(st("office").ref("cottage-photos/k1/nameplate.jpg").put(jpeg, { contentType: "image/jpeg" }));
+  await assertFails(st("office").ref("cottage-photos/k1/notes.txt").putString("hi", "raw", { contentType: "text/plain" }));
+  await assertFails(st("noRole").ref("cottage-photos/k1/nameplate.jpg").getMetadata());
 });

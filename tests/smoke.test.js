@@ -1068,7 +1068,7 @@ test("cottage appliances: range and fireplace types, with make, model, year and 
     window.__saved = [];
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ApplianceForm, { initial: null, onSave: (a) => window.__saved.push(a), onCancel() {} }));
   });
-  assert.deepEqual(await page.locator("select option").allInnerTexts(), ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace"]);
+  assert.deepEqual(await page.locator("select option").allInnerTexts(), ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace", "Refrigerator", "Microwave", "Generator", "Other"]);
   await page.locator("select").selectOption("Fireplace");
   await page.getByLabel("Make").fill(" Napoleon ");
   await page.getByLabel("Model").fill("GX70");

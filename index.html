@@ -726,10 +726,10 @@ function formatCustomerAddress(addr) {
   ].filter(Boolean);
   return lines.join(", ");
 }
-const APPLIANCE_TYPES = ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace"];
+const APPLIANCE_TYPES = ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace", "Refrigerator", "Microwave", "Generator", "Other"];
 // "Whirlpool WFE505 · 2019" - what identifies an appliance at a glance.
 function applianceDetails(a) {
-  return [[a.make, a.model].filter(Boolean).join(" "), a.year].filter(Boolean).join(" \xB7 ");
+  return [[a.make, a.model].filter(Boolean).join(" "), a.fuel, a.year].filter(Boolean).join(" \xB7 ");
 }
 function applianceWarrantyStatus(appliance) {
   if (!appliance || !appliance.warrantyExpiration) return "none";
@@ -4247,6 +4247,115 @@ function CottageSerialQuickAdd({ cottage, cottages, onSave }) {
     if (e.key === "Enter") submit();
   } }), value.trim() && /* @__PURE__ */ React.createElement("button", { type: "button", className: "text-xs text-[#377249] hover:underline font-medium", onClick: submit }, "Save")), error && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-[#a8532a] mt-1" }, error));
 }
+// Nameplate scan: a photo of the cottage's specification plate is read by
+// Claude (readCottageNameplate) into serial #, model, maker, year and the
+// factory appliances, shown here for checking before anything is saved.
+const NAMEPLATE_MAX_SIDE = 2400;
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("Couldn't read that photo."));
+    reader.readAsDataURL(blob);
+  });
+}
+// How a plate appliance lines up with the cottage's list: fills in a blank
+// one of the same type, leaves one that's already filled in alone (it may
+// have been replaced since the factory), or is added.
+function nameplateApplianceRows(plate, appliances) {
+  const used = new Set();
+  return (plate.appliances || []).map((p, i) => {
+    const existing = (appliances || []).find((a) => a.type === p.type && !used.has(a.id));
+    if (existing) used.add(existing.id);
+    const filled = existing && (existing.make || existing.model);
+    const same = filled && serialKey(existing.model) === serialKey(p.model);
+    return { key: i, ...p, existingId: existing ? existing.id : null, existing: filled ? applianceDetails(existing) : "", same, include: !filled };
+  });
+}
+function NameplateScanModal({ cottage, db, persist, saveCottage, onClose }) {
+  const actor = useCurrentActor();
+  const inputRef = useRef(null);
+  const [step, setStep] = useState("pick");
+  const [error, setError] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [fields, setFields] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [rows, setRows] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const read = async (file) => {
+    if (!file) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setError("Reading a nameplate needs a connection — try again once you have signal.");
+      return;
+    }
+    setError("");
+    setStep("reading");
+    try {
+      const blob = await resizeImageFile(file, NAMEPLATE_MAX_SIDE);
+      setPhoto(blob);
+      const res = await functions_.httpsCallable("readCottageNameplate")({ image: await blobToBase64(blob) });
+      const plate = res.data && res.data.plate || {};
+      if (!plate.isNameplate) {
+        setError(plate.notes || "Couldn't find a readable nameplate in that photo. Try again closer up, without glare.");
+        setStep("pick");
+        return;
+      }
+      setFields({ serialNumber: plate.serialNumber || "", modelNumber: plate.modelNumber || "", year: plate.year || "", manufacturer: plate.manufacturer || "", tradeName: plate.tradeName || "" });
+      setNotes(plate.notes || "");
+      setRows(nameplateApplianceRows(plate, cottage.appliances));
+      setStep("review");
+    } catch (e) {
+      setError(e && e.message || "Couldn't read that photo. Try again, or type it in with Edit.");
+      setStep("pick");
+    }
+  };
+  const setField = (k, v) => setFields((f) => ({ ...f, [k]: v }));
+  const setRow = (key, patch) => setRows((rs) => rs.map((r) => r.key === key ? { ...r, ...patch } : r));
+  const serialTwin = fields ? cottageWithSerial(db.cottages, fields.serialNumber, cottage.id) : null;
+  const save = async () => {
+    setSaving(true);
+    const current = (db.cottages || []).find((c) => c.id === cottage.id) || cottage;
+    let nameplatePhoto = current.nameplatePhoto || null;
+    // The photo is a nice-to-have record: if it won't upload (poor signal),
+    // the readings are still saved.
+    try {
+      const path = `cottage-photos/${cottage.id}/nameplate-${Date.now()}.jpg`;
+      const ref = storage_.ref().child(path);
+      const upload = (async () => {
+        await ref.put(photo, { contentType: "image/jpeg" });
+        return ref.getDownloadURL();
+      })();
+      const url = await Promise.race([upload, new Promise((resolve) => setTimeout(() => resolve(null), 45e3))]);
+      if (typeof url === "string") nameplatePhoto = { url, path, by: actor || "", ts: (/* @__PURE__ */ new Date()).toISOString() };
+    } catch (e) {
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    let appliances = (current.appliances || []).slice();
+    const picked = rows.filter((r) => r.include && (r.make.trim() || r.model.trim()));
+    picked.forEach((r) => {
+      const values = { type: r.type, make: r.make.trim(), model: r.model.trim(), fuel: r.fuel.trim() };
+      const idx = r.existingId ? appliances.findIndex((a) => a.id === r.existingId) : -1;
+      if (idx >= 0) {
+        appliances[idx] = { ...appliances[idx], ...values, year: appliances[idx].year || fields.year.trim() };
+      } else {
+        appliances.push({ id: uid(), ...values, year: fields.year.trim(), installDate: "", serialNumber: "", warrantyExpiration: "", serviceLog: [], createdAt: now, fromNameplate: true });
+      }
+    });
+    const keep = (k) => fields[k].trim() || current[k] || "";
+    const next = { ...current, serialNumber: keep("serialNumber"), modelNumber: keep("modelNumber"), year: keep("year"), manufacturer: keep("manufacturer"), tradeName: keep("tradeName"), appliances, nameplatePhoto };
+    persist({ ...db, activityLog: addLog(db, actor, `Read the nameplate for ${current.name}${next.serialNumber ? ` (serial # ${next.serialNumber})` : ""}${picked.length ? ` — ${picked.length} appliance${picked.length === 1 ? "" : "s"}` : ""}`) });
+    await saveCottage(next);
+    setSaving(false);
+    onClose();
+  };
+  const smallInput = "w-full rounded border border-[#E2DED5] bg-white px-2 py-1 text-sm";
+  const fieldRow = (k, label) => {
+    const before = cottage[k] || "";
+    const changes = before && fields[k].trim() && fields[k].trim() !== before;
+    return /* @__PURE__ */ React.createElement(Field, { key: k, label }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: fields[k], onChange: (e) => setField(k, e.target.value) }), changes && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A6B1F] mt-1" }, "Replaces ", before));
+  };
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Scan nameplate — ${cottage.name}`, onClose, wide: step === "review" }, step !== "review" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Take or choose a photo of the cottage's specification nameplate (\"Do not remove\" — usually inside a cupboard or by the panel). Get the whole plate in, straight on, without glare."), /* @__PURE__ */ React.createElement("input", { ref: inputRef, type: "file", accept: "image/*", className: "hidden", "aria-label": "Nameplate photo", onChange: (e) => read(e.target.files && e.target.files[0]) }), step === "reading" ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium" }, "Reading the nameplate… (this takes a few seconds)") : /* @__PURE__ */ React.createElement("button", { onClick: () => inputRef.current && inputRef.current.click(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Take / choose photo"), error && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a] mt-3" }, error)), step === "review" && fields && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Check these against the plate, fix anything that's off, then save. Blank boxes leave what's there now."), notes && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A6B1F] bg-[#FBEEDA] rounded px-3 py-2 mb-3" }, notes), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, fieldRow("serialNumber", "Serial Number"), fieldRow("modelNumber", "Model Number"), fieldRow("year", "Year"), fieldRow("manufacturer", "Manufacturer"), fieldRow("tradeName", "Trade Name")), serialTwin && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-1 mb-3" }, "That serial number is already on ", serialTwin.name, " — double check before saving."), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mt-2 mb-2" }, "Factory appliances"), rows.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-3" }, "None listed on the plate.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-3" }, rows.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.key, className: `rounded-lg border px-3 py-2 ${r.include ? "border-[#377249]/40 bg-[#FFFDFA]" : "border-[#E2DED5] bg-[#F1EEE9]"}` }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm font-medium text-[#1E1A13] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: r.include, onChange: (e) => setRow(r.key, { include: e.target.checked }), "aria-label": `Save ${r.label || r.type}` }), r.label || r.type, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#75716A]" }, r.same ? "— already listed" : r.existing ? `— already listed as ${r.existing}; tick to replace with the plate's` : r.existingId ? `— fills in the ${r.type} already listed` : "— adds it to the cottage")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" }, /* @__PURE__ */ React.createElement("select", { className: smallInput, value: r.type, onChange: (e) => setRow(r.key, { type: e.target.value }), "aria-label": `Type for ${r.label}` }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.make, placeholder: "Make", onChange: (e) => setRow(r.key, { make: e.target.value }), "aria-label": `Make for ${r.label}` }), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.model, placeholder: "Model", onChange: (e) => setRow(r.key, { model: e.target.value }), "aria-label": `Model for ${r.label}` }), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.fuel, placeholder: "Fuel", onChange: (e) => setRow(r.key, { fuel: e.target.value }), "aria-label": `Fuel for ${r.label}` }))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => { setStep("pick"); setFields(null); }, className: "text-sm text-[#377249] hover:underline" }, "Use another photo"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: save, disabled: saving, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : "Save to cottage")))));
+}
 function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly, canTransfer, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -4678,6 +4787,7 @@ function ApplianceForm({ initial, onSave, onCancel }) {
   const [warrantyExpiration, setWarrantyExpiration] = useState((initial == null ? void 0 : initial.warrantyExpiration) || "");
   const submit = () => {
     onSave({
+      ...initial || {},
       id: (initial == null ? void 0 : initial.id) || uid(),
       type,
       make: make.trim(),
@@ -4744,8 +4854,9 @@ function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onT
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, React.createElement("div", null, "Make / model: ", [appliance.make, appliance.model].filter(Boolean).join(" ") || "\u2014"), React.createElement("div", null, "Year: ", appliance.year || "\u2014"), appliance.installDate && React.createElement("div", null, "Installed: ", appliance.installDate), /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
 }
-function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence, readOnly, canTransfer, nested, onClose, onEdit, variant }) {
+function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence, readOnly, canTransfer, canScanNameplate, nested, onClose, onEdit, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
+  const [scanOpen, setScanOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [viewingCustomerId, setViewingCustomerId] = useState(null);
   const [applianceModal, setApplianceModal] = useState(null);
@@ -4809,7 +4920,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
       c.name,
       (c.phone || c.email) && /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-normal" }, " \xB7 ", [c.phone, c.email].filter(Boolean).join(" \xB7 "))
     )
-  )), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterizing: ", !winterizingRequest ? /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not signed up") : winterizingRequest.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Completed ", winterizingRequest.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#9A6B1F] font-medium" }, "Signed up \u2014 requested ", winterizingRequest.requestedDate)), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), cottage.warrantyExpiration && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", cottage.warrantyExpiration), applianceWarrantyStatus(cottage) === "expired" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Expired") : applianceWarrantyStatus(cottage) === "expiring" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Expiring Soon") : /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under Warranty")), (cottage.bedrooms || cottage.bathrooms) && /* @__PURE__ */ React.createElement("div", null, cottage.bedrooms ? `${cottage.bedrooms} bed` : "", cottage.bedrooms && cottage.bathrooms ? " \xB7 " : "", cottage.bathrooms ? `${cottage.bathrooms} bath` : ""), cottage.deckPorch && /* @__PURE__ */ React.createElement("div", null, "Deck / Porch: ", cottage.deckPorch), (() => {
+  )), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterizing: ", !winterizingRequest ? /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not signed up") : winterizingRequest.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Completed ", winterizingRequest.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#9A6B1F] font-medium" }, "Signed up \u2014 requested ", winterizingRequest.requestedDate)), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), (cottage.manufacturer || cottage.tradeName) && /* @__PURE__ */ React.createElement("div", null, "Made by: ", [cottage.manufacturer, cottage.tradeName].filter(Boolean).join(" \xB7 ")), cottage.nameplatePhoto && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("a", { href: cottage.nameplatePhoto.url, target: "_blank", rel: "noreferrer", className: "text-[#377249] hover:underline" }, "Nameplate photo"), cottage.nameplatePhoto.ts ? ` (${cottage.nameplatePhoto.ts.slice(0, 10)})` : ""), cottage.warrantyExpiration && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", cottage.warrantyExpiration), applianceWarrantyStatus(cottage) === "expired" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Expired") : applianceWarrantyStatus(cottage) === "expiring" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Expiring Soon") : /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under Warranty")), (cottage.bedrooms || cottage.bathrooms) && /* @__PURE__ */ React.createElement("div", null, cottage.bedrooms ? `${cottage.bedrooms} bed` : "", cottage.bedrooms && cottage.bathrooms ? " \xB7 " : "", cottage.bathrooms ? `${cottage.bathrooms} bath` : ""), cottage.deckPorch && /* @__PURE__ */ React.createElement("div", null, "Deck / Porch: ", cottage.deckPorch), (() => {
     const items = cottage.sunspaceItems || {};
     const rows = [];
     if (items.sunroof && items.sunroof.included) rows.push({ label: "Sunroof", dims: [items.sunroof.width, items.sunroof.length].filter(Boolean).join("' x "), item: items.sunroof });
@@ -4824,7 +4935,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
     const paidInFull = isSunspacePaidInFull(o);
     const statusTone = o.status === "Work Complete" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]";
     return /* @__PURE__ */ React.createElement("div", { key: o.id, className: "text-sm py-1.5 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, sunspaceItemsLabel(o)), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, o.status)), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, paidInFull ? "Paid in full" : `Ordered ${o.orderedDate || ""}`));
-  })), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Appliances"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => setApplianceModal({ mode: "new" }) }, "+ Add Appliance")), appliances.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No appliances recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, appliances.map((a) => {
+  })), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Appliances"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3" }, (!readOnly || canScanNameplate) && /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => setScanOpen(true) }, "Scan nameplate"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => setApplianceModal({ mode: "new" }) }, "+ Add Appliance"))), appliances.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No appliances recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, appliances.map((a) => {
     const status = applianceWarrantyStatus(a);
     const statusTone = status === "expired" ? "bg-[#F5E3D9] text-[#a8532a]" : status === "expiring" ? "bg-[#FBEEDA] text-[#9A6B1F]" : status === "ok" ? "bg-[#DDF1E1] text-[#28633C]" : "";
     return /* @__PURE__ */ React.createElement(
@@ -4904,7 +5015,7 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
       setApplianceTransferModal(null);
       setViewingApplianceId(null);
     }
-  }));
+  }), scanOpen && /* @__PURE__ */ React.createElement(NameplateScanModal, { cottage, db, persist, saveCottage, onClose: () => setScanOpen(false) }));
 }
 function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) {
   var _a, _b;
@@ -4943,6 +5054,9 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
     }
     onSave(
       {
+        // Keep what this form doesn't show (appliances, ownership history,
+        // nameplate photo) - saving replaces the whole cottage record.
+        ...initial || {},
         id: (initial == null ? void 0 : initial.id) || uid(),
         name: name.trim(),
         color: color.trim(),
@@ -19650,12 +19764,12 @@ function FieldAddPartModal({ db, onAdd, onClose }) {
 // Before/after photos on a work order. Shrunk on the phone first (longest
 // side 1600px, JPEG) so uploads are quick on site and storage stays small.
 const WO_PHOTO_MAX_SIDE = 1600;
-function resizeImageFile(file) {
+function resizeImageFile(file, maxSide = WO_PHOTO_MAX_SIDE) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(1, WO_PHOTO_MAX_SIDE / Math.max(img.width, img.height));
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
@@ -20641,6 +20755,7 @@ function FieldParkScreen({ db, persist, saveWorkOrder, saveCottage, saveSite, sa
       saveSite,
       saveCorrespondence,
       readOnly: true,
+      canScanNameplate: true,
       canTransfer: false,
       nested: false,
       onClose: () => setSelected(null),
