@@ -4203,6 +4203,29 @@ function cottageWithSerial(cottages, serial, exceptId) {
 function transferIsForCottage(t, cottage) {
   return t.cottageId ? t.cottageId === cottage.id : t.cottageName === cottage.name;
 }
+// A cottage on a site is owned by whoever has that site. One off-site (sold
+// out of the park) keeps its own owner, ownerCustomerId.
+function cottageOwners(db, cottage) {
+  if (!cottage) return [];
+  if (cottage.siteId) return (db.customers || []).filter((c) => customerSiteIds(c).includes(cottage.siteId));
+  const owner = cottage.ownerCustomerId && (db.customers || []).find((c) => c.id === cottage.ownerCustomerId);
+  return owner ? [owner] : [];
+}
+// When a cottage leaves its site it takes its entries from the site's
+// history (including the one just added for leaving) along with it.
+function historyLeavingSite(site, cottage, entry) {
+  const fromSite = site ? (site.transferHistory || []).filter((t) => transferIsForCottage(t, cottage)) : [];
+  const all = [...fromSite.some((t) => t.id === entry.id) ? [] : [entry], ...fromSite, ...cottage.transferHistory || []];
+  const seen = new Set();
+  return all.filter((t) => !seen.has(t.id) && seen.add(t.id)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+// Ownership history: the site's entries for this cottage plus the ones the
+// cottage carries itself (copied over when it left the park), newest first.
+function cottageTransferHistory(db, cottage) {
+  const site = cottage.siteId && (db.sites || []).find((s) => s.id === cottage.siteId);
+  const seen = new Set();
+  return [...(site && site.transferHistory || []).filter((t) => transferIsForCottage(t, cottage)), ...cottage.transferHistory || []].filter((t) => !seen.has(t.id) && seen.add(t.id)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
 function CottageSerialQuickAdd({ cottage, cottages, onSave }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
@@ -4277,6 +4300,15 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, d
         changedCustomer = newCustomer;
         activityLog = addLog({ activityLog }, actor, `Added ${newCustomer.name} as owner of ${c.name}`);
       }
+    }
+    if (c.siteId) {
+      c = { ...c, ownerCustomerId: null };
+    } else if ((c.ownerCustomerId || null) !== ((prev && prev.ownerCustomerId) || null)) {
+      const nameOf = (id) => ((db.customers || []).find((x) => x.id === id) || {}).name;
+      const from = prev && prev.ownerCustomerId ? nameOf(prev.ownerCustomerId) || "Unknown" : "\u2014";
+      const to = c.ownerCustomerId ? nameOf(c.ownerCustomerId) || "Unknown" : "No owner";
+      c = { ...c, transferHistory: [{ id: uid(), date: todayISO(), fromCustomerName: from, toCustomerName: to, cottageName: c.name, cottageId: c.id }, ...c.transferHistory || []] };
+      activityLog = addLog({ activityLog }, actor, `${c.name} (off-site) owner set to ${to}`);
     }
     persist({ ...db, activityLog });
     saveCottage(c);
@@ -4438,7 +4470,6 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, save
       const remainingSites = customerSiteIds(c).filter((sId) => sId !== site.id);
       return { ...c, siteIds: remainingSites, siteId: remainingSites[0] || null };
     });
-    const updatedCottage = { ...cottage, siteId: null, offSiteInfo: composedOffSiteInfo };
     const transferEntry = {
       id: uid(),
       date: todayISO(),
@@ -4449,6 +4480,8 @@ function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, save
       note: composedOffSiteInfo
     };
     const updatedSite = { ...site, transferHistory: [transferEntry, ...site.transferHistory || []] };
+    // The cottage takes its history (and its buyer, when on file) with it.
+    const updatedCottage = { ...cottage, siteId: null, offSiteInfo: composedOffSiteInfo, ownerCustomerId: offSiteBuyer && offSiteBuyer.id || null, transferHistory: historyLeavingSite(updatedSite, cottage, transferEntry) };
     const activityLog = addLog(db, actor, `${cottage.name} (Site ${site.number}) sold and taken off-site \u2014 kept on file for future service`);
     persist(applyListingPrice(closeDealForProspect({ ...db, activityLog }, actor)));
     saveCottage(updatedCottage);
@@ -4725,8 +4758,8 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
   const quotes = db.quotes.filter((q) => q.cottageId === cottage.id);
   const invoices = db.invoices.filter((inv) => inv.cottageId === cottage.id);
   const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
-  const currentOwners = site ? db.customers.filter((c) => customerSiteIds(c).includes(site.id)) : [];
-  const cottageTransfers = ((site == null ? void 0 : site.transferHistory) || []).filter((t) => transferIsForCottage(t, cottage));
+  const currentOwners = cottageOwners(db, cottage);
+  const cottageTransfers = cottageTransferHistory(db, cottage);
   const winterizingHistory = (db.winterizingRequests || []).filter((r) => r.cottageId === cottage.id).sort((a, b) => (b.requestedDate || "").localeCompare(a.requestedDate || ""));
   const winterizingRequest = winterizingHistory.find((r) => !r.archived);
   const sunspaceHistory = (db.sunspaceOrders || []).filter((o) => o.cottageId === cottage.id).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
@@ -4899,6 +4932,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   const [newOwnerEmail, setNewOwnerEmail] = useState("");
   const isDuplicate = name.trim() && (cottages || []).some((c) => c.id !== (initial == null ? void 0 : initial.id) && c.name.trim().toLowerCase() === name.trim().toLowerCase());
   const serialTwin = cottageWithSerial(cottages, serialNumber, initial == null ? void 0 : initial.id);
+  const [ownerCustomerId, setOwnerCustomerId] = useState((initial == null ? void 0 : initial.ownerCustomerId) || "");
   const submit = () => {
     if (!name.trim()) return;
     let ownerAction = null;
@@ -4923,7 +4957,8 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
         deckPorch: deckPorch.trim(),
         sunroom: sunroom.trim(),
         sunspaceItems: { sunroof, sunroom: sunroomItem, railings },
-        offSiteInfo: offSiteInfo.trim()
+        offSiteInfo: offSiteInfo.trim(),
+        ownerCustomerId: siteId ? null : ownerCustomerId || null
       },
       ownerAction
     );
@@ -4939,7 +4974,7 @@ function CottageForm({ initial, sites, cottages, customers, onSave, onCancel }) 
   );
   return /* @__PURE__ */ React.createElement("div", { onKeyDown: (e) => {
     if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") submit();
-  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, { options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: [s.number, s.section].filter(Boolean).join(" ") })), value: siteId, onChange: setSiteId, placeholder: "Search sites\u2026", noneLabel: "Unassigned" })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }), serialTwin && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1" }, "That serial number is already on ", serialTwin.name, " \u2014 double check before saving.")), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Bedrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls, value: bedrooms, onChange: (e) => setBedrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Bathrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.5", className: inputCls, value: bathrooms, onChange: (e) => setBathrooms(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Deck / Porch" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: deckPorch, onChange: (e) => setDeckPorch(e.target.value), placeholder: "e.g. 10x20 covered deck" })), /* @__PURE__ */ React.createElement(Field, { label: "Sunspace Notes (legacy, optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sunroom, onChange: (e) => setSunroom(e.target.value), placeholder: "Old free-text notes, if any" }))), /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Sunspace Accessories"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroof.included, onChange: (e) => setSunroof({ ...sunroof, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroof"), sunroof.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroof.width, onChange: (e) => setSunroof({ ...sunroof, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroof.length, onChange: (e) => setSunroof({ ...sunroof, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroof.warrantyExpiration || "", onChange: (e) => setSunroof({ ...sunroof, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroomItem.included, onChange: (e) => setSunroomItem({ ...sunroomItem, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroom"), sunroomItem.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroomItem.width, onChange: (e) => setSunroomItem({ ...sunroomItem, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroomItem.length, onChange: (e) => setSunroomItem({ ...sunroomItem, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroomItem.warrantyExpiration || "", onChange: (e) => setSunroomItem({ ...sunroomItem, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: railings.included, onChange: (e) => setRailings({ ...railings, included: e.target.checked }), className: "accent-[#C1652F]" }), "Railings"), railings.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 ml-6" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: railings.length, onChange: (e) => setRailings({ ...railings, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), !siteId && /* @__PURE__ */ React.createElement(Field, { label: "Off-Site Info \u2014 where it went" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: offSiteInfo, onChange: (e) => setOffSiteInfo(e.target.value), placeholder: "e.g. Sold to a buyer in Belleville, picked up Sept 5" })), !initial && siteId && /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Owner (optional)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" }, ownerModeBtn("none", "No owner yet"), ownerModeBtn("existing", "Existing customer"), ownerModeBtn("new", "New customer")), ownerMode === "existing" && /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
+  } }, /* @__PURE__ */ React.createElement(Field, { label: "Cottage Name / Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: name, onChange: (e) => setName(e.target.value), placeholder: "e.g. Cottage 3 \u2014 Loon", autoFocus: AUTO_FOCUS })), isDuplicate && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-2 mb-3" }, 'A cottage named "', name.trim(), '" already exists \u2014 double check before saving.'), /* @__PURE__ */ React.createElement(Field, { label: "Colour" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: color, onChange: (e) => setColor(e.target.value), placeholder: "e.g. Blue" })), /* @__PURE__ */ React.createElement(Field, { label: "Linked Site" }, /* @__PURE__ */ React.createElement(SearchableSelect, { options: sites.map((s) => ({ value: s.id, label: `Site ${s.number}`, searchText: [s.number, s.section].filter(Boolean).join(" ") })), value: siteId, onChange: setSiteId, placeholder: "Search sites\u2026", noneLabel: "Unassigned" })), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Year" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: year, onChange: (e) => setYear(e.target.value), placeholder: "e.g. 2019" })), /* @__PURE__ */ React.createElement(Field, { label: "Model Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: modelNumber, onChange: (e) => setModelNumber(e.target.value), placeholder: "e.g. RC-42" })), /* @__PURE__ */ React.createElement(Field, { label: "Serial Number" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: serialNumber, onChange: (e) => setSerialNumber(e.target.value), placeholder: "e.g. SN-882910" }), serialTwin && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mt-1" }, "That serial number is already on ", serialTwin.name, " \u2014 double check before saving.")), /* @__PURE__ */ React.createElement(Field, { label: "Warranty Expiration" }, /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls, value: warrantyExpiration, onChange: (e) => setWarrantyExpiration(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Bedrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "1", className: inputCls, value: bedrooms, onChange: (e) => setBedrooms(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Bathrooms" }, /* @__PURE__ */ React.createElement("input", { type: "number", min: "0", step: "0.5", className: inputCls, value: bathrooms, onChange: (e) => setBathrooms(e.target.value) }))), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-3" }, /* @__PURE__ */ React.createElement(Field, { label: "Deck / Porch" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: deckPorch, onChange: (e) => setDeckPorch(e.target.value), placeholder: "e.g. 10x20 covered deck" })), /* @__PURE__ */ React.createElement(Field, { label: "Sunspace Notes (legacy, optional)" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: sunroom, onChange: (e) => setSunroom(e.target.value), placeholder: "Old free-text notes, if any" }))), /* @__PURE__ */ React.createElement("div", { className: "mb-3 p-3 rounded-lg border border-[#E2DED5] bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Sunspace Accessories"), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroof.included, onChange: (e) => setSunroof({ ...sunroof, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroof"), sunroof.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroof.width, onChange: (e) => setSunroof({ ...sunroof, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroof.length, onChange: (e) => setSunroof({ ...sunroof, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroof.warrantyExpiration || "", onChange: (e) => setSunroof({ ...sunroof, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: sunroomItem.included, onChange: (e) => setSunroomItem({ ...sunroomItem, included: e.target.checked }), className: "accent-[#C1652F]" }), "Sunroom"), sunroomItem.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mb-2 ml-6 flex-wrap" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "W", value: sunroomItem.width, onChange: (e) => setSunroomItem({ ...sunroomItem, width: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "' x"), /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: sunroomItem.length, onChange: (e) => setSunroomItem({ ...sunroomItem, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A] ml-2" }, "Warranty until:"), /* @__PURE__ */ React.createElement("input", { type: "date", className: inputCls + " w-36", value: sunroomItem.warrantyExpiration || "", onChange: (e) => setSunroomItem({ ...sunroomItem, warrantyExpiration: e.target.value }) })), /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm text-[#4B4740] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: railings.included, onChange: (e) => setRailings({ ...railings, included: e.target.checked }), className: "accent-[#C1652F]" }), "Railings"), railings.included && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 ml-6" }, /* @__PURE__ */ React.createElement("input", { className: inputCls + " w-20", placeholder: "L", value: railings.length, onChange: (e) => setRailings({ ...railings, length: e.target.value }) }), /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "'"))), /* @__PURE__ */ React.createElement(Field, { label: "Features / Notes" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: features, onChange: (e) => setFeatures(e.target.value), placeholder: "e.g. 2BR, wood stove, lake view" })), !siteId && /* @__PURE__ */ React.createElement(Field, { label: "Owner (not on a site)" }, /* @__PURE__ */ React.createElement(SearchableSelect, { options: (customers || []).map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2].filter(Boolean).join(" ") })), value: ownerCustomerId, onChange: setOwnerCustomerId, placeholder: "Search customers\u2026", noneLabel: "No owner on file" }), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-1" }, "For a cottage sold out of the park. New customer? Add them in Customers first.")), !siteId && /* @__PURE__ */ React.createElement(Field, { label: "Off-Site Info \u2014 where it went" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 2, value: offSiteInfo, onChange: (e) => setOffSiteInfo(e.target.value), placeholder: "e.g. Sold to a buyer in Belleville, picked up Sept 5" })), !initial && siteId && /* @__PURE__ */ React.createElement("div", { className: "mt-3 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Owner (optional)"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" }, ownerModeBtn("none", "No owner yet"), ownerModeBtn("existing", "Existing customer"), ownerModeBtn("new", "New customer")), ownerMode === "existing" && /* @__PURE__ */ React.createElement(Field, { label: "Customer" }, /* @__PURE__ */ React.createElement(
     SearchableSelect,
     {
       options: (customers || []).map((c) => ({
@@ -6123,7 +6158,7 @@ function CustomerDetailModal({ customer, db, persist, saveWorkOrder, saveQuote, 
   if (!customer) return null;
   const siteIds = customerSiteIds(customer);
   const linkedSites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
-  const cottages = db.cottages.filter((c) => siteIds.includes(c.siteId));
+  const cottages = db.cottages.filter((c) => c.siteId ? siteIds.includes(c.siteId) : c.ownerCustomerId === customer.id);
   const workOrders = db.workOrders.filter((w) => w.customerId === customer.id || siteIds.includes(w.siteId));
   const quotes = db.quotes.filter((q) => q.customerId === customer.id);
   const invoices = db.invoices.filter((inv) => inv.customerId === customer.id || siteIds.includes(inv.siteId));
@@ -6800,6 +6835,8 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
           const owner = customers.find((c) => customerSiteIds(c).includes(cottage.siteId));
           if (owner) setCustomerId(owner.id);
         }
+      } else if (cottage && cottage.ownerCustomerId && !customerId) {
+        setCustomerId(cottage.ownerCustomerId);
       }
     }
   };
@@ -8148,6 +8185,9 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       setSiteId(chosen.siteId);
       const cust = (customers || []).find((c) => customerSiteIds(c).includes(chosen.siteId));
       if (cust) setCustomerId(cust.id);
+    } else if (chosen && chosen.ownerCustomerId) {
+      setSiteId("");
+      setCustomerId(chosen.ownerCustomerId);
     }
   };
   const handleCustomerChange = (val) => {
@@ -10792,6 +10832,29 @@ function CloseUnitSaleModal({ deal, order, db, persist, saveCustomer, saveSite, 
       if (orderSite) {
         changedSite = { ...orderSite, transferHistory: [transferEntry, ...orderSite.transferHistory || []] };
       }
+      savedCottage = { ...savedCottage, ownerCustomerId: buyer ? buyer.id : null, transferHistory: historyLeavingSite(changedSite, existingCottageForOrder, transferEntry) };
+      noteExtra = " \u2014 kept on file for future service";
+    } else {
+      // A new unit sold out of the park still gets a cottage record, so its
+      // service history has a home.
+      const cottageId = uid();
+      savedCottage = {
+        id: cottageId,
+        name: order.model || "New Unit",
+        color: "",
+        siteId: null,
+        features: order.features || "",
+        serialNumber: "",
+        year: (/* @__PURE__ */ new Date()).getFullYear().toString(),
+        modelNumber: order.model || "",
+        bedrooms: order.bedrooms != null ? order.bedrooms : null,
+        bathrooms: order.bathrooms != null ? order.bathrooms : null,
+        deckPorch: order.deckPorch || "",
+        sunroom: order.sunroom || "",
+        offSiteInfo: composedOffSiteInfo,
+        ownerCustomerId: buyer ? buyer.id : null,
+        transferHistory: [{ id: uid(), date: todayISO(), fromCustomerName: "\u2014", toCustomerName: (buyer == null ? void 0 : buyer.name) || deal.name, cottageName: order.model || "New Unit", cottageId, note: composedOffSiteInfo }]
+      };
       noteExtra = " \u2014 kept on file for future service";
     }
     cottageOrders = cottageOrders.map(
@@ -12701,6 +12764,9 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       setSiteId(chosen.siteId);
       const cust = (customers || []).find((c) => customerSiteIds(c).includes(chosen.siteId));
       if (cust) setCustomerId(cust.id);
+    } else if (chosen && chosen.ownerCustomerId) {
+      setSiteId("");
+      setCustomerId(chosen.ownerCustomerId);
     }
   };
   const handleCustomerChange = (val) => {
@@ -17644,7 +17710,7 @@ function HydroReviewView({ db, persist }) {
 }
 function getConsignmentTransferInfo(db, cottage, site) {
   if (!cottage || !site) return { buyer: null, seller: null };
-  const entries = (site.transferHistory || []).filter((t) => transferIsForCottage(t, cottage)).slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  const entries = cottageTransferHistory(db, cottage);
   if (entries.length > 0) {
     return { buyer: entries[0].toCustomerName, seller: entries[0].fromCustomerName };
   }

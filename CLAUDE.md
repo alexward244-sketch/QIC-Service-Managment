@@ -166,6 +166,11 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Ownership transfers (on the site's `transferHistory`) carry `cottageId`;
   match them with `transferIsForCottage`, not by name, so a rename keeps
   the history.
+- A cottage can live off a site (sold out of the park) and still get work
+  orders. Its owner is then `ownerCustomerId` (on a site, owners come from
+  the site) - use `cottageOwners`. Leaving a site, it takes its transfer
+  history along (`cottage.transferHistory`); read it with
+  `cottageTransferHistory`. A new unit sold off-site gets a cottage record.
 
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for

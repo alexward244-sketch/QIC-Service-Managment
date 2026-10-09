@@ -70,3 +70,37 @@ test("renaming a cottage keeps its ownership history", async () => {
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("a cottage off the park keeps its own owner, and a sale off-site takes its history along", async () => {
+  await seed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await mountWithDb(page, cottagesView, READY);
+
+  // Osprey isn't on a site: give it an owner from its form.
+  await page.getByRole("row", { name: /Osprey/ }).getByRole("button", { name: "Edit" }).click();
+  const owner = page.getByLabel("Owner (not on a site)");
+  await owner.fill("Robert Smith");
+  await owner.press("Tab");
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "Save Cottage" }).click();
+  const osprey = await waitFor(async () => { const x = await readDoc("cottages/k3"); return x.ownerCustomerId ? x : null; }, "the owner to save");
+  assert.equal(osprey.ownerCustomerId, "c1");
+  assert.equal(osprey.transferHistory[0].toCustomerName, "Robert Smith");
+  await page.getByRole("button", { name: "Osprey" }).first().click();
+  await page.getByText("Current Owner").waitFor();
+  assert.ok(await page.getByRole("button", { name: "Robert Smith" }).first().isVisible(), "owner shows on the cottage");
+  await page.getByText("Transferred from — to Robert Smith").waitFor();
+  await page.keyboard.press("Escape");
+
+  // Loon is sold out of the park: its site history goes with it.
+  await page.getByRole("button", { name: "Loon" }).first().click();
+  await page.getByRole("button", { name: "Transfer Ownership" }).click();
+  await page.getByRole("button", { name: "Taking It Off-Site" }).click();
+  await page.getByLabel("Please enter the location this cottage is being sold to").fill("Belleville, ON");
+  await page.getByRole("button", { name: "Complete Sale" }).click();
+  const loon = await waitFor(async () => { const x = await readDoc("cottages/k1"); return x.siteId === null && x.transferHistory ? x : null; }, "the off-site sale to save");
+  assert.deepEqual(loon.transferHistory.map((t) => t.toCustomerName), ["Taken off-site", "Robert Smith"]);
+  await page.getByText("Transferred from Old Owner to Robert Smith").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
