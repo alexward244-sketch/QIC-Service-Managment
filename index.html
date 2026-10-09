@@ -5073,19 +5073,19 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
     ),
     h("div", { className: "flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[#4B4740] mb-4" }, details.map(([k, v]) => h("span", { key: k }, h("span", { className: "text-[#75716A]" }, k, ": "), v)), cottage.nameplatePhoto && h("a", { href: cottage.nameplatePhoto.url, target: "_blank", rel: "noreferrer", className: "text-[#377249] hover:underline" }, "Nameplate photo")),
     h("div", { className: "grid lg:grid-cols-2 gap-x-6 gap-y-4" },
-      h("div", null,
+      h("div", { className: "min-w-0" },
         sectionTitle("Appliances", !readOnly && h("button", { type: "button", className: "text-xs text-[#377249] hover:underline font-semibold", onClick: () => setApplianceModal({ mode: "new" }) }, "+ Add appliance")),
         appliances.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No appliances recorded. Scan the nameplate to fill them in.") : h("div", { className: "mb-4" }, appliances.map((a) => {
           const status = applianceWarrantyStatus(a);
           const age = applianceAge(a);
           return h("button", { key: a.id, type: "button", onClick: () => setViewingApplianceId(a.id), className: "w-full flex items-center justify-between gap-3 text-sm py-2 px-2 border-b border-[#EEEBE5] hover:bg-[#F1EEE9] rounded text-left" },
-            h("span", { className: "text-[#1E1A13] flex items-center gap-1.5 min-w-0" }, a.type, age >= 1 && h("span", { className: `text-[10.5px] font-bold px-1.5 py-0.5 rounded-full ${age >= 15 ? "bg-[#F5E3D9] text-[#a8532a]" : "bg-[#F1EEE9] text-[#75716A]"}` }, `${age} yr${age === 1 ? "" : "s"}`), status === "expired" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Warranty expired") : status === "expiring" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Warranty expiring") : null),
-            h("span", { className: "text-[#75716A] text-right truncate" }, [[a.make, a.model].filter(Boolean).join(" "), a.fuel].filter(Boolean).join(" \xB7 ") || "—", h("span", { className: "text-[#9A968D] ml-2" }, "›")));
+            h("span", { className: "text-[#1E1A13] flex items-center gap-1.5 flex-shrink-0" }, a.type, age >= 1 && h("span", { className: `text-[10.5px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${age >= 15 ? "bg-[#F5E3D9] text-[#a8532a]" : "bg-[#F1EEE9] text-[#75716A]"}` }, `${age} yr${age === 1 ? "" : "s"}`), status === "expired" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Warranty expired") : status === "expiring" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Warranty expiring") : null),
+            h("span", { className: "text-[#75716A] text-right truncate min-w-0" }, [[a.make, a.model].filter(Boolean).join(" "), a.fuel].filter(Boolean).join(" \xB7 ") || "—", h("span", { className: "text-[#9A968D] ml-2" }, "›")));
         })),
         sectionTitle("Owners"),
         cottageTransfers.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic" }, "No ownership changes recorded.") : h("div", { className: "text-sm space-y-1" }, cottageTransfers.map((t) => h("div", { key: t.id }, h("span", { className: "text-[#75716A]" }, t.date, ": "), "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))
       ),
-      h("div", null,
+      h("div", { className: "min-w-0" },
         sectionTitle("History"),
         history.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic" }, "Nothing recorded for this cottage yet.") : h("div", { className: "relative pl-5" },
           h("div", { className: "absolute left-[5px] top-1 bottom-1 w-0.5 bg-[#E2DED5]" }),
