@@ -853,6 +853,41 @@ test("customer page: hydro bills for Admin, Accounting, the Service Manager and 
   await page.close();
 });
 
+test("customers: taking over or giving up a site on the form asks if it's a sale and offers Transfer Ownership", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__sites = [];
+    window.__customers = [];
+    let db = { ...emptyDb(), sites: [{ id: "s1", number: "0042" }], cottages: [{ id: "k1", name: "Loon", siteId: "s1" }], customers: [{ id: "c1", name: "Robert Smith", siteIds: ["s1"] }, { id: "c2", name: "Bea Buyer", siteIds: [] }] };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const render = () => root.render(React.createElement(CustomersView, { db, persist: (n) => { db = n; render(); }, saveCustomer: (c) => window.__customers.push(c), deleteCustomer() {}, saveWorkOrder() {}, saveCorrespondence() {}, saveCottage() {}, saveSite: (x) => window.__sites.push(x), canTransfer: true }));
+    window.__commits = [];
+    render();
+  });
+  // Bea's form: adding Robert's site.
+  await page.getByText("Bea Buyer").first().click();
+  await page.getByRole("button", { name: "Edit Customer" }).click();
+  await page.getByPlaceholder("Search sites to add\u2026").fill("0042");
+  await page.getByText("Site 0042", { exact: true }).last().click();
+  const note = page.locator("[data-sale-check]");
+  await note.getByText("Site 0042 belongs to Robert Smith.").waitFor();
+  await note.getByText("Is this a sale?", { exact: false }).waitFor();
+  await note.getByRole("button", { name: "Transfer Ownership instead" }).click();
+  // The transfer opens with Bea already picked; completing it records the sale.
+  await page.getByRole("button", { name: "Complete Transfer" }).click();
+  const site = await page.evaluate(() => window.__sites[0]);
+  assert.equal(site.transferHistory[0].fromCustomerName, "Robert Smith");
+  assert.equal(site.transferHistory[0].toCustomerName, "Bea Buyer");
+  assert.equal(await page.evaluate(() => window.__customers.length), 0, "the form's own save didn't happen");
+  // Robert's form: removing his site says the same.
+  await page.getByText("Robert Smith").first().click();
+  await page.getByRole("button", { name: "Edit Customer" }).click();
+  await page.getByRole("button", { name: "Remove site" }).click();
+  await page.locator("[data-sale-check]").getByText("Removing Site 0042.").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: voicemails show who called, are never linked or grouped, and stay out of customer threads", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
