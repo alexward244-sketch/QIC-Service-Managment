@@ -563,9 +563,10 @@ test("winterizing park cottages: rentals and unsold inventory are found; they go
       { id: "s1", number: "0241", section: "Front of Park", siteType: "Seasonal" },
       { id: "s2", number: "0242", section: "Front of Park", siteType: "Seasonal" },
       { id: "s3", number: "0243", section: "Front of Park", siteType: "Seasonal" },
-      { id: "s4", number: "0244", section: "Front of Park", siteType: "Seasonal" }
+      { id: "s4", number: "0244", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s5", number: "0245", section: "Front of Park", siteType: "Seasonal", tags: ["QIC Inventory"] }
     ];
-    const cottages = [{ id: "kr", name: "Rental A", siteId: "r1" }, { id: "k1", name: "Show home", siteId: "s1" }, { id: "k2", name: "Sold one", siteId: "s2" }, { id: "k3", name: "Customer", siteId: "s3" }, { id: "kdone", name: "Already on", siteId: "r1" }];
+    const cottages = [{ id: "kt", name: "Tagged unit", siteId: "s5" }, { id: "kr", name: "Rental A", siteId: "r1" }, { id: "k1", name: "Show home", siteId: "s1" }, { id: "k2", name: "Sold one", siteId: "s2" }, { id: "k3", name: "Customer", siteId: "s3" }, { id: "kdone", name: "Already on", siteId: "r1" }];
     const cottageOrders = [
       { id: "o1", type: "Display Model", status: "Delivered/Onsite", siteId: "s1", model: "Breckenridge" },
       { id: "o2", type: "Display Model", status: "Delivered/Onsite", siteId: "s2", soldDate: "2026-09-01" },
@@ -590,7 +591,7 @@ test("winterizing park cottages: rentals and unsold inventory are found; they go
     const placed = placeNewWinterSignups(wed, db, "2026-10-06").map((x) => [x.request.id, x.date, !!x.shifted]);
     return { found: found.list.map((x) => [x.cottage.id, x.kind]), missing: found.unitsWithoutCottage.map((x) => x.unit.id), plan, tidy, placed };
   });
-  assert.deepEqual(out.found, [["k1", "inventory"], ["kr", "rental"]], "rental and unsold, delivered inventory; not sold, not on order, not already on the list");
+  assert.deepEqual(out.found, [["k1", "inventory"], ["kt", "inventory"], ["kr", "rental"]], "rental, a site tagged QIC Inventory, and unsold, delivered inventory in Sales; not sold, not on order, not already on the list");
   assert.deepEqual(out.missing, ["o4"], "an inventory unit with no cottage record is pointed out");
   assert.deepEqual(out.plan, { a: "2026-10-13", b: "2026-10-13", c: "2026-10-14", d: "2026-10-15", e: "2026-10-15", p: "2026-10-14" });
   assert.deepEqual(out.tidy, [["p", "2026-10-16"]]);

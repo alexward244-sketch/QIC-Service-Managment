@@ -143,8 +143,8 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   the web form's time `submittedAt`, else `createdAt`) - in auto-plan,
   auto-place and the daily tidy-up.
 - The park's own cottages are winterized too: "Add park cottages…" adds
-  cottages on Rental Cottage sites and on the sites of unsold, delivered
-  QIC Inventory units (`cottageOrders` type "Display Model"; only Admin /
+  cottages on Rental Cottage sites, on sites tagged "QIC Inventory", and on
+  the sites of unsold, delivered QIC Inventory units (`cottageOrders` type "Display Model"; only Admin /
   Sales Manager can read those) as requests with `parkOwned`
   ("rental"/"inventory") and no customer (`winterParkCottages`). They're
   placed last on the quietest day (`winterQuietDay`), move first when a day
