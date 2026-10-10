@@ -11,7 +11,8 @@ Alex is the owner and the person you're working with; Tim
   build step). Served by GitHub Pages from `main`, so a merge is live as soon
   as the page reloads — **no deploy for app changes**.
 - `functions/index.js` — Cloud Functions (v2): email intake from Zoho Flow
-  (`serviceCorrespondence`), Zoho Sent-folder sync (`zohoSentMail`), sign-up
+  (`serviceCorrespondence`) or straight from the Zoho inbox (`zohoInbox`),
+  Zoho Sent-folder sync (`zohoSentMail`), sign-up
   forms, roles, morning summary, Claude triage. **Changes here need a
   deploy that Alex runs.**
 - `firestore.rules`, `storage.rules` — security rules (also deployed by Alex).
@@ -83,6 +84,16 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Opening an incoming email in the app marks its Zoho copy read
   (`markEmailReadInZoho`), so it doesn't still look new in Zoho. Needs the
   Zoho connection's update permission (same reconnect as deletes).
+- Email intake is moving from Zoho Flow to reading the Zoho inbox directly
+  (`zohoInbox`, every minute). Both use the same rules
+  (`classifyIncomingEmail` / `saveIncomingEmail`). Until Admin > Email
+  Intake's switch (`settings.emailIntakeDirect`) is on, `zohoInbox` only
+  compares (ties Flow's entries to their Zoho message id, lists what Flow
+  didn't bring in in `serverState/zohoInbox`) and adds nothing; once on, it
+  saves `zoho_in_<messageId>` entries and the Flow webhook skips email. The
+  Email Intake ignore list applies to any sender.
+- The Zoho access token is shared through `serverState/zohoToken` (never
+  readable by the app) - Zoho allows only 10 refreshes per 10 minutes.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
   signature block, blank lines) — display only, stored body untouched.
 
@@ -168,6 +179,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   don't have one yet, so it isn't required. Serials are compared with
   `serialKey` (ignores case, spaces, dashes); a duplicate gets a warning.
   The Cottages tab's "Missing serial #" button lists the ones left to fill in.
+- A sale goes through Transfer Ownership (records it in `transferHistory`
+  with the date). Adding a site someone else owns, or removing a site with a
+  cottage, on the customer form shows "Is this a sale?" with a "Transfer
+  Ownership instead" button - a warning, not a block.
 - Ownership transfers (on the site's `transferHistory`) carry `cottageId`;
   match them with `transferIsForCottage`, not by name, so a rename keeps
   the history.

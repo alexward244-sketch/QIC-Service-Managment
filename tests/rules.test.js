@@ -31,6 +31,8 @@ async function seed() {
     await db.doc("deals/d1").set({ id: "d1" });
     await db.doc("hydroReadings/h1").set({ id: "h1", reading: 100 });
     await db.doc("serverAlerts/a1").set({ count: 1 });
+    await db.doc("serverState/zohoInbox").set({ checkedAt: "x" });
+    await db.doc("serverState/zohoToken").set({ token: "secret" });
     await db.doc("aiUsage/u1").set({ count: 1 });
   });
 }
@@ -76,6 +78,9 @@ test("money, sales, hydro and alerts are limited to the right roles", async () =
   await expect("read deals", (db) => db.doc("deals/d1").get(), ["admin", "salesmanager"]);
   await expect("correct a hydro reading", (db, role) => db.doc("hydroReadings/h1").update({ reading: 200 + [...ROLES, "noRole"].indexOf(role) }), ["admin", "accounting"]);
   await expect("read server alerts", (db) => db.doc("serverAlerts/a1").get(), ["admin", "manager"]);
+  await expect("read the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").get(), ["admin", "manager"]);
+  await expect("read the Zoho login", (db) => db.doc("serverState/zohoToken").get(), []);
+  await expect("change the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").set({ checkedAt: "y" }), []);
   await expect("read AI usage counters", (db) => db.doc("aiUsage/u1").get(), []);
 });
 
