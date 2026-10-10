@@ -14237,7 +14237,8 @@ function winterOwnerLabel(r, info, none) {
   return info.customer ? info.customer.name : none;
 }
 // Park cottages not on this season's list yet: cottages on Rental Cottage
-// sites, on sites tagged "QIC Inventory" (anyone can see those), and on the
+// sites, owned by the "QIC Inventory" customer, on sites tagged "QIC
+// Inventory" (anyone can see those), and on the
 // sites of QIC Inventory units in Sales on the park and unsold (only Admin /
 // Sales Manager can read those).
 // unitsWithoutCottage: inventory units whose site has no cottage record.
@@ -14250,6 +14251,10 @@ function winterParkCottages(db) {
     if (!active.has(cottage.id)) out.push({ cottage, site, kind });
   };
   (db.sites || []).filter((site) => siteTypeOf(site) === "Rental Cottage").forEach((site) => (db.cottages || []).filter((c) => c.siteId === site.id).forEach((c) => add(c, site, "rental")));
+  // Owned by our "QIC Inventory" customer record.
+  (db.cottages || []).forEach((c) => {
+    if (cottageOwners(db, c).some((o) => /\binventory\b/i.test(String(o.name || "")))) add(c, (db.sites || []).find((x) => x.id === c.siteId) || null, "inventory");
+  });
   (db.sites || []).filter((site) => (site.tags || []).some((t) => /\binventory\b/i.test(String(t)))).forEach((site) => (db.cottages || []).filter((c) => c.siteId === site.id).forEach((c) => add(c, site, "inventory")));
   (db.cottageOrders || []).filter((o) => o.type === "Display Model" && o.status === "Delivered/Onsite" && !o.soldDate && o.siteId).forEach((o) => {
     const site = (db.sites || []).find((x) => x.id === o.siteId);
@@ -15618,7 +15623,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     setParkAdd(null);
   };
   const parkAddEl = !readOnly && parkAdd && React.createElement(Modal, { title: "Add park cottages", onClose: () => setParkAdd(null) },
-    React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "The rental cottages and QIC Inventory (sites tagged QIC Inventory, and units for sale in Sales), added to this season's winterizing. They fill in on quiet days, never take a customer's spot, and get no customer emails."),
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "The rental cottages and QIC Inventory (owned by QIC Inventory, sites tagged QIC Inventory, and units for sale in Sales), added to this season's winterizing. They fill in on quiet days, never take a customer's spot, and get no customer emails."),
     parkAdd.list.length ? React.createElement("ul", { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-3 max-h-72 overflow-y-auto text-sm", "data-park-list": true }, parkAdd.list.map(({ cottage, site, kind }) => React.createElement("li", { key: cottage.id, className: "flex justify-between gap-2 px-3 py-2" }, React.createElement("span", null, site ? `Site ${site.number} \u00B7 ` : "", cottage.name), React.createElement("span", { className: "text-xs text-[#5B4B8A] font-medium" }, kind === "rental" ? "Rental" : "Inventory")))) : React.createElement("p", { className: "text-sm text-[#75716A] italic mb-3" }, "They're all on this season's list already."),
     !(db.cottageOrders || []).length && React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Units in Sales \u2192 QIC Inventory show here for Admin and Sales Manager; sites tagged QIC Inventory show for everyone."),
     parkAdd.unitsWithoutCottage.length > 0 && React.createElement("p", { className: "text-xs text-[#9A6B1F] mb-3", "data-park-missing": true }, `No cottage record yet for: ${parkAdd.unitsWithoutCottage.map(({ unit, site }) => `${unit.model || "inventory unit"}${site ? ` (site ${site.number})` : ""}`).join(", ")} \u2014 add one on the Cottages tab, then come back.`),
