@@ -2435,7 +2435,8 @@ async function sendWinterKeyList(today) {
   const byId = (snap) => new Map(snap.docs.map((d) => [d.id, d.data()]));
   const cottages = byId(cottSnap), sites = byId(sitesSnap), customers = byId(custSnap);
   const rows = winterSnap.docs.map((d) => d.data())
-    .filter((r) => !r.archived && !r.completed && days.includes(r.plannedDate != null ? r.plannedDate : r.requestedDate || ""))
+    // The park's own cottages (rentals, inventory) aren't on it - we have their keys.
+    .filter((r) => !r.archived && !r.completed && !r.parkOwned && days.includes(r.plannedDate != null ? r.plannedDate : r.requestedDate || ""))
     .map((r) => {
       const cottage = cottages.get(r.cottageId) || null;
       const site = cottage && cottage.siteId ? sites.get(cottage.siteId) || null : null;

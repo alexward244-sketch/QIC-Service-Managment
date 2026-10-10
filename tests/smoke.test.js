@@ -472,8 +472,8 @@ async function openWinterizing(page) {
     const add = (n) => winterAddDays(today, n);
     let db = {
       settings: { winterizingSeasonStart: "01-01" }, activityLog: [], parts: [], trash: [], staff: [], workOrderTemplates: [], quotes: [], invoices: [], correspondence: [],
-      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }],
-      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
+      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s4", number: "301", section: "Rentals", siteType: "Rental Cottage" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }, { id: "k4", name: "Lakeview Rental", siteId: "s4" }],
       customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", phone: "613-555-0177", siteIds: ["s1"] }, { id: "c2", name: "Gary C", email: "gary@x.com", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", email: "anne@x.com", siteIds: ["s3"] }],
       workOrders: [{ id: "w1", workOrderNumber: "WO-0388", title: "Deck boards", siteId: "s1", date: "2026-08-12", status: "Completed", partsUsed: [], notes: [] }],
       winterizingRequests: [
@@ -551,6 +551,65 @@ test("winterizing: when more are on a day than fit, those who asked for the earl
   assert.deepEqual(out.plan, [["first", "2026-10-14"], ["second", "2026-10-14"], ["late", "2026-10-15"]]);
   assert.deepEqual(out.tidy, [["late", "2026-10-15"]]);
   assert.deepEqual(out.tidyThu, [["thuLate", "2026-10-16"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing park cottages: rentals and unsold inventory are found; they go on the quietest day, move first when a day is full, and step aside for a customer", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [
+      { id: "r1", number: "0301", section: "Rentals", siteType: "Rental Cottage" },
+      { id: "s1", number: "0241", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s2", number: "0242", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s3", number: "0243", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s4", number: "0244", section: "Front of Park", siteType: "Seasonal" }
+    ];
+    const cottages = [{ id: "kr", name: "Rental A", siteId: "r1" }, { id: "k1", name: "Show home", siteId: "s1" }, { id: "k2", name: "Sold one", siteId: "s2" }, { id: "k3", name: "Customer", siteId: "s3" }, { id: "kdone", name: "Already on", siteId: "r1" }];
+    const cottageOrders = [
+      { id: "o1", type: "Display Model", status: "Delivered/Onsite", siteId: "s1", model: "Breckenridge" },
+      { id: "o2", type: "Display Model", status: "Delivered/Onsite", siteId: "s2", soldDate: "2026-09-01" },
+      { id: "o3", type: "Display Model", status: "Ordered/Being Built", siteId: "s3" },
+      { id: "o4", type: "Display Model", status: "Delivered/Onsite", siteId: "s4", model: "Cove" }
+    ];
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2, winterAutoPlaceNew: true }, sites, cottages, cottageOrders, customers: [], winterizingRequests: [{ id: "x", cottageId: "kdone", parkOwned: "rental" }] };
+    const found = winterParkCottages(db);
+    // Customers: two on Tue 13th, one on Wed 14th, two on Thu 15th; a park cottage goes on Wed (quietest).
+    const reqs = [
+      { id: "a", requestedDate: "2026-10-13", createdAt: "1" }, { id: "b", requestedDate: "2026-10-13", createdAt: "2" },
+      { id: "c", requestedDate: "2026-10-14", createdAt: "3" },
+      { id: "d", requestedDate: "2026-10-15", createdAt: "4" }, { id: "e", requestedDate: "2026-10-15", createdAt: "5" },
+      { id: "p", parkOwned: "rental", cottageId: "kr" }
+    ];
+    const plan = Object.fromEntries(autoPlanWinter(reqs, db, { today: "2026-10-06", byArea: false }).map((x) => [x.request.id, x.date]));
+    // Thursday over the limit with a park cottage on it: the park cottage moves, even though it's first by site.
+    const thu = [{ id: "d", plannedDate: "2026-10-15", requestedDate: "2026-10-15" }, { id: "e", plannedDate: "2026-10-15" }, { id: "p", plannedDate: "2026-10-15", parkOwned: "inventory" }];
+    const tidy = carryOverWinter(thu, db, "2026-10-13").map((x) => [x.request.id, x.date]);
+    // A new customer sign-up asks for Wednesday, full with c and the park cottage: the park cottage steps aside to a quiet day.
+    const wed = [{ id: "a", plannedDate: "2026-10-13" }, { id: "c", plannedDate: "2026-10-14" }, { id: "p", plannedDate: "2026-10-14", parkOwned: "rental" }, { id: "n", requestedDate: "2026-10-14" }];
+    const placed = placeNewWinterSignups(wed, db, "2026-10-06").map((x) => [x.request.id, x.date, !!x.shifted]);
+    return { found: found.list.map((x) => [x.cottage.id, x.kind]), missing: found.unitsWithoutCottage.map((x) => x.unit.id), plan, tidy, placed };
+  });
+  assert.deepEqual(out.found, [["k1", "inventory"], ["kr", "rental"]], "rental and unsold, delivered inventory; not sold, not on order, not already on the list");
+  assert.deepEqual(out.missing, ["o4"], "an inventory unit with no cottage record is pointed out");
+  assert.deepEqual(out.plan, { a: "2026-10-13", b: "2026-10-13", c: "2026-10-14", d: "2026-10-15", e: "2026-10-15", p: "2026-10-14" });
+  assert.deepEqual(out.tidy, [["p", "2026-10-16"]]);
+  assert.deepEqual(out.placed, [["n", "2026-10-14", false], ["p", "2026-10-13", true]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: Add park cottages puts the rentals on the list, marked Park, with no customer", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.locator("[data-park-add]").click();
+  await page.locator("[data-park-list]").getByText("Site 301 \u00B7 Lakeview Rental").waitFor();
+  await page.getByRole("button", { name: "Add 1" }).click();
+  const saved = await page.evaluate(() => window.__saved.filter((r) => r.cottageId === "k4"));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].parkOwned, "rental");
+  assert.equal(saved[0].customerId, null);
+  assert.equal(await page.evaluate((r) => winterOwnerLabel(r, {}), saved[0]), "Park \u00B7 rental cottage");
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

@@ -142,6 +142,14 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   for this one); a tie goes to the earliest sign-up (`winterSignedUpAt`:
   the web form's time `submittedAt`, else `createdAt`) - in auto-plan,
   auto-place and the daily tidy-up.
+- The park's own cottages are winterized too: "Add park cottages…" adds
+  cottages on Rental Cottage sites and on the sites of unsold, delivered
+  QIC Inventory units (`cottageOrders` type "Display Model"; only Admin /
+  Sales Manager can read those) as requests with `parkOwned`
+  ("rental"/"inventory") and no customer (`winterParkCottages`). They're
+  placed last on the quietest day (`winterQuietDay`), move first when a day
+  is over the limit, step aside to a quiet day when a customer asks for
+  their full day, get no customer emails, and aren't on the keys email.
 - `winterKeyList` (Cloud Function, 9am weekdays) emails reserve@qicampark.com
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
