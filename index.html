@@ -106,6 +106,21 @@ const PARTS_REF = db_.collection("parts");
 // Work orders created from a tree entry live in the Trees tab: they're left
 // out of the Work Orders tab and the dashboard (but still show on the
 // calendar, the field app's Jobs list and customer/site history).
+// A completed work order for an appliance goes in that appliance's service
+// log on its own, once (matched by work order id). Reads the cottage fresh
+// (works from the offline cache too) and changes only its appliances.
+function logWorkOrderToAppliance(wo) {
+  if (!wo || wo.status !== "Completed" || !wo.applianceId || !wo.cottageId) return Promise.resolve();
+  const ref = COTTAGES_REF.doc(wo.cottageId);
+  return ref.get().then((snap) => {
+    if (!snap.exists) return;
+    const appliances = (snap.data() || {}).appliances || [];
+    const target = appliances.find((a) => a.id === wo.applianceId);
+    if (!target || (target.serviceLog || []).some((l) => l.workOrderId === wo.id)) return;
+    const entry = { id: uid(), date: wo.completedDate || todayISO(), description: wo.customerSummary || wo.title || "Work order", workOrderId: wo.id, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+    return ref.update({ appliances: appliances.map((a) => a.id === wo.applianceId ? { ...a, serviceLog: [entry, ...a.serviceLog || []] } : a) });
+  });
+}
 function treeWorkOrderIds(db) {
   return new Set(((db && db.treeRequests) || []).map((t) => t.workOrderId).filter(Boolean));
 }
@@ -1420,6 +1435,18 @@ function ReopenConfirmModal({ ask, onCancel }) {
     )
   );
 }
+function useMinWidth(px) {
+  const query = `(min-width: ${px}px)`;
+  const [matches, setMatches] = useState(() => typeof window !== "undefined" && window.matchMedia ? window.matchMedia(query).matches : true);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(query);
+    const on = () => setMatches(mq.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on);
+  }, [query]);
+  return matches;
+}
 function useIsMobile() {
   const query = "(max-width: 639px)";
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
@@ -2210,6 +2237,8 @@ function useDb() {
       await attempt();
       setSaveError(null);
       syncTreeEntriesForWorkOrder(wo, false).catch(() => {
+      });
+      logWorkOrderToAppliance(wo).catch(() => {
       });
       return true;
     } catch (e) {
@@ -4365,6 +4394,7 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, d
   }, [filterPrefill && filterPrefill.ts]);
   const [detailId, setDetailId] = useState(null);
   const [missingSerialOnly, setMissingSerialOnly] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const save = (c, ownerAction) => {
@@ -4441,7 +4471,9 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, d
   const filtered = db.cottages.filter((c) => {
     if (missingSerialOnly && serialKey(c.serialNumber)) return false;
     if (!filter) return true;
-    const hay = `${c.name} ${c.color || ""} ${c.features || ""} ${c.year || ""} ${c.modelNumber || ""} ${c.serialNumber || ""}`.toLowerCase();
+    const site = db.sites.find((s) => s.id === c.siteId);
+    const owners = cottageOwners(db, c).map((o) => o.name).join(" ");
+    const hay = `${c.name} ${site ? site.number : ""} ${owners} ${c.color || ""} ${c.features || ""} ${c.year || ""} ${c.modelNumber || ""} ${c.serialNumber || ""} ${c.manufacturer || ""}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   }).sort((a, b) => {
     const siteA = db.sites.find((s) => s.id === a.siteId);
@@ -4451,74 +4483,65 @@ function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, d
     if (!siteB) return -1;
     return siteA.number.localeCompare(siteB.number, void 0, { numeric: true });
   });
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Cottages"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Cottage name, colour, and linked site.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: inputCls + " w-full sm:w-48",
-      placeholder: "Search cottages\u2026",
-      value: filter,
-      onChange: (e) => setFilter(e.target.value)
+  const wide = useMinWidth(1024);
+  const siteOf = (c) => db.sites.find((s) => s.id === c.siteId);
+  const selected = filtered.find((c) => c.id === selectedId) || filtered[0] || null;
+  const offSiteCount = db.cottages.filter((c) => !c.siteId).length;
+  const withSerial = db.cottages.length - missingSerialCount;
+  const h = React.createElement;
+  const open = (c) => wide ? setSelectedId(c.id) : setDetailId(c.id);
+  const statBox = (label, value, sub) => h("div", { className: "bg-[#FFFDFA] border border-[#E2DED5] rounded-xl px-4 py-3 min-w-[180px] flex-1 sm:flex-none" }, h("div", { className: "text-[10.5px] uppercase tracking-wider text-[#75716A] font-bold" }, label), h("div", { className: "text-2xl font-bold text-[#1E1A13] leading-tight mt-0.5" }, value), sub);
+  const chip = (label, on, onClick) => h("button", { type: "button", onClick, className: `px-3 py-1.5 rounded-full text-xs font-semibold border whitespace-nowrap ${on ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "text-[#4B4740] border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9]"}` }, label);
+  const detailProps = (c) => ({
+    cottage: c,
+    db,
+    persist,
+    saveWorkOrder,
+    saveCottage,
+    saveSite,
+    saveCorrespondence,
+    readOnly,
+    canTransfer: canTransfer != null ? canTransfer : !readOnly,
+    onDelete: readOnly ? null : () => confirm.ask(c.id),
+    onEdit: (x) => {
+      setDetailId(null);
+      setModal({ mode: "edit", data: x });
     }
-  ), db.cottages.length > 0 && /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setMissingSerialOnly((v) => !v),
-      title: `${db.cottages.length - missingSerialCount} of ${db.cottages.length} cottages have a serial #`,
-      className: `px-3 py-2 rounded-md text-sm font-medium border whitespace-nowrap ${missingSerialOnly ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "text-[#4B4740] border-[#E2DED5] hover:bg-[#F1EEE9]"}`
-    },
-    "Missing serial # (",
-    missingSerialCount,
-    ")"
-  ), !readOnly && /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setModal({ mode: "new" }),
-      className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
-    },
-    "+ New Cottage"
-  ))), db.cottages.length === 0 ? /* @__PURE__ */ React.createElement(
-    EmptyState,
-    {
-      text: "No cottages yet.",
-      action: !readOnly && /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a cottage")
-    }
-  ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: missingSerialOnly && !filter ? "Every cottage has a serial number." : "No cottages match your search." }) : /* @__PURE__ */ React.createElement(React.Fragment, null, missingSerialOnly && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A] mb-3" }, db.cottages.length - missingSerialCount, " of ", db.cottages.length, " cottages have a serial number.", !readOnly && " Type one in and press Enter to save it."), /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Colour"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Year/Model"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Serial"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-40" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((c) => {
-    const site = db.sites.find((s) => s.id === c.siteId);
-    const warrantyStatus = applianceWarrantyStatus(c);
-    return /* @__PURE__ */ React.createElement("tr", { key: c.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline", onClick: () => setDetailId(c.id) }, c.name), warrantyStatus === "expired" && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#F5E3D9] text-[#a8532a] px-1.5 py-0.5 rounded-full align-middle" }, "Warranty Expired"), warrantyStatus === "expiring" && /* @__PURE__ */ React.createElement("span", { className: "ml-2 text-[10px] uppercase tracking-wide bg-[#FBEEDA] text-[#9A6B1F] px-1.5 py-0.5 rounded-full align-middle" }, "Warranty Expiring"), c.offSiteInfo && !site && /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] italic font-normal mt-0.5" }, c.offSiteInfo)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, site ? site.number : c.offSiteInfo ? "Sold off-site" : "Unassigned"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5" }, /* @__PURE__ */ React.createElement("span", { className: "inline-flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block flex-shrink-0", style: { background: colorDot(c.color) } }), /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, c.color || "\u2014"))), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, [c.year, c.modelNumber ? `Model ${c.modelNumber}` : ""].filter(Boolean).join(" \xB7 ") || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.serialNumber ? c.serialNumber : readOnly ? "\u2014" : /* @__PURE__ */ React.createElement(CottageSerialQuickAdd, { cottage: c, cottages: db.cottages, onSave: (serial) => saveSerial(c, serial) })), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })))), /* @__PURE__ */ React.createElement("div", { className: "sm:hidden space-y-3" }, filtered.map((c) => {
-    const site = db.sites.find((s) => s.id === c.siteId);
-    const warrantyStatus = applianceWarrantyStatus(c);
-    const yearModel = [c.year, c.modelNumber ? `Model ${c.modelNumber}` : ""].filter(Boolean).join(" \xB7 ");
-    return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("button", { className: "text-left block font-semibold text-[#1E1A13] hover:underline", onClick: () => setDetailId(c.id) }, c.name), (warrantyStatus === "expired" || warrantyStatus === "expiring") && /* @__PURE__ */ React.createElement("span", { className: `inline-block mt-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full font-medium ${warrantyStatus === "expired" ? "bg-[#F5E3D9] text-[#a8532a]" : "bg-[#FBEEDA] text-[#9A6B1F]"}` }, warrantyStatus === "expired" ? "Warranty Expired" : "Warranty Expiring"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 space-y-0.5" }, /* @__PURE__ */ React.createElement("div", null, site ? `Site ${site.number}` : c.offSiteInfo ? "Sold off-site" : "Unassigned"), c.color && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement("span", { className: "w-2.5 h-2.5 rounded-full inline-block flex-shrink-0", style: { background: colorDot(c.color) } }), c.color), yearModel && /* @__PURE__ */ React.createElement("div", null, yearModel), c.serialNumber ? /* @__PURE__ */ React.createElement("div", null, "Serial ", c.serialNumber) : /* @__PURE__ */ React.createElement("div", { className: "text-[#9A968D] italic" }, "No serial #")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 mt-3 text-sm" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setDetailId(c.id) }, "View"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1", onClick: () => confirm.ask(c.id) }, "Delete")));
-  }))), !readOnly && modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, /* @__PURE__ */ React.createElement(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null) })), detailId && /* @__PURE__ */ React.createElement(
-    CottageDetailModal,
-    {
-      cottage: db.cottages.find((c) => c.id === detailId),
-      db,
-      persist,
-      saveWorkOrder,
-      saveCottage,
-      saveSite,
-      saveCorrespondence,
-      readOnly,
-      canTransfer: canTransfer != null ? canTransfer : !readOnly,
-      variant: "drawer",
-      onClose: () => setDetailId(null),
-      onEdit: (c) => {
-        setDetailId(null);
-        setModal({ mode: "edit", data: c });
-      }
-    }
-  ), confirm.target && /* @__PURE__ */ React.createElement(
-    ConfirmDeleteModal,
-    {
-      label: (_b = (_a = db.cottages.find((c) => c.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this cottage",
-      onConfirm: () => remove(confirm.target),
-      onCancel: confirm.clear
-    }
-  ));
+  });
+  const list = h("div", { className: "bg-[#FFFDFA] border border-[#E2DED5] rounded-xl overflow-hidden" }, filtered.map((c) => {
+    const site = siteOf(c);
+    const isSel = wide && selected && selected.id === c.id;
+    const sub = [c.modelNumber, c.year].filter(Boolean).join(" \xB7 ");
+    return h("button", { key: c.id, type: "button", onClick: () => open(c), "aria-current": isSel ? "true" : void 0, className: `w-full flex items-center gap-3 px-3.5 py-2.5 border-t border-[#EEEBE5] first:border-t-0 text-left ${isSel ? "bg-[#DDF1E1] shadow-[inset_3px_0_0_#377249]" : "hover:bg-[#FBF8F2]"}` },
+      h("span", { className: "w-11 h-9 rounded-lg flex-shrink-0 flex items-center justify-center text-[10.5px] font-bold text-white", style: { background: colorDot(c.color) || "#7C7A73" } }, site ? site.number : "OFF"),
+      h("span", { className: "min-w-0 flex-1" }, h("span", { className: "block font-semibold text-[#1E1A13] truncate" }, c.name), h("span", { className: "block text-xs text-[#75716A] truncate" }, sub || "No model on file")),
+      !serialKey(c.serialNumber) && h("span", { className: "text-[11px] font-semibold text-[#a8532a] flex-shrink-0" }, "no serial"));
+  }));
+  return h("div", null,
+    h("div", { className: "flex items-end justify-between mb-4 gap-3 flex-wrap" },
+      h("div", null, h("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Cottages"), h("p", { className: "text-sm text-[#75716A]" }, "Every cottage, its serial #, appliances and history.")),
+      h("div", { className: "flex items-center gap-2 flex-wrap" },
+        h("input", { className: inputCls + " w-full sm:w-64", placeholder: "Search site, name, serial, owner…", value: filter, onChange: (e) => setFilter(e.target.value) }),
+        !readOnly && h("button", { onClick: () => setModal({ mode: "new" }), className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap" }, "+ New Cottage"))
+    ),
+    db.cottages.length > 0 && h("div", { className: "flex gap-3 flex-wrap mb-3" },
+      statBox("Cottages", db.cottages.length, h("div", { className: "text-xs text-[#75716A]" }, `${db.cottages.length - offSiteCount} in the park \xB7 ${offSiteCount} off-site`)),
+      statBox("With serial #", h(React.Fragment, null, withSerial, h("span", { className: "text-sm font-semibold text-[#75716A]" }, ` / ${db.cottages.length}`)), h("div", { className: "h-1.5 bg-[#EEEBE5] rounded-full mt-2 overflow-hidden" }, h("div", { className: "h-full bg-[#377249]", style: { width: `${Math.round(withSerial / db.cottages.length * 100)}%` } })))
+    ),
+    db.cottages.length > 0 && h("div", { className: "flex gap-2 flex-wrap mb-3" },
+      chip("All", !missingSerialOnly, () => setMissingSerialOnly(false)),
+      chip(`Missing serial # (${missingSerialCount})`, missingSerialOnly, () => setMissingSerialOnly(true))
+    ),
+    db.cottages.length === 0 ? h(EmptyState, { text: "No cottages yet.", action: !readOnly && h("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a cottage") }) : filtered.length === 0 ? h(EmptyState, { text: missingSerialOnly && !filter ? "Every cottage has a serial number." : "No cottages match your search." }) : wide ? h("div", { className: "grid grid-cols-[340px_1fr] gap-4 items-start" },
+      h("div", { className: "sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl" }, list),
+      selected && h(CottageDetailModal, { key: selected.id, ...detailProps(selected), variant: "panel" })
+    ) : list,
+    !readOnly && modal && h(Modal, { title: modal.mode === "new" ? "New Cottage" : "Edit Cottage", onClose: () => setModal(null) }, h(CottageForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null) })),
+    !wide && detailId && h(CottageDetailModal, { ...detailProps(db.cottages.find((c) => c.id === detailId)), variant: "drawer", onClose: () => setDetailId(null) }),
+    confirm.target && h(ConfirmDeleteModal, { label: (db.cottages.find((c) => c.id === confirm.target) || {}).name || "this cottage", onConfirm: () => remove(confirm.target), onCancel: confirm.clear })
+  );
 }
+
 function TransferOwnershipModal({ cottage, site, oldCustomers, db, persist, saveSite, saveCottage, onClose, linkedProspect, listing, initialCustomerId }) {
   const [takingOffSite, setTakingOffSite] = useState(false);
   const [offSiteNotes, setOffSiteNotes] = useState("");
@@ -4848,13 +4871,104 @@ function ApplianceLogForm({ cottage, db, initial, onSave, onCancel }) {
     "Save"
   )));
 }
-function ApplianceViewModal({ appliance, onEditAppliance, onDeleteAppliance, onTransfer, onAddLogEntry, onEditLogEntry, onDeleteLogEntry, onClose }) {
+function ApplianceViewModal({ appliance, cottage, workOrders, readOnly, onEditAppliance, onDeleteAppliance, onTransfer, onAddLogEntry, onEditLogEntry, onDeleteLogEntry, onCreateWorkOrder, onOpenWorkOrder, onClose }) {
+  const h = React.createElement;
   const status = applianceWarrantyStatus(appliance);
-  const statusBadge = status === "expired" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Warranty Expired") : status === "expiring" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Warranty Expiring Soon") : status === "ok" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under Warranty") : null;
+  const statusBadge = status === "expired" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Expired") : status === "expiring" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Expiring soon") : status === "ok" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under warranty") : null;
   const log = (appliance.serviceLog || []).slice().sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  return /* @__PURE__ */ React.createElement(Modal, { title: appliance.type, onClose }, /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, React.createElement("div", null, "Make / model: ", [appliance.make, appliance.model].filter(Boolean).join(" ") || "\u2014"), React.createElement("div", null, "Year: ", appliance.year || "\u2014"), appliance.installDate && React.createElement("div", null, "Installed: ", appliance.installDate), /* @__PURE__ */ React.createElement("div", null, "Serial: ", appliance.serialNumber || "\u2014"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", appliance.warrantyExpiration || "Not set"), statusBadge)), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 text-xs mb-4 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditAppliance(appliance) }, "Edit"), onTransfer && /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onTransfer(appliance) }, "Transfer to Another Cottage"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-2 pt-3 border-t border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("span", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Service Log"), /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => onAddLogEntry(appliance.id) }, "+ Add Entry")), log.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No service entries recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 max-h-64 overflow-y-auto" }, log.map((entry) => /* @__PURE__ */ React.createElement("div", { key: entry.id, className: "text-sm bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13] font-medium" }, entry.date), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2 text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))), /* @__PURE__ */ React.createElement("p", { className: "text-[#4B4740] mt-0.5" }, entry.description), entry.workOrderId && /* @__PURE__ */ React.createElement("p", { className: "text-[10px] text-[#75716A] mt-1 italic" }, "Linked to a Work Order")))));
+  const age = applianceAge(appliance);
+  const woById = new Map((workOrders || []).map((w) => [w.id, w]));
+  const kv = (k, v) => h("div", null, h("div", { className: "text-[10.5px] uppercase tracking-wider text-[#75716A] font-bold" }, k), h("div", { className: "text-sm text-[#1E1A13]" }, v || "—"));
+  const btnCls = "px-3 py-1.5 text-sm text-[#4B4740] border border-[#E2DED5] rounded-md hover:bg-[#F1EEE9] font-semibold";
+  return h(Modal, { title: appliance.type, onClose },
+    cottage && h("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold -mt-2 mb-3" }, cottage.name),
+    h("div", { className: "grid grid-cols-2 gap-x-4 gap-y-2.5 mb-4" },
+      kv("Make / model", [appliance.make, appliance.model].filter(Boolean).join(" ")),
+      kv("Fuel", appliance.fuel),
+      kv("Year", appliance.year ? `${appliance.year}${age ? ` (${age} yr${age === 1 ? "" : "s"} old)` : ""}${appliance.fromNameplate ? " \xB7 from nameplate" : ""}` : ""),
+      appliance.installDate ? kv("Installed", appliance.installDate) : kv("Serial", appliance.serialNumber),
+      appliance.installDate && kv("Serial", appliance.serialNumber),
+      h("div", null, h("div", { className: "text-[10.5px] uppercase tracking-wider text-[#75716A] font-bold" }, "Warranty"), h("div", { className: "text-sm text-[#1E1A13] flex items-center gap-2" }, appliance.warrantyExpiration || "Not set", statusBadge))
+    ),
+    h("div", { className: "flex gap-2 flex-wrap mb-4" },
+      onCreateWorkOrder && h("button", { type: "button", onClick: () => onCreateWorkOrder(appliance), className: "px-3 py-1.5 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-semibold" }, `+ Work order for this ${appliance.type.toLowerCase()}`),
+      !readOnly && h("button", { type: "button", className: btnCls, onClick: () => onAddLogEntry(appliance.id) }, "Add a note"),
+      !readOnly && h("button", { type: "button", className: btnCls, onClick: () => onEditAppliance(appliance) }, "Edit"),
+      !readOnly && onTransfer && h("button", { type: "button", className: btnCls, onClick: () => onTransfer(appliance) }, "Move to another cottage"),
+      !readOnly && h("button", { type: "button", className: "px-3 py-1.5 text-sm text-[#a8532a] hover:underline", onClick: () => onDeleteAppliance(appliance.id) }, "Delete")
+    ),
+    h("div", { className: "pt-3 border-t border-[#E2DED5]" },
+      h("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold mb-2" }, "Service log"),
+      log.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic" }, "Nothing logged yet. Work orders for this appliance are added here when they're completed.") : h("div", { className: "max-h-72 overflow-y-auto" }, log.map((entry) => {
+        const wo = entry.workOrderId ? woById.get(entry.workOrderId) : null;
+        return h("div", { key: entry.id, className: "py-2 border-b border-[#EEEBE5] last:border-0" },
+          h("div", { className: "flex items-center justify-between gap-2" },
+            h("span", { className: "text-[11px] font-bold text-[#75716A] uppercase tracking-wide" }, entry.date ? formatHistoryDate(entry.date) : "No date"),
+            !readOnly && h("div", { className: "flex gap-3 text-xs" }, h("button", { type: "button", className: "text-[#377249] hover:underline", onClick: () => onEditLogEntry(appliance.id, entry) }, "Edit"), h("button", { type: "button", className: "text-[#a8532a] hover:underline", onClick: () => onDeleteLogEntry(appliance.id, entry.id) }, "Delete"))
+          ),
+          h("div", { className: "text-sm text-[#1E1A13] mt-0.5" },
+            wo ? h(React.Fragment, null, onOpenWorkOrder ? h("button", { type: "button", className: "text-[#377249] font-semibold hover:underline", onClick: () => onOpenWorkOrder(wo) }, wo.workOrderNumber || "Work order") : h("span", { className: "text-[#377249] font-semibold" }, wo.workOrderNumber || "Work order"), " \xB7 ") : null,
+            entry.description,
+            entry.workOrderId && h("span", { className: "ml-1.5 text-[10.5px] bg-[#F1EEE9] text-[#75716A] px-1.5 py-0.5 rounded-full" }, "from work order")
+          )
+        );
+      }))
+    )
+  );
 }
-function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence, readOnly, canTransfer, canScanNameplate, nested, onClose, onEdit, variant }) {
+function CottagePanelShell({ children }) {
+  return React.createElement("div", { className: "bg-[#FFFDFA] border border-[#E2DED5] rounded-xl px-5 py-5 sm:px-6" }, children);
+}
+// 6135550148 -> 613-555-0148; anything else as typed.
+function formatPhoneDisplay(phone) {
+  const d = String(phone || "");
+  return /^\d{10}$/.test(d) ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : d;
+}
+// Years since the appliance was installed (or made), or 0 if unknown.
+function applianceAge(a) {
+  const y = Number(String(a && (a.installDate || a.year) || "").slice(0, 4));
+  return y > 1900 ? Math.max(0, (/* @__PURE__ */ new Date()).getFullYear() - y) : 0;
+}
+function sunspaceSummary(cottage) {
+  const items = cottage.sunspaceItems || {};
+  const parts = [];
+  if (items.sunroof && items.sunroof.included) parts.push(`Sunroof${items.sunroof.width || items.sunroof.length ? ` ${[items.sunroof.width, items.sunroof.length].filter(Boolean).join("' x ")}'` : ""}`);
+  if (items.sunroom && items.sunroom.included) parts.push(`Sunroom${items.sunroom.width || items.sunroom.length ? ` ${[items.sunroom.width, items.sunroom.length].filter(Boolean).join("' x ")}'` : ""}`);
+  if (items.railings && items.railings.included) parts.push(`Railings${items.railings.length ? ` ${items.railings.length}'` : ""}`);
+  return parts.join(", ");
+}
+function formatHistoryDate(iso) {
+  const d = /* @__PURE__ */ new Date(String(iso).slice(0, 10) + "T12:00:00");
+  return isNaN(d) ? String(iso) : d.toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" });
+}
+// Everything done to a cottage, newest first: work orders (with their
+// invoice), quotes, other invoices, winterizing, propane, tree work,
+// sunspace orders, ownership changes. `open` = not finished yet.
+function cottageHistory(db, cottage) {
+  const out = [];
+  const invoices = (db.invoices || []).filter((i) => i.cottageId === cottage.id);
+  const woIds = new Set();
+  (db.workOrders || []).filter((w) => w.cottageId === cottage.id).forEach((w) => {
+    woIds.add(w.id);
+    const inv = (db.invoices || []).find((i) => i.sourceType === "workOrder" && i.sourceId === w.id);
+    const appliance = w.applianceId && (cottage.appliances || []).find((a) => a.id === w.applianceId);
+    const done = w.status === "Completed";
+    out.push({ key: "wo-" + w.id, date: done ? w.completedDate || w.date : w.date, wo: w, open: !done, text: `${w.workOrderNumber ? w.workOrderNumber + " \xB7 " : ""}${w.title || "Work order"}${done ? "" : ` — ${w.status}`}`, sub: [appliance ? appliance.type : "", inv ? inv.invoiceNumber : ""].filter(Boolean).join(" \xB7 ") });
+  });
+  (db.quotes || []).filter((q) => q.cottageId === cottage.id).forEach((q) => out.push({ key: "q-" + q.id, date: q.date, text: `Quote: ${q.title || ""}`, sub: CUSTOMER_STATUS_LABEL[q.status] || q.status }));
+  invoices.filter((i) => !(i.sourceType === "workOrder" && woIds.has(i.sourceId))).forEach((i) => out.push({ key: "i-" + i.id, date: i.date, text: `${i.invoiceNumber || "Invoice"} \xB7 ${i.title || ""}` }));
+  (db.winterizingRequests || []).filter((r) => r.cottageId === cottage.id).forEach((r) => {
+    if (r.completed) out.push({ key: "w-" + r.id, date: r.completedDate || r.plannedDate || r.requestedDate, text: "Winterized" });
+    else if (!r.archived) out.push({ key: "w-" + r.id, date: r.plannedDate || r.requestedDate, open: true, text: "Winterizing booked", sub: r.plannedDate ? "On the plan" : `Requested ${r.requestedDate || ""}` });
+  });
+  (db.propaneRequests || []).filter((r) => r.cottageId === cottage.id).forEach((r) => out.push(r.completed ? { key: "p-" + r.id, date: r.completedDate || r.requestedDate, text: "Propane fill" } : { key: "p-" + r.id, date: r.requestedDate, open: true, text: "Propane requested" }));
+  (db.treeRequests || []).filter((r) => r.cottageId === cottage.id).forEach((r) => out.push({ key: "t-" + r.id, date: r.completed ? r.completedDate || r.notedDate : r.notedDate, open: !r.completed, text: `Tree: ${r.description || ""}` }));
+  (db.sunspaceOrders || []).filter((o) => o.cottageId === cottage.id).forEach((o) => out.push({ key: "s-" + o.id, date: o.orderedDate || String(o.createdAt || "").slice(0, 10), open: o.status !== "Work Complete", text: `Sunspace: ${sunspaceItemsLabel(o)}`, sub: o.status }));
+  cottageTransferHistory(db, cottage).forEach((t) => out.push({ key: "x-" + t.id, date: t.date, text: `Ownership: ${t.fromCustomerName} → ${t.toCustomerName}` }));
+  if (cottage.nameplatePhoto && cottage.nameplatePhoto.ts) out.push({ key: "np", date: cottage.nameplatePhoto.ts.slice(0, 10), text: "Nameplate scanned" });
+  return out.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence, readOnly, canTransfer, canScanNameplate, nested, onClose, onEdit, onDelete, variant }) {
   const [viewingWO, setViewingWO] = useState(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -4863,6 +4977,9 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
   const [viewingApplianceId, setViewingApplianceId] = useState(null);
   const [logModal, setLogModal] = useState(null);
   const [applianceTransferModal, setApplianceTransferModal] = useState(null);
+  const [newWO, setNewWO] = useState(null);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const actorName = useCurrentActor();
   if (!cottage) return null;
   const site = db.sites.find((s) => s.id === cottage.siteId);
   const workOrders = db.workOrders.filter((w) => w.cottageId === cottage.id);
@@ -4906,63 +5023,85 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
     const next = appliances.map((a) => a.id === applianceId ? { ...a, serviceLog: (a.serviceLog || []).filter((l) => l.id !== entryId) } : a);
     updateCottageAppliances(next);
   };
+  const isPanel = variant === "panel";
   const isDrawer = variant === "drawer" && !nested;
-  const Wrap = isDrawer ? DrawerShell : Modal;
-  const wrapProps = isDrawer ? { title: cottage.name, eyebrow: "Cottage", onClose } : { title: cottage.name, onClose, wide: true };
-  return /* @__PURE__ */ React.createElement(Wrap, wrapProps, cottage.offSiteInfo && !site && /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#F1EEE9] border border-[#E2DED5] px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-1" }, "Sold Off-Site"), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740]" }, cottage.offSiteInfo)), /* @__PURE__ */ React.createElement("div", { className: "rounded-lg bg-[#DDF1E1] border border-[#377249]/20 px-4 py-3 mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#28633C] font-semibold mb-1" }, "Current Owner"), currentOwners.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] italic" }, "No owner on file") : currentOwners.map(
-    (c) => nested ? /* @__PURE__ */ React.createElement("div", { key: c.id, className: "text-sm text-[#1E1A13] font-medium" }, c.name, (c.phone || c.email) && /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-normal" }, " \xB7 ", [c.phone, c.email].filter(Boolean).join(" \xB7 "))) : /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        key: c.id,
-        onClick: () => setViewingCustomerId(c.id),
-        className: "text-sm text-[#1E1A13] font-medium hover:underline text-left"
-      },
-      c.name,
-      (c.phone || c.email) && /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-normal" }, " \xB7 ", [c.phone, c.email].filter(Boolean).join(" \xB7 "))
-    )
-  )), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mb-4 space-y-1" }, cottage.color && /* @__PURE__ */ React.createElement("div", null, "Colour: ", cottage.color), /* @__PURE__ */ React.createElement("div", null, "Site: ", site ? site.number : "Unassigned"), /* @__PURE__ */ React.createElement("div", null, "Winterizing: ", !winterizingRequest ? /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, "Not signed up") : winterizingRequest.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[#28633C] font-medium" }, "Completed ", winterizingRequest.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[#9A6B1F] font-medium" }, "Signed up \u2014 requested ", winterizingRequest.requestedDate)), (cottage.year || cottage.modelNumber) && /* @__PURE__ */ React.createElement("div", null, cottage.year && /* @__PURE__ */ React.createElement("span", null, cottage.year), cottage.year && cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, " \xB7 "), cottage.modelNumber && /* @__PURE__ */ React.createElement("span", null, "Model ", cottage.modelNumber)), cottage.serialNumber && /* @__PURE__ */ React.createElement("div", null, "Serial: ", cottage.serialNumber), (cottage.manufacturer || cottage.tradeName) && /* @__PURE__ */ React.createElement("div", null, "Made by: ", [cottage.manufacturer, cottage.tradeName].filter(Boolean).join(" \xB7 ")), cottage.nameplatePhoto && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("a", { href: cottage.nameplatePhoto.url, target: "_blank", rel: "noreferrer", className: "text-[#377249] hover:underline" }, "Nameplate photo"), cottage.nameplatePhoto.ts ? ` (${cottage.nameplatePhoto.ts.slice(0, 10)})` : ""), cottage.warrantyExpiration && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, "Warranty: ", cottage.warrantyExpiration), applianceWarrantyStatus(cottage) === "expired" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Expired") : applianceWarrantyStatus(cottage) === "expiring" ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Expiring Soon") : /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under Warranty")), (cottage.bedrooms || cottage.bathrooms) && /* @__PURE__ */ React.createElement("div", null, cottage.bedrooms ? `${cottage.bedrooms} bed` : "", cottage.bedrooms && cottage.bathrooms ? " \xB7 " : "", cottage.bathrooms ? `${cottage.bathrooms} bath` : ""), cottage.deckPorch && /* @__PURE__ */ React.createElement("div", null, "Deck / Porch: ", cottage.deckPorch), (() => {
-    const items = cottage.sunspaceItems || {};
-    const rows = [];
-    if (items.sunroof && items.sunroof.included) rows.push({ label: "Sunroof", dims: [items.sunroof.width, items.sunroof.length].filter(Boolean).join("' x "), item: items.sunroof });
-    if (items.sunroom && items.sunroom.included) rows.push({ label: "Sunroom", dims: [items.sunroom.width, items.sunroom.length].filter(Boolean).join("' x "), item: items.sunroom });
-    if (items.railings && items.railings.included) rows.push({ label: "Railings", dims: items.railings.length, item: null });
-    if (rows.length === 0) return null;
-    return /* @__PURE__ */ React.createElement("div", null, "Sunspace Accessories:", /* @__PURE__ */ React.createElement("div", { className: "ml-3 mt-0.5 space-y-0.5" }, rows.map((r, i) => {
-      const status = r.item ? applianceWarrantyStatus(r.item) : "none";
-      return /* @__PURE__ */ React.createElement("div", { key: i, className: "flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", null, r.label, r.dims ? ` (${r.dims}')` : ""), status === "expired" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Warranty Expired"), status === "expiring" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Warranty Expiring"), status === "ok" && /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Under Warranty"));
-    })));
-  })(), cottage.sunroom && /* @__PURE__ */ React.createElement("div", null, "Sunspace Notes: ", cottage.sunroom), cottage.features && /* @__PURE__ */ React.createElement("div", null, "Features: ", cottage.features)), /* @__PURE__ */ React.createElement(DetailSection, { title: "Work Orders", empty: "No work orders for this cottage." }, workOrders.map((w) => /* @__PURE__ */ React.createElement(WorkOrderListRow, { key: w.id, wo: w, onClick: () => setViewingWO(w) }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Quotes", empty: "No quotes for this cottage." }, quotes.map((q) => /* @__PURE__ */ React.createElement("div", { key: q.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, q.title), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${QUOTE_STATUS_STYLES[q.status] || ""}` }, q.status)))), /* @__PURE__ */ React.createElement(InvoicesDetailSection, { invoices, taxRate, empty: "No invoices for this cottage." }), /* @__PURE__ */ React.createElement(DetailSection, { title: "Winterizing History", empty: "No winterizing sign-ups recorded." }, winterizingHistory.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, className: "text-sm py-1.5 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Requested ", r.requestedDate), r.completed ? /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#DDF1E1] text-[#28633C]" }, "Completed ", r.completedDate) : /* @__PURE__ */ React.createElement("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Pending")), r.notes && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, r.notes)))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Sunspace History", empty: "No sunspace accessory orders recorded." }, sunspaceHistory.map((o) => {
-    const paidInFull = isSunspacePaidInFull(o);
-    const statusTone = o.status === "Work Complete" ? "bg-[#DDF1E1] text-[#28633C]" : "bg-[#FBEEDA] text-[#9A6B1F]";
-    return /* @__PURE__ */ React.createElement("div", { key: o.id, className: "text-sm py-1.5 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, sunspaceItemsLabel(o)), /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium ${statusTone}` }, o.status)), /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#75716A] mt-0.5" }, paidInFull ? "Paid in full" : `Ordered ${o.orderedDate || ""}`));
-  })), /* @__PURE__ */ React.createElement("div", { className: "mb-4" }, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-1.5" }, /* @__PURE__ */ React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold" }, "Appliances"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-3" }, (!readOnly || canScanNameplate) && /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => setScanOpen(true) }, "Scan nameplate"), !readOnly && /* @__PURE__ */ React.createElement("button", { className: "text-xs text-[#377249] hover:underline font-medium", onClick: () => setApplianceModal({ mode: "new" }) }, "+ Add Appliance"))), appliances.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A968D] italic" }, "No appliances recorded.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-1" }, appliances.map((a) => {
-    const status = applianceWarrantyStatus(a);
-    const statusTone = status === "expired" ? "bg-[#F5E3D9] text-[#a8532a]" : status === "expiring" ? "bg-[#FBEEDA] text-[#9A6B1F]" : status === "ok" ? "bg-[#DDF1E1] text-[#28633C]" : "";
-    return /* @__PURE__ */ React.createElement(
-      "button",
-      {
-        key: a.id,
-        onClick: () => setViewingApplianceId(a.id),
-        className: "w-full flex items-center justify-between gap-2 text-sm py-1.5 border-b border-[#EEEBE5] last:border-0 hover:bg-[#F1EEE9] text-left px-1 rounded"
-      },
-      /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, a.type, applianceDetails(a) ? React.createElement("span", { className: "text-[#75716A]" }, ` \u2014 ${applianceDetails(a)}`) : a.serialNumber ? ` \u2014 ${a.serialNumber}` : ""),
-      status !== "none" && /* @__PURE__ */ React.createElement("span", { className: `text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${statusTone}` }, status === "expired" ? "Warranty Expired" : status === "expiring" ? "Expiring Soon" : "Under Warranty")
-    );
-  }))), /* @__PURE__ */ React.createElement(DetailSection, { title: "Ownership History", empty: "No ownership transfers recorded." }, cottageTransfers.map((t) => /* @__PURE__ */ React.createElement("div", { key: t.id, className: "text-sm py-1 border-b border-[#EEEBE5] last:border-0" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#75716A]" }, t.date, ": "), /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), (canTransfer != null ? canTransfer : !readOnly) && site && /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setTransferOpen(true),
-      className: "px-4 py-2 text-sm text-[#377249] border border-[#377249]/30 rounded-md hover:bg-[#377249]/10 font-medium"
-    },
-    "Transfer Ownership"
-  ), !readOnly && /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => onEdit(cottage),
-      className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium"
-    },
-    "Edit Cottage"
-  )), transferOpen && site && /* @__PURE__ */ React.createElement(
+  const Wrap = isPanel ? CottagePanelShell : isDrawer ? DrawerShell : Modal;
+  const wrapProps = isPanel ? {} : isDrawer ? { title: cottage.name, eyebrow: "Cottage", onClose } : { title: cottage.name, onClose, wide: true };
+  const h = React.createElement;
+  const placeLabel = site ? ["Site " + site.number, site.section].filter(Boolean).join(" \xB7 ") : cottage.offSiteInfo ? "Sold off-site" : "No site";
+  const ownerFor = currentOwners[0] || null;
+  const startWorkOrder = (appliance) => setNewWO({ siteId: site ? site.id : null, cottageId: cottage.id, customerId: ownerFor ? ownerFor.id : null, applianceId: appliance ? appliance.id : null, title: appliance ? `${appliance.type} — ` : "" });
+  const history = cottageHistory(db, cottage);
+  const shownHistory = showAllHistory ? history : history.slice(0, 12);
+  const idCell = (label, value, extra) => h("div", { className: "px-3.5 py-2.5 border-[#E2DED5] min-w-0 " + (extra || "") }, h("div", { className: "text-[10.5px] uppercase tracking-wider text-[#75716A] font-bold" }, label), value);
+  const val = (v, mono) => v ? h("div", { className: `mt-0.5 text-[15px] font-semibold text-[#1E1A13] break-words ${mono ? "font-mono tracking-wide" : ""}` }, v) : h("div", { className: "mt-0.5 text-[15px] text-[#9A968D]" }, "—");
+  const btn = (label, onClick, primary) => h("button", { type: "button", onClick, className: primary ? "px-3.5 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-semibold" : "px-3.5 py-2 text-sm text-[#4B4740] border border-[#E2DED5] rounded-md hover:bg-[#F1EEE9] font-semibold" }, label);
+  const sectionTitle = (t, right) => h("div", { className: "flex items-center justify-between mb-1.5" }, h("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold" }, t), right || null);
+  const details = [
+    cottage.color && ["Colour", cottage.color],
+    (cottage.bedrooms || cottage.bathrooms) && ["Size", [cottage.bedrooms ? `${cottage.bedrooms} bed` : "", cottage.bathrooms ? `${cottage.bathrooms} bath` : ""].filter(Boolean).join(" \xB7 ")],
+    cottage.deckPorch && ["Deck / porch", cottage.deckPorch],
+    cottage.warrantyExpiration && ["Warranty", `${cottage.warrantyExpiration}${applianceWarrantyStatus(cottage) === "expired" ? " (expired)" : applianceWarrantyStatus(cottage) === "expiring" ? " (expiring soon)" : ""}`],
+    sunspaceSummary(cottage) && ["Sunspace", sunspaceSummary(cottage)],
+    cottage.sunroom && ["Sunspace notes", cottage.sunroom],
+    cottage.features && ["Features", cottage.features],
+    ["Winterizing", !winterizingRequest ? "Not signed up" : winterizingRequest.completed ? `Done ${winterizingRequest.completedDate || ""}` : `Signed up — requested ${winterizingRequest.requestedDate || ""}`]
+  ].filter(Boolean);
+  return /* @__PURE__ */ h(Wrap, wrapProps,
+    h("div", { className: "flex items-start justify-between gap-3 flex-wrap mb-3" },
+      h("div", { className: "min-w-0" },
+        h("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold" }, placeLabel),
+        isPanel && h("h3", { className: "font-serif text-2xl text-[#1E1A13] font-semibold leading-tight" }, cottage.name),
+        h("div", { className: "mt-1 text-sm" }, currentOwners.length === 0 ? h("span", { className: "text-[#75716A] italic" }, "No owner on file") : currentOwners.map((c, i) => h(React.Fragment, { key: c.id }, i > 0 ? h("span", { className: "text-[#75716A]" }, " & ") : null, nested ? h("span", { className: "font-semibold text-[#28633C]" }, c.name) : h("button", { type: "button", onClick: () => setViewingCustomerId(c.id), className: "font-semibold text-[#28633C] hover:underline" }, c.name), c.phone ? h("span", { className: "text-[#28633C]" }, " \xB7 ", formatPhoneDisplay(c.phone)) : null)))
+      ),
+      h("div", { className: "flex gap-2 flex-wrap" },
+        (!readOnly || canScanNameplate) && btn("Scan nameplate", () => setScanOpen(true)),
+        (canTransfer != null ? canTransfer : !readOnly) && site && btn("Transfer Ownership", () => setTransferOpen(true)),
+        !readOnly && onEdit && btn("Edit", () => onEdit(cottage)),
+        !readOnly && btn("+ Work Order", () => startWorkOrder(null), true)
+      )
+    ),
+    cottage.offSiteInfo && !site && h("div", { className: "rounded-lg bg-[#F1EEE9] border border-[#E2DED5] px-4 py-2.5 mb-3" }, h("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-0.5" }, "Sold Off-Site"), h("div", { className: "text-sm text-[#4B4740] whitespace-pre-line" }, cottage.offSiteInfo)),
+    h("div", { className: "grid grid-cols-2 sm:grid-cols-4 border border-[#E2DED5] rounded-xl overflow-hidden mb-3 bg-[#FFFDFA]" },
+      idCell("Serial #", cottage.serialNumber ? val(cottage.serialNumber, true) : readOnly ? h("div", { className: "mt-0.5 text-sm text-[#a8532a] italic" }, "Not on file") : h("div", { className: "mt-1" }, h(CottageSerialQuickAdd, { cottage, cottages: db.cottages, onSave: (serial) => {
+        persist({ ...db, activityLog: addLog(db, actorName, `Added serial # ${serial} to ${cottage.name}`) });
+        saveCottage({ ...cottage, serialNumber: serial });
+      } })), "bg-[#F1EEE9]"),
+      idCell("Model", val(cottage.modelNumber, true), "border-l"),
+      idCell("Year", val(cottage.year), "border-t sm:border-t-0 sm:border-l"),
+      idCell("Maker", val([cottage.manufacturer, cottage.tradeName].filter(Boolean).join(" \xB7 ")), "border-t border-l sm:border-t-0")
+    ),
+    h("div", { className: "flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-[#4B4740] mb-4" }, details.map(([k, v]) => h("span", { key: k }, h("span", { className: "text-[#75716A]" }, k, ": "), v)), cottage.nameplatePhoto && h("a", { href: cottage.nameplatePhoto.url, target: "_blank", rel: "noreferrer", className: "text-[#377249] hover:underline" }, "Nameplate photo")),
+    h("div", { className: "grid lg:grid-cols-2 gap-x-6 gap-y-4" },
+      h("div", { className: "min-w-0" },
+        sectionTitle("Appliances", !readOnly && h("button", { type: "button", className: "text-xs text-[#377249] hover:underline font-semibold", onClick: () => setApplianceModal({ mode: "new" }) }, "+ Add appliance")),
+        appliances.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic mb-4" }, "No appliances recorded. Scan the nameplate to fill them in.") : h("div", { className: "mb-4" }, appliances.map((a) => {
+          const status = applianceWarrantyStatus(a);
+          const age = applianceAge(a);
+          return h("button", { key: a.id, type: "button", onClick: () => setViewingApplianceId(a.id), className: "w-full flex items-center justify-between gap-3 text-sm py-2 px-2 border-b border-[#EEEBE5] hover:bg-[#F1EEE9] rounded text-left" },
+            h("span", { className: "text-[#1E1A13] flex items-center gap-1.5 flex-shrink-0" }, a.type, age >= 1 && h("span", { className: `text-[10.5px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${age >= 15 ? "bg-[#F5E3D9] text-[#a8532a]" : "bg-[#F1EEE9] text-[#75716A]"}` }, `${age} yr${age === 1 ? "" : "s"}`), status === "expired" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#F5E3D9] text-[#a8532a]" }, "Warranty expired") : status === "expiring" ? h("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-[#FBEEDA] text-[#9A6B1F]" }, "Warranty expiring") : null),
+            h("span", { className: "text-[#75716A] text-right truncate min-w-0" }, [[a.make, a.model].filter(Boolean).join(" "), a.fuel].filter(Boolean).join(" \xB7 ") || "—", h("span", { className: "text-[#9A968D] ml-2" }, "›")));
+        })),
+        sectionTitle("Owners"),
+        cottageTransfers.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic" }, "No ownership changes recorded.") : h("div", { className: "text-sm space-y-1" }, cottageTransfers.map((t) => h("div", { key: t.id }, h("span", { className: "text-[#75716A]" }, t.date, ": "), "Transferred from ", t.fromCustomerName, " to ", t.toCustomerName)))
+      ),
+      h("div", { className: "min-w-0" },
+        sectionTitle("History"),
+        history.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic" }, "Nothing recorded for this cottage yet.") : h("div", { className: "relative pl-5" },
+          h("div", { className: "absolute left-[5px] top-1 bottom-1 w-0.5 bg-[#E2DED5]" }),
+          shownHistory.map((e) => h("div", { key: e.key, className: "relative mb-3" },
+            h("span", { className: `absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full ${e.open ? "bg-[#C1652F]" : "bg-[#377249]"}` }),
+            h("div", { className: "text-[11px] font-bold text-[#75716A] uppercase tracking-wide" }, e.date ? formatHistoryDate(e.date) : "No date"),
+            e.wo ? h("button", { type: "button", onClick: () => setViewingWO(e.wo), className: "text-sm text-left text-[#1E1A13] hover:underline" }, e.text) : h("div", { className: "text-sm text-[#1E1A13]" }, e.text),
+            e.sub && h("div", { className: "text-xs text-[#75716A]" }, e.sub)
+          )),
+          history.length > shownHistory.length && h("button", { type: "button", onClick: () => setShowAllHistory(true), className: "text-xs text-[#377249] font-semibold hover:underline" }, `Show all ${history.length}`)
+        )
+      )
+    ),
+    h("div", { className: "flex justify-between items-center mt-5 pt-3 border-t border-[#EEEBE5]" }, !readOnly && onDelete ? h("button", { type: "button", onClick: onDelete, className: "text-xs text-[#a8532a] hover:underline" }, "Delete cottage") : h("span"), !isPanel && h("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close")),
+    newWO && h(QuickWorkOrderModal, { db, initial: newWO, saveWorkOrder, onClose: () => setNewWO(null) })
+  , transferOpen && site && /* @__PURE__ */ React.createElement(
     TransferOwnershipModal,
     {
       cottage,
@@ -4990,6 +5129,17 @@ function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, 
     }
   ), !readOnly && applianceModal && /* @__PURE__ */ React.createElement(Modal, { title: applianceModal.mode === "new" ? "Add Appliance" : "Edit Appliance", onClose: () => setApplianceModal(null) }, /* @__PURE__ */ React.createElement(ApplianceForm, { initial: applianceModal.data, onSave: saveAppliance, onCancel: () => setApplianceModal(null) })), viewingAppliance && /* @__PURE__ */ React.createElement(ApplianceViewModal, {
     appliance: viewingAppliance,
+    cottage,
+    workOrders: db.workOrders,
+    readOnly,
+    onCreateWorkOrder: readOnly ? null : (a) => {
+      setViewingApplianceId(null);
+      startWorkOrder(a);
+    },
+    onOpenWorkOrder: (wo) => {
+      setViewingApplianceId(null);
+      setViewingWO(wo);
+    },
     onEditAppliance: (a) => setApplianceModal({ mode: "edit", data: a }),
     onDeleteAppliance: deleteAppliance,
     onTransfer: (a) => setApplianceTransferModal(a),
@@ -11881,7 +12031,8 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     if (changedCottage) saveCottage(changedCottage);
     if (newStatus === "Completed" && wo.status !== "Completed" && wo.cottageId) {
       const cottage = db.cottages.find((c) => c.id === wo.cottageId);
-      if (cottage && (cottage.appliances || []).length > 0) {
+      // A job tagged with its appliance logs itself (logWorkOrderToAppliance).
+      if (cottage && (cottage.appliances || []).length > 0 && !updated.applianceId) {
         setApplianceLogPrompt({ wo: updated, cottage });
       }
     }
@@ -12776,6 +12927,9 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [siteId, setSiteId] = useState((initial == null ? void 0 : initial.siteId) || "");
   const [cottageId, setCottageId] = useState((initial == null ? void 0 : initial.cottageId) || "");
   const [customerId, setCustomerId] = useState((initial == null ? void 0 : initial.customerId) || "");
+  // The appliance this job is for: when it's completed it goes in that
+  // appliance's service log on its own.
+  const [applianceId, setApplianceId] = useState((initial == null ? void 0 : initial.applianceId) || "");
   const [assignedTo, setAssignedTo] = useState((initial == null ? void 0 : initial.assignedTo) || "");
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "Open");
   const [priority, setPriority] = useState((initial == null ? void 0 : initial.priority) || "Medium");
@@ -12944,6 +13098,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       siteId: siteId || null,
       cottageId: cottageId || null,
       customerId: customerId || null,
+      applianceId: applianceId && (((cottages || []).find((c) => c.id === cottageId) || {}).appliances || []).some((a) => a.id === applianceId) ? applianceId : null,
       assignedTo: assignedTo.trim(),
       status,
       priority,
@@ -12986,7 +13141,11 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       onChange: handleCottageChange,
       placeholder: "Search cottages\u2026"
     }
-  )), relatedCandidates.length > 0 && (showMore || relatedWorkOrderId) && /* @__PURE__ */ React.createElement(Field, { label: "Related to a Previous Job (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: relatedWorkOrderId, onChange: (e) => setRelatedWorkOrderId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not related to a previous job"), relatedCandidates.map((w) => /* @__PURE__ */ React.createElement("option", { key: w.id, value: w.id }, w.title, " \u2014 completed ", w.completedDate)))), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
+  )), (() => {
+    const list = ((cottages || []).find((c) => c.id === cottageId) || {}).appliances || [];
+    if (!list.length) return null;
+    return React.createElement(Field, { label: "Appliance (optional)" }, React.createElement("select", { className: inputCls, value: list.some((a) => a.id === applianceId) ? applianceId : "", onChange: (e) => setApplianceId(e.target.value) }, React.createElement("option", { value: "" }, "Not for a particular appliance"), list.map((a) => React.createElement("option", { key: a.id, value: a.id }, [a.type, [a.make, a.model].filter(Boolean).join(" ")].filter(Boolean).join(" \u2014 ")))), applianceId && React.createElement("p", { className: "text-[11px] text-[#9A968D] mt-1" }, "When this job is completed, it's added to the appliance's service log."));
+  })(), relatedCandidates.length > 0 && (showMore || relatedWorkOrderId) && /* @__PURE__ */ React.createElement(Field, { label: "Related to a Previous Job (optional)" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: relatedWorkOrderId, onChange: (e) => setRelatedWorkOrderId(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Not related to a previous job"), relatedCandidates.map((w) => /* @__PURE__ */ React.createElement("option", { key: w.id, value: w.id }, w.title, " \u2014 completed ", w.completedDate)))), /* @__PURE__ */ React.createElement(Field, { label: "Assigned To" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,

@@ -32,9 +32,14 @@ Alex is the owner and the person you're working with; Tim
   firebase deploy --only functions:serviceCorrespondence
   ```
   (`firebase deploy --only firestore:rules` for rules.) Name the specific
-  function(s) changed. Alex deploys from a laptop or a Windows 11 work
-  desktop (PowerShell), so always start the commands with
-  `cd $HOME\Documents\QIC-Service-Managment` (the desktop's copy).
+  function(s) changed. Alex deploys from two machines, so always give both,
+  each as one line to paste:
+  - **Windows 11 work desktop (PowerShell):**
+    `cd $HOME\Documents\QIC-Service-Managment; git pull origin main; if ($?) { firebase deploy --only ... }`
+  - **Chromebook laptop (Linux terminal):**
+    `cd ~/QIC-Service-Managment && git pull origin main && firebase deploy --only ...`
+    (folder assumed to be in the home folder - if Alex says otherwise,
+    update this note).
 - Explain things in plain language; Alex isn't a developer. Keep replies
   short and lead with what changed for them.
 - Alex reviews on desktop; phone layouts matter for field staff screens
@@ -193,6 +198,17 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   overwritten unless ticked (it may have been replaced since the factory).
   The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
   at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
+- Cottages tab: list on the left, the cottage's page on the right (wide
+  screens; a pop-up on narrow ones). Top boxes are just total cottages and
+  "with serial #" - Alex didn't want more. The page shows serial/model/
+  year/maker in their own boxes, appliances, owners and a history timeline
+  (`cottageHistory`: work orders + invoice, winterizing, propane, trees,
+  quotes, sunspace, ownership, nameplate scan).
+- Clicking an appliance opens its card; "+ Work order for this …" starts a
+  work order tagged `applianceId`. When a tagged work order is completed it
+  goes in that appliance's service log by itself, once
+  (`logWorkOrderToAppliance` in `saveWorkOrder`); untagged ones still get
+  the "Log to an Appliance?" prompt.
 
 **Forms**
 - Saves replace the whole Firestore document, so every edit form spreads
