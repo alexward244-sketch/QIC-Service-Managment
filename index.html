@@ -14228,7 +14228,7 @@ function WinterizingReminderModal({ db, persist, rows, actor, onClose, inline })
 // The day the crew plans to do it: set by dragging on the Plan board, else
 // the day the customer asked for. "" = taken off the schedule.
 // When the customer signed up (the web form's time, or when it was entered):
-// when more ask for a day than fit, the earliest keep it.
+// breaks a tie between two who asked for the same date.
 function winterSignedUpAt(r) {
   return String(r.submittedAt || r.createdAt || "");
 }
@@ -14410,11 +14410,11 @@ function placeNewWinterSignups(requests, db, today) {
       const others = sortWinterSections(Object.keys(counts).filter((k) => k !== sectionOf(r)));
       const fewest = others.reduce((best, k) => best == null || counts[k] <= counts[best] ? k : best, null);
       if (mine > 0 && fewest != null && others.every((k) => counts[k] <= mine) && counts[fewest] < mine) {
-        // Someone who didn't ask for this day moves - from the smallest area
-        // that has one. Everyone who asked for it signed up earlier, so they
-        // keep it: if that's all of them, this one goes to the next day.
+        // Someone who didn't ask for this day (or an earlier one) moves -
+        // from the smallest area that has one. Those who did asked first, so
+        // they keep it: if that's all of them, this one goes to the next day.
         const smaller = others.filter((k) => counts[k] < mine).sort((x, y) => counts[x] - counts[y] || others.indexOf(y) - others.indexOf(x));
-        const bumped = smaller.map((k) => list.filter((x) => sectionOf(x) === k && x.requestedDate !== want && !x.keepOnDay).sort(sortSites).pop()).find(Boolean);
+        const bumped = smaller.map((k) => list.filter((x) => sectionOf(x) === k && !(x.requestedDate && x.requestedDate <= want) && !x.keepOnDay).sort(sortSites).pop()).find(Boolean);
         if (!bumped) {
           dateOf.set(r, roomFrom(want));
           return;
@@ -14461,9 +14461,11 @@ function carryOverWinter(requests, db, today) {
   let day = target;
   for (let guard = 0; guard < 400; guard++) {
     // Kept first: the unfinished ones, ones that can't move, then those who
-    // asked for this day (earliest sign-ups first), then the rest.
-    const rank = (r) => late.includes(r) ? 0 : !movable(r) ? 1 : r.requestedDate === day ? 2 : 3;
-    const onDay = open.filter((r) => dateOf.get(r) === day).sort((a, b) => rank(a) - rank(b) || (rank(a) === 2 ? winterBySignup(a, b) : 0) || sortSites(a, b));
+    // asked for this day or an earlier one (earliest date first, then
+    // earliest sign-up), then the rest.
+    const asked = (r) => r.requestedDate && r.requestedDate <= day;
+    const rank = (r) => late.includes(r) ? 0 : !movable(r) ? 1 : asked(r) ? 2 : 3;
+    const onDay = open.filter((r) => dateOf.get(r) === day).sort((a, b) => rank(a) - rank(b) || (rank(a) === 2 ? a.requestedDate.localeCompare(b.requestedDate) || winterBySignup(a, b) : 0) || sortSites(a, b));
     if (onDay.length > season.limit) {
       onDay.slice(season.limit).filter(movable).forEach((r) => dateOf.set(r, winterNextWorkday(day, season)));
     }

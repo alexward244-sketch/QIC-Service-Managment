@@ -516,7 +516,7 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   // blocked 15th to the 16th; r4 and r5 (asked for a day before the season) fill the rest in sign-up order.
   assert.deepEqual(out.plan, { r1: "2026-10-14", r2: "2026-10-14", r3: "2026-10-16", r4: "2026-10-13", r5: "2026-10-16" });
   assert.deepEqual(out.rain, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r5: "2026-10-19" }, "a rain day moves that day and after back a weekday, skipping the blocked day and the weekend");
-  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r4: "2026-10-14", r5: "2026-10-19", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend)");
+  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-19", r3: "2026-10-19", r4: "2026-10-14", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend) - on the 16th, r5 (asked for the 8th) and r1 (asked for the 14th, signed up first) stay");
   assert.equal(out.start, "2026-10-13", "the board opens on the season's first day");
   assert.equal(out.blockedIsWorkday, "2026-10-16");
   assert.deepEqual(out.thanksgiving, [true, "2026-10-13"], "Thanksgiving Monday is closed and never planned");
@@ -524,7 +524,7 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   await page.close();
 });
 
-test("winterizing: when more ask for a day than fit, the earliest sign-ups keep it (auto-plan and the daily tidy-up)", async () => {
+test("winterizing: when more are on a day than fit, those who asked for the earliest date keep it, then the earliest sign-ups (auto-plan and the daily tidy-up)", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
     const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
@@ -538,10 +538,19 @@ test("winterizing: when more ask for a day than fit, the earliest sign-ups keep 
     // Already on the 14th (3 there, limit 2): the latest sign-up moves on.
     const onDay = asked.map((r) => ({ ...r, plannedDate: "2026-10-14" }));
     const tidy = carryOverWinter(onDay, db, "2026-10-13").map((p) => [p.request.id, p.date]);
-    return { plan, tidy };
+    // Thursday the 15th: one moved there from a full Wednesday (asked for the 14th) beats two who
+    // asked for the 15th - of those, the earlier sign-up stays.
+    const thu = [
+      { id: "wed", requestedDate: "2026-10-14", plannedDate: "2026-10-15", submittedAt: "2026-09-30T00:00:00Z" },
+      { id: "thuLate", requestedDate: "2026-10-15", plannedDate: "2026-10-15", submittedAt: "2026-09-10T00:00:00Z" },
+      { id: "thuEarly", requestedDate: "2026-10-15", plannedDate: "2026-10-15", submittedAt: "2026-09-01T00:00:00Z" }
+    ];
+    const tidyThu = carryOverWinter(thu, db, "2026-10-13").map((p) => [p.request.id, p.date]);
+    return { plan, tidy, tidyThu };
   });
   assert.deepEqual(out.plan, [["first", "2026-10-14"], ["second", "2026-10-14"], ["late", "2026-10-15"]]);
   assert.deepEqual(out.tidy, [["late", "2026-10-15"]]);
+  assert.deepEqual(out.tidyThu, [["thuLate", "2026-10-16"]]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
