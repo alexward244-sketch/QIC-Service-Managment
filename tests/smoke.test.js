@@ -524,6 +524,28 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   await page.close();
 });
 
+test("winterizing: when more ask for a day than fit, the earliest sign-ups keep it (auto-plan and the daily tidy-up)", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    // Listed out of order; sign-up times decide (the web form's time, else when it was entered).
+    const asked = [
+      { id: "late", requestedDate: "2026-10-14", submittedAt: "2026-09-20T10:00:00Z", createdAt: "2026-09-01T00:00:00Z" },
+      { id: "first", requestedDate: "2026-10-14", submittedAt: "2026-09-02T10:00:00Z" },
+      { id: "second", requestedDate: "2026-10-14", createdAt: "2026-09-05T10:00:00Z" }
+    ];
+    const plan = autoPlanWinter(asked, db, { today: "2026-10-06", byArea: true }).map((p) => [p.request.id, p.date]);
+    // Already on the 14th (3 there, limit 2): the latest sign-up moves on.
+    const onDay = asked.map((r) => ({ ...r, plannedDate: "2026-10-14" }));
+    const tidy = carryOverWinter(onDay, db, "2026-10-13").map((p) => [p.request.id, p.date]);
+    return { plan, tidy };
+  });
+  assert.deepEqual(out.plan, [["first", "2026-10-14"], ["second", "2026-10-14"], ["late", "2026-10-15"]]);
+  assert.deepEqual(out.tidy, [["late", "2026-10-15"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
@@ -584,7 +606,7 @@ test("winterizing on a phone: picking a weekend in Planned for puts it on the Mo
   await page.close();
 });
 
-test("winterizing: a new sign-up for a full day goes on it when its area has the most there; the smallest area's cottage moves a day, marked Moved", async () => {
+test("winterizing: a new sign-up for a full day goes on it when its area has the most there and a smaller area's cottage didn't ask for the day (it moves, marked Moved); earlier sign-ups who asked keep it", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
     const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0103", "Front of Park"], ["s4", "0490", "Limestone South"], ["s5", "0495", "Limestone South"], ["s6", "0480", "Limestone South"]].map(([id, number, section]) => ({ id, number, section }));
@@ -601,7 +623,7 @@ test("winterizing: a new sign-up for a full day goes on it when its area has the
     const protectedDate = run(req("n", "k2", { requestedDate: "2026-10-14" }));
     return { frontOfPark, limestone, protectedDate };
   });
-  assert.deepEqual(out.frontOfPark, [["n", "2026-10-14", ""], ["c", "2026-10-15", "2026-10-14 for Front of Park"]], "Front of Park has the most that day, so Limestone South's one moves");
+  assert.deepEqual(out.frontOfPark, [["n", "2026-10-15", ""]], "Limestone South's one asked for the day and signed up earlier, so it keeps it; the new one goes to the next day");
   assert.deepEqual(out.limestone, [["n", "2026-10-15", ""]], "Limestone South is the smaller area there, so the new one goes to the next day with room");
   assert.deepEqual(out.protectedDate, [["n", "2026-10-14", ""], ["d", "2026-10-15", "2026-10-14 for Front of Park"]], "the Limestone South cottage that asked for the day stays; the other one moves");
   // On the Plan board and in the notice.
