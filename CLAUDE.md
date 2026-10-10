@@ -174,6 +174,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   don't have one yet, so it isn't required. Serials are compared with
   `serialKey` (ignores case, spaces, dashes); a duplicate gets a warning.
   The Cottages tab's "Missing serial #" button lists the ones left to fill in.
+- A sale goes through Transfer Ownership (records it in `transferHistory`
+  with the date). Adding a site someone else owns, or removing a site with a
+  cottage, on the customer form shows "Is this a sale?" with a "Transfer
+  Ownership instead" button - a warning, not a block.
 - Ownership transfers (on the site's `transferHistory`) carry `cottageId`;
   match them with `transferIsForCottage`, not by name, so a rename keeps
   the history.
