@@ -524,6 +524,66 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   await page.close();
 });
 
+test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    const reqs = [
+      { id: "a", plannedDate: "2026-10-18" }, // a Sunday
+      { id: "b", plannedDate: "2026-10-16" },
+      { id: "c", plannedDate: "2026-10-16" },
+      { id: "d", plannedDate: "2026-10-16", requestedDate: "2026-10-16" },
+      { id: "e", plannedDate: "2026-10-16", keepOnDay: true }, // "Put it on Fri anyway"
+      { id: "f", requestedDate: "2026-10-17" }, // not placed yet: left alone
+      { id: "g", plannedDate: "2026-10-17", keepOnDay: true },
+      { id: "h", plannedDate: "2026-10-20", completed: true }
+    ];
+    return carryOverWinter(reqs, db, "2026-10-14").map((p) => [p.request.id, p.date, p.why]);
+  });
+  // Friday keeps the one who asked for it and the one put there on purpose; b and c move to Monday,
+  // where Sunday's a already is, so c (the last) goes on to Tuesday.
+  assert.deepEqual(out, [["a", "2026-10-19", "offDay"], ["b", "2026-10-19", "full"], ["c", "2026-10-20", "full"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing on a phone: picking a weekend in Planned for puts it on the Monday", async () => {
+  const page = await openApp(browser, "stub");
+  const info = await page.evaluate(() => {
+    window.__saved = [];
+    window.__toasts = [];
+    const today = todayISO();
+    const add = (n) => winterAddDays(today, n);
+    let sunday = add(7);
+    while (new Date(sunday + "T12:00").getDay() !== 0) sunday = winterAddDays(sunday, 1);
+    let monday = winterAddDays(sunday, 1);
+    let planned = add(1);
+    while (!winterIsWeekday(planned)) planned = winterAddDays(planned, 1);
+    let db = {
+      settings: { winterSeasonStart: add(-10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }],
+      customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }],
+      winterizingRequests: [{ id: "r1", cottageId: "k1", customerId: "c1", plannedDate: planned, options: {} }]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const save = (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); };
+    const render = () => root.render(React.createElement(FieldWinterTab, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, actor: "Dave", saveWinterizingRequest: save, saveInvoice() {}, saveWorkOrder() {}, onGoToDesktopTab() {}, setToast: (t) => window.__toasts.push(t) }));
+    render();
+    return { sunday, monday, planned };
+  });
+  await page.getByRole("tab", { name: "All sign-ups" }).click();
+  await page.locator('[data-field-winter="r1"]').first().click();
+  await page.locator("[data-winter-panel] input[type=date]").fill(info.sunday);
+  await page.waitForFunction(() => window.__saved.length > 0);
+  const saved = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+  assert.equal(saved.plannedDate, info.monday);
+  assert.equal(saved.keepOnDay, false);
+  assert.match(await page.evaluate(() => window.__toasts.join("|")), /Weekends are off/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing: a new sign-up for a full day goes on it when its area has the most there; the smallest area's cottage moves a day, marked Moved", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
@@ -591,9 +651,14 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
   const today = await page.evaluate(() => todayISO());
   const col = page.locator(`[data-plan-column="${today}"]`);
   assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
-  // Dropping Cedar on a full day offers the next day with room.
+  // Dropping Cedar on a full day offers the next day with room (on a
+  // weekend, it says it's a weekend instead - and there's no "anyway").
   await page.locator('[data-plan-card="r2"]').dragTo(col);
-  await page.getByText("That day is full").waitFor();
+  if (await page.evaluate(() => winterIsWeekday(todayISO()))) await page.getByText("That day is full").waitFor();
+  else {
+    await page.getByText("That's a weekend").waitFor();
+    assert.equal(await page.getByRole("button", { name: /anyway/ }).count(), 0);
+  }
   await page.getByRole("button", { name: "Cancel" }).click();
   // Block a day (when the board shows one ahead).
   const blockBtn = page.getByRole("button", { name: "Block", exact: true }).first();

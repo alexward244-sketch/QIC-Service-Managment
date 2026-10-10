@@ -14428,30 +14428,36 @@ function pushBackWinterDay(requests, db, day) {
   return requests.filter((r) => !r.completed && !r.archived && winterPlannedDate(r) && winterPlannedDate(r) >= day).map((r) => ({ request: r, date: winterNextWorkday(winterPlannedDate(r), season) }));
 }
 // Cottages planned for a past day but not done go on the next workday,
-// ahead of what's already there; anything over the limit then moves on a
-// day (the last ones on the list), and so on. Returns [{ request, date }].
+// ahead of what's already there. Cottages on a weekend or blocked day (from
+// today on) go on the next workday. Anything then over the limit moves on a
+// day (the last ones on the list), and so on - except ones someone put on
+// that day on purpose ("anyway", keepOnDay). Returns [{ request, date, why }]
+// with why "late", "offDay" or "full".
 function carryOverWinter(requests, db, today) {
   const season = winterSeason(db);
   const target = winterFirstWorkday(season, today);
   const open = requests.filter((r) => !r.completed && !r.archived);
   const late = open.filter((r) => r.plannedDate && r.plannedDate < today);
-  if (!late.length) return [];
+  const offDay = open.filter((r) => r.plannedDate && r.plannedDate >= today && !r.keepOnDay && winterWorkday(r.plannedDate, season) !== r.plannedDate);
   const dateOf = new Map(open.map((r) => [r, winterPlannedDate(r)]));
   late.forEach((r) => dateOf.set(r, target));
+  offDay.forEach((r) => dateOf.set(r, winterWorkday(r.plannedDate, season)));
   const sortSites = winterSiteSort(db);
+  // Only cottages already given a day are moved (a sign-up not placed yet
+  // just shows on the day it asked for).
+  const movable = (r) => r.plannedDate && !r.keepOnDay;
   let day = target;
   for (let guard = 0; guard < 400; guard++) {
-    // Kept first: the unfinished ones, then anyone who asked for this day.
-    const rank = (r) => late.includes(r) ? 0 : r.requestedDate === day ? 1 : 2;
+    // Kept first: the unfinished ones, then ones that can't move or asked for this day.
+    const rank = (r) => late.includes(r) ? 0 : !movable(r) || r.requestedDate === day ? 1 : 2;
     const onDay = open.filter((r) => dateOf.get(r) === day).sort((a, b) => rank(a) - rank(b) || sortSites(a, b));
-    if (onDay.length <= season.limit) {
-      if (!open.some((r) => dateOf.get(r) > day)) break;
-    } else {
-      onDay.slice(season.limit).forEach((r) => dateOf.set(r, winterNextWorkday(day, season)));
+    if (onDay.length > season.limit) {
+      onDay.slice(season.limit).filter(movable).forEach((r) => dateOf.set(r, winterNextWorkday(day, season)));
     }
+    if (!open.some((r) => dateOf.get(r) > day)) break;
     day = winterNextWorkday(day, season);
   }
-  return open.filter((r) => dateOf.get(r) !== winterPlannedDate(r)).map((r) => ({ request: r, date: dateOf.get(r) }));
+  return open.filter((r) => dateOf.get(r) !== winterPlannedDate(r)).map((r) => ({ request: r, date: dateOf.get(r), why: late.includes(r) ? "late" : offDay.includes(r) && dateOf.get(r) === winterWorkday(r.plannedDate, season) ? "offDay" : "full" }));
 }
 function winterStatus(r, today) {
   const planned = winterPlannedDate(r);
@@ -14852,7 +14858,7 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
         "div",
         null,
         label(request.completed ? "Winterized" : "Planned for"),
-        request.completed ? React.createElement("div", { className: "text-[#28633C] font-medium" }, winterShortDate(request.completedDate, { weekday: "long", month: "long", day: "numeric" })) : React.createElement("input", { type: "date", value: info.planned || "", disabled: readOnly, onChange: (e) => onSchedule(request.id, e.target.value), className: inputCls + " w-48", "aria-label": "Planned for" }),
+        request.completed ? React.createElement("div", { className: "text-[#28633C] font-medium" }, winterShortDate(request.completedDate, { weekday: "long", month: "long", day: "numeric" })) : React.createElement("input", { type: "date", value: info.planned || "", disabled: readOnly, onChange: (e) => (!e.target.value || /^20\d\d-/.test(e.target.value)) && onSchedule(request.id, e.target.value), className: inputCls + " w-48", "aria-label": "Planned for" }),
         request.requestedDate && React.createElement("div", { className: "text-xs text-[#75716A] mt-1" }, `Customer asked for ${winterShortDate(request.requestedDate, { weekday: "short", month: "short", day: "numeric" })}`)
       ),
       React.createElement("div", null, label("Owner"), info.customer ? React.createElement(React.Fragment, null, React.createElement("div", { className: "font-medium" }, info.customer.name), React.createElement("div", { className: "text-[#4B4740]" }, [info.customer.email, info.customer.phone].filter(Boolean).join(" · ") || React.createElement("span", { className: "text-[#a8532a]" }, "No email or phone on file"))) : React.createElement("div", { className: "text-[#9A968D]" }, "No owner linked to this sign-up")),
@@ -14904,10 +14910,11 @@ function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinter
   };
   const applyWinterPlan = (changes, logText) => {
     if (!changes.length) return;
-    changes.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date }));
+    changes.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, keepOnDay: false }));
     persist({ ...db, activityLog: addLog(db, actor, logText) });
   };
-  // Not finished on its day: moved on to the next workday by itself.
+  // Not finished on its day: moved on to the next workday by itself. Same
+  // for a cottage on a weekend or blocked day, or over the day's limit.
   const carriedFor = useRef("");
   useEffect(() => {
     if (readOnly || !requests.length) return;
@@ -14916,9 +14923,21 @@ function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinter
     carriedFor.current = today;
     const changes = carryOverWinter(requests, db, today);
     if (!changes.length) return;
-    const lateCount = changes.filter((c) => c.request.plannedDate < today).length;
-    applyWinterPlan(changes, `Moved ${lateCount} unfinished winterizing cottage${lateCount === 1 ? "" : "s"} to ${changes[0] && changes.find((c) => c.request.plannedDate < today).date}`);
-    setCarryNotice(`${lateCount} cottage${lateCount === 1 ? " wasn't" : "s weren't"} finished on ${lateCount === 1 ? "its" : "their"} day and moved to ${winterShortDate(changes.find((c) => c.request.plannedDate < today).date, { weekday: "short", month: "short", day: "numeric" })}${changes.length > lateCount ? `; ${changes.length - lateCount} more moved on a day to stay within ${winterSeason(db).limit} a day` : ""}.`);
+    const late = changes.filter((c) => c.why === "late"), off = changes.filter((c) => c.why === "offDay"), full = changes.filter((c) => c.why === "full");
+    const s = (n) => n === 1 ? "" : "s";
+    const limit = winterSeason(db).limit;
+    const logParts = [
+      late.length ? `moved ${late.length} unfinished winterizing cottage${s(late.length)} to ${late[0].date}` : "",
+      off.length ? `moved ${off.length} off a weekend or blocked day (${off.map((c) => `${cottageName(c.request.cottageId)} \u2192 ${c.date}`).join(", ")})` : "",
+      full.length ? `moved ${full.length} on a day to stay within ${limit} a day` : ""
+    ].filter(Boolean);
+    applyWinterPlan(changes, `Winterizing plan: ${logParts.join("; ")}`);
+    const day = (iso) => winterShortDate(iso, { weekday: "short", month: "short", day: "numeric" });
+    setCarryNotice([
+      late.length ? `${late.length} cottage${late.length === 1 ? " wasn't" : "s weren't"} finished on ${late.length === 1 ? "its" : "their"} day and moved to ${day(late[0].date)}.` : "",
+      off.length ? `${off.length} cottage${off.length === 1 ? " was" : "s were"} on a weekend or blocked day and moved to the next workday.` : "",
+      full.length ? `${full.length} ${late.length || off.length ? "more " : ""}moved on a day to stay within ${limit} a day.` : ""
+    ].filter(Boolean).join(" "));
   }, [requests.length, readOnly]);
   // New sign-ups onto the schedule (when that's on), marked New.
   useEffect(() => {
@@ -15103,10 +15122,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     saveWinterizingRequest({ ...request, anodeRodReplacedAt: replacedAt });
   };
   // Plan a cottage for a day (or "" to take it off the schedule).
-  const schedule = (id, date) => {
+  // keep: put on a full or blocked day on purpose, so the daily tidy-up leaves it.
+  const schedule = (id, date, keep) => {
     const request = requests.find((r) => r.id === id);
-    if (!request || request.completed || winterPlannedDate(request) === (date || "")) return;
-    saveWinterizingRequest({ ...request, plannedDate: date || "", movedOnPlan: null });
+    if (!request || request.completed || winterPlannedDate(request) === (date || "") && !!request.keepOnDay === !!keep) return;
+    saveWinterizingRequest({ ...request, plannedDate: date || "", movedOnPlan: null, keepOnDay: !!keep });
     persist({ ...db, activityLog: addLog(db, actor, date ? `Planned winterizing for ${cottageName(request.cottageId)} on ${date}` : `Took winterizing for ${cottageName(request.cottageId)} off the schedule`) });
   };
   // Several cottages planned at once (auto-plan, a rain day, carry-over).
@@ -15127,10 +15147,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     if (!date) return schedule(id, date);
     const season = winterSeason(db);
     const count = requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length;
-    if (count < season.limit && season.blocked[date] == null) return schedule(id, date);
+    const weekend = !winterIsWeekday(date);
+    if (!weekend && count < season.limit && season.blocked[date] == null) return schedule(id, date);
     let next = winterNextWorkday(date, season);
     while (requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === next).length >= season.limit) next = winterNextWorkday(next, season);
-    setFullDrop({ id, date, next, blocked: season.blocked[date] });
+    setFullDrop({ id, date, next, blocked: season.blocked[date], weekend });
   };
   const [carryNotice, setCarryNotice] = useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinterizingRequest });
   const newOnPlan = requests.filter((r) => (r.newOnPlan || r.movedOnPlan) && !r.completed);
@@ -15474,10 +15495,10 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       applyWinterPlan(rainChanges, `Rain day: pushed winterizing from ${rainDay} back a day (${rainChanges.length} cottages)`);
       setRainDay(null);
     }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Push back a day")));
-  const fullDropEl = !readOnly && fullDrop && React.createElement(Modal, { title: fullDrop.blocked != null ? "That day is blocked" : "That day is full", onClose: () => setFullDrop(null) },
-    React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, fullDrop.blocked != null ? `${dayLabel(fullDrop.date)} is blocked${fullDrop.blocked ? ` for ${fullDrop.blocked}` : ""}. Put it on ${dayLabel(fullDrop.next)} instead?` : `${dayLabel(fullDrop.date)} already has ${winterSeason(db).limit}. Put it on ${dayLabel(fullDrop.next)} (the next day with room) instead?`),
-    React.createElement("div", { className: "flex justify-end gap-2 flex-wrap" }, React.createElement("button", { type: "button", onClick: () => setFullDrop(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), React.createElement("button", { type: "button", onClick: () => {
-      schedule(fullDrop.id, fullDrop.date);
+  const fullDropEl = !readOnly && fullDrop && React.createElement(Modal, { title: fullDrop.weekend ? "That's a weekend" : fullDrop.blocked != null ? "That day is blocked" : "That day is full", onClose: () => setFullDrop(null) },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, fullDrop.weekend ? `Winterizing is Monday to Friday. Put it on ${dayLabel(fullDrop.next)} instead?` : fullDrop.blocked != null ? `${dayLabel(fullDrop.date)} is blocked${fullDrop.blocked ? ` for ${fullDrop.blocked}` : ""}. Put it on ${dayLabel(fullDrop.next)} instead?` : `${dayLabel(fullDrop.date)} already has ${winterSeason(db).limit}. Put it on ${dayLabel(fullDrop.next)} (the next day with room) instead?`),
+    React.createElement("div", { className: "flex justify-end gap-2 flex-wrap" }, React.createElement("button", { type: "button", onClick: () => setFullDrop(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), !fullDrop.weekend && React.createElement("button", { type: "button", onClick: () => {
+      schedule(fullDrop.id, fullDrop.date, true);
       setFullDrop(null);
     }, className: "px-4 py-2 text-sm text-[#377249] border border-[#377249]/30 rounded-md hover:bg-[#377249]/10" }, `Put it on ${dayLabel(fullDrop.date)} anyway`), React.createElement("button", { type: "button", onClick: () => {
       schedule(fullDrop.id, fullDrop.next);
@@ -20626,14 +20647,17 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
   const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
   // Moved from the panel's date box; a full or blocked day is still allowed
   // (the crew may know better) but says so.
-  const schedule = (id, date) => {
+  const schedule = (id, picked) => {
     const request = requests.find((r) => r.id === id);
+    // Monday to Friday only: a weekend goes on the Monday.
+    const date = picked && !winterIsWeekday(picked) ? winterNextWorkday(picked, { blocked: {} }) : picked;
     if (!request || request.completed || winterPlannedDate(request) === (date || "")) return;
-    saveWinterizingRequest({ ...request, plannedDate: date || "", newOnPlan: false });
+    const count = date ? requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length + 1 : 0;
+    // Over the limit or on a blocked day from here is on purpose: the daily tidy-up leaves it.
+    saveWinterizingRequest({ ...request, plannedDate: date || "", newOnPlan: false, keepOnDay: !!date && (count > season.limit || season.blocked[date] != null) });
     persist({ ...db, activityLog: addLog(db, actor, date ? `Planned winterizing for ${cottageName(request.cottageId)} on ${date}` : `Took winterizing for ${cottageName(request.cottageId)} off the schedule`) });
     if (!date) return setToast("Taken off the schedule");
-    const count = requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length + 1;
-    setToast(season.blocked[date] != null ? `Moved to ${dayLabel(date)} \u2014 that day is blocked` : count > season.limit ? `Moved to ${dayLabel(date)} \u2014 now ${count}, over ${season.limit}` : `Moved to ${dayLabel(date)}`);
+    setToast(date !== picked ? `Weekends are off \u2014 moved to ${dayLabel(date)}` : season.blocked[date] != null ? `Moved to ${dayLabel(date)} \u2014 that day is blocked` : count > season.limit ? `Moved to ${dayLabel(date)} \u2014 now ${count}, over ${season.limit}` : `Moved to ${dayLabel(date)}`);
   };
   const todo = requests.filter((r) => !r.completed);
   const hasWork = (d) => todo.some((r) => winterPlannedDate(r) === d) || requests.some((r) => r.completed && r.completedDate === d);

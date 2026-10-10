@@ -123,6 +123,11 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Auto-plan honours a customer's requested date when there's room; a rain
   day pushes that day and after back a workday; cottages not finished on
   their day move to the next workday on their own (`carryOverWinter`).
+  The same daily pass moves a cottage on a weekend or blocked day to the
+  next workday, and a day's extras over the limit on a day - except ones
+  put there on purpose ("Put it on … anyway", or moved there from a phone,
+  `keepOnDay`). Weekends can't be picked: the computer offers the next
+  workday (no "anyway"), the phone puts it on the Monday.
 - Once auto-plan has run (`winterAutoPlaceNew`), new sign-ups go on a day
   by themselves, flagged `newOnPlan` ("New" tag + note) until someone sees
   them - so nothing slips by unnoticed.
