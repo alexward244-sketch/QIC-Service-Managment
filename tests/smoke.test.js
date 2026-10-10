@@ -964,7 +964,7 @@ test("correspondence: every message in a customer's conversation can be deleted 
   await page.close();
 });
 
-test("trash: a deleted email can be read before restoring, and says where it was deleted", async () => {
+test("trash: deleted emails have their own tab; one can be read before restoring, and says where it was deleted", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => {
     window.__restored = [];
@@ -975,7 +975,14 @@ test("trash: a deleted email can be read before restoring, and says where it was
     ] };
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(TrashModal, { db, persist() {}, saveCorrespondence: (c) => window.__restored.push(c), onClose() {} }));
   });
+  // The main Trash opens on everything but emails.
+  await page.getByText("Site 0001").waitFor();
+  assert.equal(await page.getByText("Deleted in Zoho").count(), 0, "emails aren't mixed in");
+  assert.equal(await page.locator("[data-trash-tab=emails]").innerText(), "Emails (1)");
+  assert.equal(await page.locator("[data-trash-tab=other]").innerText(), "Everything else (1)");
+  await page.locator("[data-trash-tab=emails]").click();
   await page.getByText("Deleted in Zoho").waitFor();
+  assert.equal(await page.getByText("Site 0001").count(), 0);
   assert.equal(await page.getByRole("button", { name: "View" }).count(), 1, "only emails have View");
   await page.getByRole("button", { name: "View" }).click();
   const shown = await page.locator("[data-trash-email]").innerText();
@@ -983,6 +990,42 @@ test("trash: a deleted email can be read before restoring, and says where it was
   assert.match(shown, /The tap leaks\.\s+Thanks, Anne/);
   await page.getByRole("button", { name: "Restore" }).first().click();
   assert.deepEqual(await page.evaluate(() => window.__restored.map((c) => c.id)), ["e1"]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("correspondence: Deleted emails opens the Trash on its Emails tab", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__opened = 0;
+    const db = { customers: [], correspondence: [], activityLog: [], trash: [
+      { id: "t1", type: "correspondence", data: { id: "e1" }, label: "Email \u2014 Leak", deletedAt: "2026-10-05T12:00:00Z" },
+      { id: "t2", type: "site", data: { id: "s1" }, label: "Site 0001", deletedAt: "2026-10-04T12:00:00Z" }
+    ] };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const view = (props) => React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {}, ...props });
+    const App = () => {
+      const [open, setOpen] = React.useState(false);
+      return React.createElement(React.Fragment, null, view({ onOpenEmailTrash: () => setOpen("emails") }), open && React.createElement(TrashModal, { db, persist() {}, initialTab: open, onClose: () => setOpen(false) }));
+    };
+    root.render(React.createElement(App));
+  });
+  await page.locator("[data-email-trash]").click();
+  await page.getByText("Email \u2014 Leak").waitFor();
+  assert.equal(await page.locator("[data-email-trash]").innerText(), "Deleted emails (1)");
+  assert.equal(await page.getByText("Site 0001").count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("correspondence: no Deleted emails button for people who can't open Trash", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { customers: [], correspondence: [], activityLog: [], trash: [] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+  });
+  await page.getByText("Canned Replies").waitFor();
+  assert.equal(await page.locator("[data-email-trash]").count(), 0);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
