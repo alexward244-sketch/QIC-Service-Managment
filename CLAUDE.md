@@ -168,6 +168,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the
   computer screen.
+- Section maps: the Plan board's "Map" on a day prints each section's map
+  (`maps/*.jpg`, `WINTER_MAPS` pins) with that day's cottages circled by how
+  they're winterized - blue B bypass, orange I inside, green D drain tap,
+  split ring for two, grey ? no how-to - plus the list. "Section map" prints
+  a whole section (Pebble Beach / By the Woods days). Cut from the park's
+  vector map PDF with `tools/winter-maps/` (see its README). Pins match
+  site numbers without leading zeros (`winterMapKey`).
 - How to winterize each cottage comes from Alex's master list, kept on the
   site as `winterHowTo { code, note, masterKey }` (Winterizing → "How-to
   list…" imports the Excel; edit one on the checklist). Codes: BP = bypass,

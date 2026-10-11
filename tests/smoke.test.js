@@ -622,6 +622,63 @@ test("winterizing: Add park cottages puts the rentals on the list, marked Park, 
   await page.close();
 });
 
+test("winterizing maps: each site is found on its section map; colours come from the how-to; a day prints one page per map with its cottages circled", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const pin = (n) => { const p = winterMapPin({ number: n }); return p ? p.map.key : null; };
+    const sites = [
+      { id: "s1", number: "0126", section: "Front of Park", winterHowTo: { code: "BP" } },
+      { id: "s2", number: "0412A", section: "4 Season", winterHowTo: { code: "IN KT W DT" } },
+      { id: "s3", number: "0490", section: "Limestone South" },
+      { id: "s4", number: "1009", section: "Pebble Beach" },
+      { id: "s5", number: "000A", section: "Front of Park", winterHowTo: { code: "DT" } },
+      { id: "s6", number: "9999", section: "Somewhere" }
+    ];
+    const cottages = sites.map((x, i) => ({ id: "k" + i, name: "Cottage " + x.number, siteId: x.id }));
+    const db = { sites, cottages, customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }], settings: {} };
+    const reqs = [{ id: "r1", cottageId: "k0", customerId: "c1", options: { keyAtReception: true }, notes: "Dog in yard" }, { id: "r2", cottageId: "k1", parkOwned: "rental", options: {} }, { id: "r3", cottageId: "k2", options: {} }, { id: "r6", cottageId: "k5", options: {} }];
+    const html = buildWinterMapPages(winterMapEntriesForDay(reqs, db), db, "Tuesday, October 14");
+    const box = document.createElement("div"); box.innerHTML = html;
+    return {
+      pins: ["0126", "0412A", "0490", "1009", "000A", "K1", "0023A", "9999"].map(pin),
+      kinds: [sites[0], sites[1], sites[2]].map((x) => winterMapKinds(x).map((k) => k.letter).join("")),
+      pages: [...box.querySelectorAll(".wmap")].map((p) => [p.querySelector(".meta").textContent, p.querySelectorAll("svg text").length, [...p.querySelectorAll(".wmap-list tr")].length - 1]),
+      firstRow: box.querySelector(".wmap .wmap-list tr:nth-child(2)").textContent,
+      parkRow: [...box.querySelectorAll(".wmap-list tr")].map((r) => r.textContent).find((t) => /0412A/.test(t)),
+      offMap: [...box.querySelectorAll(".wo")].pop().textContent
+    };
+  });
+  assert.deepEqual(out.pins, ["front-of-park", "four-season", "limestone-south", "pebble-beach-west", "front-of-park", "front-of-park", "front-of-park", null]);
+  assert.deepEqual(out.kinds, ["B", "ID", ""]);
+  // Front of Park, 4 Season, Limestone South: one page each, one badge per cottage; 9999 isn't on a map.
+  assert.deepEqual(out.pages, [["Front of Park1 cottage", 1, 1], ["4 Season1 cottage", 1, 1], ["Limestone South1 cottage", 1, 1]]);
+  assert.match(out.firstRow, /0126.*Cottage 0126.*Bo Day.*Bypass.*Key left with reception.*Dog in yard/);
+  assert.match(out.parkRow, /Park · rental cottage/);
+  assert.match(out.offMap, /Not on a map.*9999/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing plan board: a day's Map button and the Section map picker print maps", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.evaluate(() => { window.__printed = []; window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } }); });
+  await page.getByRole("tab", { name: "Plan" }).click();
+  const today = await page.evaluate(() => todayISO());
+  await page.locator(`[data-plan-column="${today}"] [data-day-map]`).click();
+  const day = await page.evaluate(() => window.__printed.pop());
+  assert.match(day, /class="wo wmap"/);
+  assert.match(day, /<svg viewBox=/);
+  await page.locator("[data-section-map]").selectOption("front-of-park");
+  const section = await page.evaluate(() => window.__printed.pop());
+  assert.match(section, /Front of Park — how each site is winterized/);
+  assert.match(section, /5 cottages/, "sites 126, 233, 107, 301 and 302 are all on the Front of Park map");
+  await page.locator("[data-section-map]").selectOption("pebble-beach-west");
+  assert.match(await page.evaluate(() => window.__printed.pop()), /None of these sites are set up in the app yet/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
