@@ -756,7 +756,7 @@ test("winterized email: a friendly date, and the extras said as done (anode rod 
   assert.match(out.replaced, /Thursday, October 15, 2026 · Site 0126/);
   assert.match(out.replaced, /winterizing for your cottage on Site 0126 has been completed/);
   assert.doesNotMatch(out.replaced, /Willow/, "the site, not the cottage's name");
-  assert.match(out.replaced, /reach out\.\s*Wishing you a great winter — we'll see you in the spring!\s*— Quinte's Isle Campark/);
+  assert.match(out.replaced, /reach out\.\s*Wishing you a great winter — we'll see you in the spring!\s*— Quinte's Isle Campark Service Department/);
   assert.equal(out.subject, "Your Cottage Has Been Winterized — Site 0126");
   assert.match(out.replaced, /Dishwasher drained\s*Outside tap \/ shower drained\s*Anode rod replaced/);
   assert.doesNotMatch(out.replaced, /Replace the anode rod|Key left with reception|2026-10-15/);
