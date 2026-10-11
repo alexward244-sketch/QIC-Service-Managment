@@ -8854,6 +8854,12 @@ function buildQuoteEmailText(quote, db, taxRate) {
     </div>
   </div>`;
 }
+// "Your Cottage Has Been Winterized — Site 0126" (the site, not the cottage's name).
+function winterizedEmailSubject(request, db) {
+  const cottage = db.cottages.find((c) => c.id === request.cottageId);
+  const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
+  return `Your Cottage Has Been Winterized${site ? ` \u2014 Site ${site.number}` : ""}`;
+}
 function buildWinterizingEmailText(request, db) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
   const site = cottage ? db.sites.find((s) => s.id === cottage.siteId) : null;
@@ -8884,15 +8890,16 @@ function buildWinterizingEmailText(request, db) {
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;">Your Cottage Has Been Winterized</h1>
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
-        ${escapeHtml(winterShortDate(request.completedDate || todayISO(), { weekday: "long", month: "long", day: "numeric", year: "numeric" }))}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}
+        ${escapeHtml(winterShortDate(request.completedDate || todayISO(), { weekday: "long", month: "long", day: "numeric", year: "numeric" }))}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}
       </p>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
       <p style="font-size:14px;color:#4B4740;margin:0 0 16px;line-height:1.6;">
-        Good news \u2014 winterizing for your cottage${cottage ? ` <strong>${escapeHtml(cottage.name)}</strong>` : ""} has been completed. Your water lines, plumbing, and systems have been prepared for the off-season.
+        Good news \u2014 winterizing for your cottage${site ? ` on <strong>Site ${escapeHtml(site.number)}</strong>` : ""} has been completed. Your water lines, plumbing, and systems have been prepared for the off-season.
       </p>
       ${servicedList}
       <p style="font-size:13px;color:#75716A;margin:0;">If you have any questions, please don't hesitate to reach out.</p>
+      <p style="font-size:14px;color:#4B4740;margin:14px 0 0;line-height:1.6;">Wishing you a great winter \u2014 we'll see you in the spring!</p>
       <p style="font-size:13px;color:#4B4740;margin:6px 0 0;font-style:italic;">&mdash; ${escapeHtml(company.name)}</p>
     </div>
   </div>`;
@@ -15265,7 +15272,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     sendEmail({
       toEmail: customer.email,
       toName: customer.name,
-      subject: `Your Cottage Has Been Winterized \u2014 ${cottageName(request.cottageId)}`,
+      subject: winterizedEmailSubject(request, db),
       message: buildWinterizingEmailText(request, db),
       department: "service",
       source: "Winterizing completion email"
@@ -15291,7 +15298,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       setBatchEmail({ done: i, total: list.length });
       setEmailStatus((s) => ({ ...s, [request.id]: "sending" }));
       try {
-        await sendEmail({ toEmail: customer.email, toName: customer.name, subject: `Your Cottage Has Been Winterized \u2014 ${cottageName(request.cottageId)}`, message: buildWinterizingEmailText(request, db), department: "service", source: "Winterizing completion email" });
+        await sendEmail({ toEmail: customer.email, toName: customer.name, subject: winterizedEmailSubject(request, db), message: buildWinterizingEmailText(request, db), department: "service", source: "Winterizing completion email" });
         saveWinterizingRequest({ ...request, completionEmailedAt: (/* @__PURE__ */ new Date()).toISOString() });
         setEmailStatus((s) => ({ ...s, [request.id]: "sent" }));
         sent += 1;

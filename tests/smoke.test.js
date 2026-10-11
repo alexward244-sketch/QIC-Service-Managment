@@ -751,9 +751,13 @@ test("winterized email: a friendly date, and the extras said as done (anode rod 
     const db = { settings: {}, sites: [{ id: "s1", number: "0126" }], cottages: [{ id: "k1", name: "Willow", siteId: "s1" }], customers: [] };
     const req = { id: "r1", cottageId: "k1", completedDate: "2026-10-15", options: { dishwasher: true, outsideTap: true, anodeRod: true, keyAtReception: true } };
     const text = (h) => { const d = document.createElement("div"); d.innerHTML = h; return d.textContent.replace(/\s+/g, " "); };
-    return { replaced: text(buildWinterizingEmailText({ ...req, anodeRodReplacedAt: "2026-10-15T15:00:00Z" }, db)), notYet: text(buildWinterizingEmailText(req, db)) };
+    return { replaced: text(buildWinterizingEmailText({ ...req, anodeRodReplacedAt: "2026-10-15T15:00:00Z" }, db)), notYet: text(buildWinterizingEmailText(req, db)), subject: winterizedEmailSubject(req, db) };
   });
-  assert.match(out.replaced, /Thursday, October 15, 2026 · Willow · Site 0126/);
+  assert.match(out.replaced, /Thursday, October 15, 2026 · Site 0126/);
+  assert.match(out.replaced, /winterizing for your cottage on Site 0126 has been completed/);
+  assert.doesNotMatch(out.replaced, /Willow/, "the site, not the cottage's name");
+  assert.match(out.replaced, /reach out\.\s*Wishing you a great winter — we'll see you in the spring!\s*— Quinte's Isle Campark/);
+  assert.equal(out.subject, "Your Cottage Has Been Winterized — Site 0126");
   assert.match(out.replaced, /Dishwasher drained\s*Outside tap \/ shower drained\s*Anode rod replaced/);
   assert.doesNotMatch(out.replaced, /Replace the anode rod|Key left with reception|2026-10-15/);
   assert.doesNotMatch(out.notYet, /Anode rod/, "not listed until it's actually replaced");
