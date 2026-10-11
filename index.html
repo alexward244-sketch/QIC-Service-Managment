@@ -13385,7 +13385,14 @@ function PropaneRequestForm({ initial, db, onSave, onCancel }) {
   const [notes, setNotes] = useState((initial == null ? void 0 : initial.notes) || "");
   const [payment, setPayment] = useState((initial == null ? void 0 : initial.payment) || "");
   const [paymentMethod, setPaymentMethod] = useState((initial == null ? void 0 : initial.paymentMethod) || "");
-  const [partsUsed, setPartsUsed] = useState((initial == null ? void 0 : initial.partsUsed) || []);
+  // A new request starts with one 100lb refill, like a web sign-up (the usual
+  // order) - change the count or size before saving; an edit keeps its own.
+  const [partsUsed, setPartsUsed] = useState(() => {
+    if (initial && initial.partsUsed) return initial.partsUsed;
+    if (initial && initial.id) return [];
+    const refill = findTankPart(db.parts, "100lb Propane Refill Filled");
+    return refill ? [{ partId: refill.id, quantity: 1, name: refill.name }] : [];
+  });
   const tankParts = tankPartsFor(db);
   const tankQuantity = (partId) => { var _a; return ((_a = partsUsed.find((pu) => pu.partId === partId)) == null ? void 0 : _a.quantity) || 0; };
   const setTankQuantity = (partId, qty) => {

@@ -820,10 +820,11 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
   await page.getByRole("tab", { name: "Plan" }).click();
   const today = await page.evaluate(() => todayISO());
   const inTwo = await page.evaluate(() => winterAddDays(todayISO(), 2));
-  const inOne = await page.evaluate(() => winterAddDays(todayISO(), 1));
+  // The next open workday (not a weekend or closed day like Thanksgiving).
+  const inOne = await page.evaluate(() => winterNextWorkday(todayISO(), winterSeason({ settings: {} })));
   // Cedar is planned for its requested day; Willow for today.
   await page.locator(`[data-plan-column="${today}"] [data-plan-card="r1"]`).waitFor();
-  // Drag Willow to tomorrow (a weekday or not, a dropped-on day shows).
+  // Drag Willow to the next workday (when the board shows it).
   const target = page.locator(`[data-plan-column="${inOne}"]`);
   if (await target.count()) {
     await page.locator('[data-plan-card="r1"]').dragTo(target);
@@ -1617,6 +1618,28 @@ test("editing a record keeps the fields its form doesn't show (plan dates, extra
     assert.ok(saved, `${c.form} saved`);
     for (const k of c.kept) assert.deepEqual(saved[k], c.initial[k], `${c.form} keeps ${k}`);
   }
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("propane: a new request (e.g. from an email in Correspondence) starts with one 100lb refill; an edit keeps its own tanks", async () => {
+  const page = await openApp(browser, "stub");
+  const db = { sites: [{ id: "a", number: "1051" }], cottages: [{ id: "k1", name: "Loon", siteId: "a" }], customers: [{ id: "c1", name: "Rob", siteIds: ["a"] }], settings: {},
+    parts: [{ id: "new100", name: "100lb Propane Tank (New)" }, { id: "fill100", name: "100lb Propane Refill Filled" }, { id: "fill20", name: "20lb Propane Tank Filled" }] };
+  const run = async (initial) => {
+    await page.evaluate(({ db, initial }) => {
+      window.__saved = null;
+      document.getElementById("root").innerHTML = "";
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(QuickPropaneRequestModal, { db, initial, savePropaneRequest: (x) => { window.__saved = x; }, onClose() {} }));
+    }, { db, initial });
+    await page.getByRole("button", { name: /Save Request|Create Request|Add Request/ }).click();
+    return page.evaluate(() => window.__saved);
+  };
+  // As Correspondence opens it: customer and cottage filled in, the email as the note.
+  const fromEmail = await run({ cottageId: "k1", customerId: "c1", notes: "Please fill my 100lb tank" });
+  assert.deepEqual(fromEmail.partsUsed, [{ partId: "fill100", quantity: 1, name: "100lb Propane Refill Filled" }]);
+  const edited = await run({ id: "p1", cottageId: "k1", customerId: "c1", requestedDate: "2026-10-20", run: "Tuesday", partsUsed: [{ partId: "fill20", quantity: 2, name: "20lb Propane Tank Filled" }] });
+  assert.deepEqual(edited.partsUsed, [{ partId: "fill20", quantity: 2, name: "20lb Propane Tank Filled" }]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
