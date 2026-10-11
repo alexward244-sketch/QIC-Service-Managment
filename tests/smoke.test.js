@@ -472,7 +472,7 @@ async function openWinterizing(page) {
     const add = (n) => winterAddDays(today, n);
     let db = {
       settings: { winterizingSeasonStart: "01-01" }, activityLog: [], parts: [], trash: [], staff: [], workOrderTemplates: [], quotes: [], invoices: [], correspondence: [],
-      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s4", number: "301", section: "Rentals", siteType: "Rental Cottage" }],
+      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s4", number: "301", section: "Rentals", siteType: "Rental Cottage" }, { id: "s5", number: "302", section: "Rentals", siteType: "Rental Cottage" }],
       cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }, { id: "k4", name: "Lakeview Rental", siteId: "s4" }],
       customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", phone: "613-555-0177", siteIds: ["s1"] }, { id: "c2", name: "Gary C", email: "gary@x.com", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", email: "anne@x.com", siteIds: ["s3"] }],
       workOrders: [{ id: "w1", workOrderNumber: "WO-0388", title: "Deck boards", siteId: "s1", date: "2026-08-12", status: "Completed", partsUsed: [], notes: [] }],
@@ -486,7 +486,7 @@ async function openWinterizing(page) {
     const root = ReactDOM.createRoot(document.getElementById("root"));
     window.__addRequest = (r) => { db = { ...db, winterizingRequests: [...db.winterizingRequests, r] }; render(); };
     const putSites = (list) => { db = { ...db, sites: db.sites.map((x) => list.find((y) => y.id === x.id) || x) }; render(); };
-    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests, sites: db.sites }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), saveSite: (x) => putSites([x]), bulkWriteSites: async (list) => { putSites(list); return true; }, readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
+    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests, sites: db.sites }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), saveSite: (x) => putSites([x]), bulkWriteSites: async (list) => { putSites(list); return true; }, saveCottage: (c) => { db = { ...db, cottages: [...db.cottages, c] }; render(); }, readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
     render();
   });
 }
@@ -601,12 +601,18 @@ test("winterizing park cottages: rentals and unsold inventory are found; they go
   await page.close();
 });
 
-test("winterizing: Add park cottages puts the rentals on the list, marked Park, with no customer", async () => {
+test("winterizing: Add park cottages puts the rentals on the list, marked Park, with no customer; a rental site with no cottage record gets one", async () => {
   const page = await openApp(browser, "stub");
   await openWinterizing(page);
   await page.locator("[data-park-add]").click();
   await page.locator("[data-park-list]").getByText("Site 301 \u00B7 Lakeview Rental").waitFor();
-  await page.getByRole("button", { name: "Add 1" }).click();
+  // Site 302 has no cottage record yet: create one, and it joins the list.
+  await page.locator("[data-park-rental-missing]").getByText("1 rental site doesn't have a cottage record yet (site 302)", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Create 1 cottage record" }).click();
+  await page.locator("[data-park-list]").getByText("Site 302 \u00B7 Rental cottage 302").waitFor();
+  assert.equal(await page.locator("[data-park-rental-missing]").count(), 0);
+  await page.getByRole("button", { name: "Add 2" }).click();
+  assert.equal(await page.evaluate(() => window.__saved.filter((r) => r.parkOwned === "rental").length), 2);
   const saved = await page.evaluate(() => window.__saved.filter((r) => r.cottageId === "k4"));
   assert.equal(saved.length, 1);
   assert.equal(saved[0].parkOwned, "rental");
