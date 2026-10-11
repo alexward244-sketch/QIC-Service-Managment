@@ -175,6 +175,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   a whole section (Pebble Beach / By the Woods days). Cut from the park's
   vector map PDF with `tools/winter-maps/` (see its README). Pins match
   site numbers without leading zeros (`winterMapKey`).
+- Admin > Settings > Files > Storage (`StoragePane`) keeps files for any
+  use: the park's large map PDF (`maps/park-map.pdf`) and the section maps
+  (open / print / download). Add future files there.
 - How to winterize each cottage comes from Alex's master list, kept on the
   site as `winterHowTo { code, note, masterKey }` (Winterizing → "How-to
   list…" imports the Excel; edit one on the checklist). Codes: BP = bypass,

@@ -679,6 +679,20 @@ test("winterizing plan board: a day's Map button and the Section map picker prin
   await page.close();
 });
 
+test("Admin Storage keeps the park map PDF and every section map, each with open / print / download", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => { window.__printed = []; window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } }); ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(StoragePane)); });
+  await page.locator("[data-storage]").waitFor();
+  const files = await page.locator("[data-storage-file]").evaluateAll((els) => els.map((e) => [e.getAttribute("data-storage-file"), [...e.querySelectorAll("a[download]")].map((a) => a.getAttribute("href")).join()]));
+  assert.deepEqual(files, [["park-map", "maps/park-map.pdf"], ["front-of-park", "maps/front-of-park.jpg"], ["four-season", "maps/four-season.jpg"], ["limestone-south", "maps/limestone-south.jpg"], ["pebble-beach-east", "maps/pebble-beach-east.jpg"], ["pebble-beach-west", "maps/pebble-beach-west.jpg"]]);
+  // Every file it points at is in the repo.
+  for (const [, href] of files) assert.ok(require("fs").existsSync(require("path").join(__dirname, "..", href)), href);
+  await page.locator('[data-storage-file="limestone-south"]').getByRole("button", { name: "Print" }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Limestone South[\s\S]*maps\/limestone-south\.jpg/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {

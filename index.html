@@ -18759,8 +18759,44 @@ const ADMIN_SETTINGS_NAV = [
   { group: "Notifications", items: [
     { key: "morningsummary", label: "Morning Summary" },
     { key: "emailintake", label: "Email Intake" }
+  ] },
+  { group: "Files", items: [
+    { key: "storage", label: "Storage" }
   ] }
 ];
+// Files kept with the app for any use: the park's large map (the original
+// design PDF) and the section maps cut from it (also used to print
+// winterizing days). Add more here as they come up.
+const PARK_MAP_PDF = { name: "Park map (large, 20\u00D716)", file: "maps/park-map.pdf", note: "The original design file \u2014 prints sharp at any size." };
+function printMapImage(m) {
+  const w = window.open("", "_blank");
+  if (!w) return alert("Please allow pop-ups for this site to print.");
+  w.document.open();
+  w.document.write(buildPrintDocument(`<div class="wo"><div class="wo-head"><div><div class="label">Quinte's Isle Campark</div><h1>${m.name}</h1></div></div><img src="${new URL(m.file, location.href).href}" style="display:block;max-width:100%;max-height:8.4in;margin:0 auto"></div>`));
+  w.document.close();
+}
+function StoragePane() {
+  const link = "text-xs font-semibold text-[#377249] hover:underline";
+  return React.createElement(
+    "div",
+    { "data-storage": true },
+    React.createElement("h3", { className: "text-[15px] font-semibold text-[#1E1A13] mb-1" }, "Storage"),
+    React.createElement("p", { className: "text-xs text-[#75716A] mb-4" }, "Files kept with the app \u2014 open, print or download them any time."),
+    React.createElement("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mb-2" }, "Park maps"),
+    React.createElement("div", { className: "rounded-xl border border-[#E2DED5] bg-white p-3 mb-3 flex items-center justify-between gap-3", "data-storage-file": "park-map" },
+      React.createElement("div", null, React.createElement("div", { className: "text-sm font-semibold text-[#1E1A13]" }, PARK_MAP_PDF.name), React.createElement("div", { className: "text-xs text-[#75716A]" }, `PDF \u00B7 ${PARK_MAP_PDF.note}`)),
+      React.createElement("div", { className: "flex gap-3 flex-shrink-0" }, React.createElement("a", { href: PARK_MAP_PDF.file, target: "_blank", rel: "noopener", className: link }, "Open"), React.createElement("a", { href: PARK_MAP_PDF.file, download: "QIC park map.pdf", className: link }, "Download"))),
+    React.createElement("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" }, WINTER_MAPS.map((m) => React.createElement(
+      "div",
+      { key: m.key, className: "rounded-xl border border-[#E2DED5] bg-white overflow-hidden", "data-storage-file": m.key },
+      React.createElement("a", { href: m.file, target: "_blank", rel: "noopener", className: "block bg-[#F1EEE9]" }, React.createElement("img", { src: m.file, alt: `${m.name} map`, loading: "lazy", className: "w-full h-40 object-contain" })),
+      React.createElement("div", { className: "p-3" },
+        React.createElement("div", { className: "text-sm font-semibold text-[#1E1A13]" }, m.name),
+        React.createElement("div", { className: "text-xs text-[#75716A] mb-2" }, `Section map \u00B7 ${Object.keys(m.pins).length} sites`),
+        React.createElement("div", { className: "flex gap-3" }, React.createElement("a", { href: m.file, target: "_blank", rel: "noopener", className: link }, "Open"), React.createElement("button", { type: "button", onClick: () => printMapImage(m), className: link }, "Print"), React.createElement("a", { href: m.file, download: `QIC ${m.name}.jpg`, className: link }, "Download")))
+    )))
+  );
+}
 // Which work addresses the service inbox ignores. Mail from the park's own
 // domains is otherwise brought into Correspondence marked "From staff", and
 // forwards are always brought in. Read by serviceCorrespondence; the default
@@ -18859,6 +18895,7 @@ function AdminSettingsView({ db, persist, saveSite, bulkWriteSites }) {
   else if (pane === "invoicing") content = React.createElement(InvoicingPane, { db, persist });
   else if (pane === "morningsummary") content = React.createElement(MorningSummaryPane, { db, persist });
   else if (pane === "emailintake") content = React.createElement(EmailIntakePane, { db, persist });
+  else if (pane === "storage") content = React.createElement(StoragePane);
   else content = React.createElement(HydroBillingPane, { db, persist });
   return React.createElement(
     "div",
