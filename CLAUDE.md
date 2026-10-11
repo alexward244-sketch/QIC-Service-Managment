@@ -151,6 +151,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   placed last on the quietest day (`winterQuietDay`), move first when a day
   is over the limit, step aside to a quiet day when a customer asks for
   their full day, get no customer emails, and aren't on the keys email.
+  A rental site with no cottage record can't be winterized (requests go by
+  cottage); the window offers "Create N cottage records" ("Rental cottage
+  0301", rename later).
 - `winterKeyList` (Cloud Function, 9am weekdays) emails reserve@qicampark.com
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
