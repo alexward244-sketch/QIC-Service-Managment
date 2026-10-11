@@ -103,6 +103,7 @@ Object.defineProperty(admin, "auth", {
     getUserByEmail: async (email) => { if (!auth.users[email]) throw new Error("not found"); return auth.users[email]; },
     setCustomUserClaims: async (uid, claims) => { auth.calls.push(["claims", uid, claims]); },
     revokeRefreshTokens: async (uid) => { auth.calls.push(["revoke", uid]); },
+    updateUser: async (uid, props) => { auth.calls.push(["update", uid, props]); },
     listUsers: async () => ({ users: Object.values(auth.users) }),
     verifyIdToken: async (token) => { const u = Object.values(auth.users).find((x) => x.uid === token); if (!u) throw new Error("bad token"); return { uid: u.uid, ...(u.customClaims || {}) }; }
   })
@@ -149,7 +150,9 @@ async function callWebhook(fn, body, secret = SECRETS.WINTERIZING_WEBHOOK_SECRET
 // Calls an onCall function as a signed-in user with the given role
 // ("" = no role, null = signed out). Returns the result or { error: code }.
 async function call(fn, data, role = "office", uid = "u-test") {
-  const auth = role === null ? null : { uid, token: role ? { role } : {} };
+  // Admins have signed in with two-step unless the role is "admin-no2fa".
+  const token = role === "admin" ? { role, firebase: { sign_in_second_factor: "phone" } } : role === "admin-no2fa" ? { role: "admin" } : role ? { role } : {};
+  const auth = role === null ? null : { uid, token };
   try { return await fn({ auth, data }); } catch (e) { return { error: e.code || e.message }; }
 }
 

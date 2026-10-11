@@ -50,8 +50,13 @@ const ROLES_DOC = admin.firestore().doc("campground/data");
 
 // A staff member: signed in with a role an Admin has assigned. An account
 // that merely exists (e.g. one someone created for themselves) gets nothing.
+// An Admin must also have signed in with two-step (a texted code), as in
+// firestore.rules.
+function passedTwoStep(token) {
+  return Boolean(token && (token.role !== "admin" || (token.firebase && token.firebase.sign_in_second_factor)));
+}
 function isStaffToken(token) {
-  return Boolean(token && VALID_ROLES.includes(token.role));
+  return Boolean(token && VALID_ROLES.includes(token.role) && passedTwoStep(token));
 }
 function requireStaff(request, action) {
   if (!request.auth) throw new HttpsError("unauthenticated", `Sign in to ${action}.`);
@@ -64,6 +69,9 @@ function requireCallerIsAdmin(request) {
   const callerRole = request.auth && request.auth.token && request.auth.token.role;
   if (!request.auth || callerRole !== "admin") {
     throw new HttpsError("permission-denied", "Only an Admin can change roles.");
+  }
+  if (!passedTwoStep(request.auth.token)) {
+    throw new HttpsError("permission-denied", "Sign in again with two-step to change roles.");
   }
 }
 
@@ -151,6 +159,21 @@ exports.signOutUserEverywhere = onCall(async (request) => {
   if (!email) throw new HttpsError("invalid-argument", "Missing email.");
   const user = await admin.auth().getUserByEmail(email).catch(() => null);
   if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
+  await admin.auth().revokeRefreshTokens(user.uid);
+  return { ok: true, email };
+});
+
+// "Reset two-step" in Manage Access, for an Admin who lost or changed their
+// phone: removes the phone from their sign-in and signs them out everywhere.
+// Next time they sign in with their password, the app has them set it up
+// again with their new number.
+exports.resetTwoStep = onCall(async (request) => {
+  requireCallerIsAdmin(request);
+  const email = ((request.data && request.data.email) || "").trim().toLowerCase();
+  if (!email) throw new HttpsError("invalid-argument", "Missing email.");
+  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
+  await admin.auth().updateUser(user.uid, { multiFactor: { enrolledFactors: null } });
   await admin.auth().revokeRefreshTokens(user.uid);
   return { ok: true, email };
 });
@@ -2490,7 +2513,7 @@ exports.generateMorningSummary = onCall(
   { secrets: [ANTHROPIC_API_KEY, EMAILJS_PRIVATE_KEY], timeoutSeconds: 180 },
   async (request) => {
     const role = request.auth && request.auth.token && request.auth.token.role;
-    if (role !== "admin" && role !== "manager") {
+    if ((role !== "admin" && role !== "manager") || !passedTwoStep(request.auth.token)) {
       throw new HttpsError("permission-denied", "Only an Admin or Service Manager can refresh the morning summary.");
     }
     const summary = await buildMorningSummary({ sendEmail: !!(request.data && request.data.sendEmail) });

@@ -28,9 +28,15 @@ service cloud.firestore {
     // enough - if Firebase Auth sign-up were ever left open, anyone could
     // create an account with the app's public API key, and that account
     // must not see or change anything until an Admin assigns it a role.
+    // An Admin must also have signed in with two-step (a code texted to
+    // their phone): Firebase marks that sign-in with sign_in_second_factor.
+    // An Admin's password alone - or a session from before they set it up -
+    // gets nothing; the app walks them through it.
     function isSignedIn() {
       return request.auth != null
-        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office'];
+        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office']
+        && (request.auth.token.role != 'admin'
+          || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null);
     }
 
     // The role stamped onto this user's token by setUserRole.

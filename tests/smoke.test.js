@@ -1807,3 +1807,58 @@ test("a Save that can't save yet says what's missing", async () => {
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+// Two-step sign-in screens, with a faked Firebase user. In stub mode
+// Firebase's phone calls return stand-ins, so "sending" a code always works.
+const fakeUser = (extra) => `({ email: "boss@qicampark.com", emailVerified: true, multiFactor: { enrolledFactors: [], getSession: async () => ({}), enroll: async (a, name) => { window.__enrolled = name; } }, sendEmailVerification: async () => { window.__emailed = true; }, reload: async () => {}, ...${extra} })`;
+const showSetup = (page, extra = "{}") => page.evaluate(`ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(TwoStepSetupScreen, { user: ${fakeUser(extra)}, onSkip() {} }))`);
+
+test("an Admin sets up two-step: confirm email, then phone, then the texted code", async () => {
+  const page = await openApp(browser, "stub");
+  await showSetup(page, "{ emailVerified: false }");
+  await page.getByText("Set up two-step sign-in").waitFor();
+  await page.getByRole("button", { name: "Email me a link" }).click();
+  await page.getByText("We emailed a link to boss@qicampark.com").waitFor();
+  assert.equal(await page.evaluate(() => window.__emailed), true);
+  await page.close();
+
+  const page2 = await openApp(browser, "stub");
+  await showSetup(page2);
+  await page2.getByRole("button", { name: "Text me a code" }).click();
+  await page2.getByText("doesn't look right").waitFor();
+  await page2.getByPlaceholder("613 555 0148").fill("613 555 0148");
+  await page2.getByRole("button", { name: "Text me a code" }).click();
+  await page2.getByText("We texted a 6-digit code to 613 555 0148.").waitFor();
+  await page2.getByLabel("Code from the text").fill("123 456");
+  assert.equal(await page2.getByLabel("Code from the text").inputValue(), "123456");
+  await page2.getByRole("button", { name: "Turn on two-step" }).click();
+  await page2.getByText("Two-step is on").waitFor();
+  assert.equal(await page2.evaluate(() => window.__enrolled), "Phone");
+  assert.equal(await page2.evaluate(() => twoStepPhone("1 (613) 555-0148")), "+16135550148");
+  assert.deepEqual(page2.pageErrors, []);
+  await page2.close();
+});
+
+test("an Admin already set up but signed in without it is asked to sign in again", async () => {
+  const page = await openApp(browser, "stub");
+  await showSetup(page, `{ multiFactor: { enrolledFactors: [{ uid: "f1" }] } }`);
+  await page.getByText("Please sign in again").waitFor();
+  await page.getByRole("button", { name: "Sign in again" }).waitFor();
+  await page.close();
+});
+
+test("signing in with two-step: the texted code finishes the sign-in", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(TwoStepSignIn, {
+    resolver: { hints: [{ phoneNumber: "+1******0148" }], session: {}, resolveSignIn: async () => { window.__signedIn = true; } },
+    onCancel() {}
+  })));
+  await page.getByText("We texted a 6-digit code to +1******0148.").waitFor();
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await page.getByText("Enter the 6-digit code").waitFor();
+  await page.getByLabel("Code from the text").fill("654321");
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await page.waitForFunction(() => window.__signedIn === true);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
