@@ -123,14 +123,34 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 - Auto-plan honours a customer's requested date when there's room; a rain
   day pushes that day and after back a workday; cottages not finished on
   their day move to the next workday on their own (`carryOverWinter`).
+  The same daily pass moves a cottage on a weekend or blocked day to the
+  next workday, and a day's extras over the limit on a day - except ones
+  put there on purpose ("Put it on … anyway", or moved there from a phone,
+  `keepOnDay`). Weekends can't be picked: the computer offers the next
+  workday (no "anyway"), the phone puts it on the Monday.
 - Once auto-plan has run (`winterAutoPlaceNew`), new sign-ups go on a day
   by themselves, flagged `newOnPlan` ("New" tag + note) until someone sees
   them - so nothing slips by unnoticed.
 - A new sign-up asking for a full day still goes on it when its area has
   the most cottages that day; one from the area with the fewest moves to the
   next workday with room, flagged `movedOnPlan` ("Moved from …" + the same
-  notice) for the office. The customer isn't told. Someone who asked for
-  that day is only moved if everyone in the smaller areas asked for it.
+  notice) for the office. The customer isn't told. Only someone who didn't
+  ask for that day (or an earlier one) is moved - if everyone in the smaller areas asked for
+  it, the new sign-up goes to the next day instead.
+- When more are on a day than fit, those who asked for the earliest date
+  keep it (someone moved on from a full earlier day beats those who asked
+  for this one); a tie goes to the earliest sign-up (`winterSignedUpAt`:
+  the web form's time `submittedAt`, else `createdAt`) - in auto-plan,
+  auto-place and the daily tidy-up.
+- The park's own cottages are winterized too: "Add park cottages…" adds
+  cottages on Rental Cottage sites, owned by the "QIC Inventory" customer
+  record, on sites tagged "QIC Inventory", and on
+  the sites of unsold, delivered QIC Inventory units (`cottageOrders` type "Display Model"; only Admin /
+  Sales Manager can read those) as requests with `parkOwned`
+  ("rental"/"inventory") and no customer (`winterParkCottages`). They're
+  placed last on the quietest day (`winterQuietDay`), move first when a day
+  is over the limit, step aside to a quiet day when a customer asks for
+  their full day, get no customer emails, and aren't on the keys email.
 - `winterKeyList` (Cloud Function, 9am weekdays) emails reserve@qicampark.com
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day

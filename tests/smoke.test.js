@@ -472,8 +472,8 @@ async function openWinterizing(page) {
     const add = (n) => winterAddDays(today, n);
     let db = {
       settings: { winterizingSeasonStart: "01-01" }, activityLog: [], parts: [], trash: [], staff: [], workOrderTemplates: [], quotes: [], invoices: [], correspondence: [],
-      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }],
-      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
+      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s4", number: "301", section: "Rentals", siteType: "Rental Cottage" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }, { id: "k4", name: "Lakeview Rental", siteId: "s4" }],
       customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", phone: "613-555-0177", siteIds: ["s1"] }, { id: "c2", name: "Gary C", email: "gary@x.com", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", email: "anne@x.com", siteIds: ["s3"] }],
       workOrders: [{ id: "w1", workOrderNumber: "WO-0388", title: "Deck boards", siteId: "s1", date: "2026-08-12", status: "Completed", partsUsed: [], notes: [] }],
       winterizingRequests: [
@@ -516,7 +516,7 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   // blocked 15th to the 16th; r4 and r5 (asked for a day before the season) fill the rest in sign-up order.
   assert.deepEqual(out.plan, { r1: "2026-10-14", r2: "2026-10-14", r3: "2026-10-16", r4: "2026-10-13", r5: "2026-10-16" });
   assert.deepEqual(out.rain, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r5: "2026-10-19" }, "a rain day moves that day and after back a weekday, skipping the blocked day and the weekend");
-  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r4: "2026-10-14", r5: "2026-10-19", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend)");
+  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-19", r3: "2026-10-19", r4: "2026-10-14", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend) - on the 16th, r5 (asked for the 8th) and r1 (asked for the 14th, signed up first) stay");
   assert.equal(out.start, "2026-10-13", "the board opens on the season's first day");
   assert.equal(out.blockedIsWorkday, "2026-10-16");
   assert.deepEqual(out.thanksgiving, [true, "2026-10-13"], "Thanksgiving Monday is closed and never planned");
@@ -524,7 +524,159 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
   await page.close();
 });
 
-test("winterizing: a new sign-up for a full day goes on it when its area has the most there; the smallest area's cottage moves a day, marked Moved", async () => {
+test("winterizing: when more are on a day than fit, those who asked for the earliest date keep it, then the earliest sign-ups (auto-plan and the daily tidy-up)", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    // Listed out of order; sign-up times decide (the web form's time, else when it was entered).
+    const asked = [
+      { id: "late", requestedDate: "2026-10-14", submittedAt: "2026-09-20T10:00:00Z", createdAt: "2026-09-01T00:00:00Z" },
+      { id: "first", requestedDate: "2026-10-14", submittedAt: "2026-09-02T10:00:00Z" },
+      { id: "second", requestedDate: "2026-10-14", createdAt: "2026-09-05T10:00:00Z" }
+    ];
+    const plan = autoPlanWinter(asked, db, { today: "2026-10-06", byArea: true }).map((p) => [p.request.id, p.date]);
+    // Already on the 14th (3 there, limit 2): the latest sign-up moves on.
+    const onDay = asked.map((r) => ({ ...r, plannedDate: "2026-10-14" }));
+    const tidy = carryOverWinter(onDay, db, "2026-10-13").map((p) => [p.request.id, p.date]);
+    // Thursday the 15th: one moved there from a full Wednesday (asked for the 14th) beats two who
+    // asked for the 15th - of those, the earlier sign-up stays.
+    const thu = [
+      { id: "wed", requestedDate: "2026-10-14", plannedDate: "2026-10-15", submittedAt: "2026-09-30T00:00:00Z" },
+      { id: "thuLate", requestedDate: "2026-10-15", plannedDate: "2026-10-15", submittedAt: "2026-09-10T00:00:00Z" },
+      { id: "thuEarly", requestedDate: "2026-10-15", plannedDate: "2026-10-15", submittedAt: "2026-09-01T00:00:00Z" }
+    ];
+    const tidyThu = carryOverWinter(thu, db, "2026-10-13").map((p) => [p.request.id, p.date]);
+    return { plan, tidy, tidyThu };
+  });
+  assert.deepEqual(out.plan, [["first", "2026-10-14"], ["second", "2026-10-14"], ["late", "2026-10-15"]]);
+  assert.deepEqual(out.tidy, [["late", "2026-10-15"]]);
+  assert.deepEqual(out.tidyThu, [["thuLate", "2026-10-16"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing park cottages: rentals and unsold inventory are found; they go on the quietest day, move first when a day is full, and step aside for a customer", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [
+      { id: "r1", number: "0301", section: "Rentals", siteType: "Rental Cottage" },
+      { id: "s1", number: "0241", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s2", number: "0242", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s3", number: "0243", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s4", number: "0244", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s5", number: "0245", section: "Front of Park", siteType: "Seasonal", tags: ["QIC Inventory"] },
+      { id: "s6", number: "0246", section: "Front of Park", siteType: "Seasonal" }
+    ];
+    const cottages = [{ id: "ko", name: "Owned unit", siteId: "s6" }, { id: "kt", name: "Tagged unit", siteId: "s5" }, { id: "kr", name: "Rental A", siteId: "r1" }, { id: "k1", name: "Show home", siteId: "s1" }, { id: "k2", name: "Sold one", siteId: "s2" }, { id: "k3", name: "Customer", siteId: "s3" }, { id: "kdone", name: "Already on", siteId: "r1" }];
+    const cottageOrders = [
+      { id: "o1", type: "Display Model", status: "Delivered/Onsite", siteId: "s1", model: "Breckenridge" },
+      { id: "o2", type: "Display Model", status: "Delivered/Onsite", siteId: "s2", soldDate: "2026-09-01" },
+      { id: "o3", type: "Display Model", status: "Ordered/Being Built", siteId: "s3" },
+      { id: "o4", type: "Display Model", status: "Delivered/Onsite", siteId: "s4", model: "Cove" }
+    ];
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2, winterAutoPlaceNew: true }, sites, cottages, cottageOrders, customers: [{ id: "cq", name: "QIC Inventory", siteIds: ["s6"] }], winterizingRequests: [{ id: "x", cottageId: "kdone", parkOwned: "rental" }] };
+    const found = winterParkCottages(db);
+    // Customers: two on Tue 13th, one on Wed 14th, two on Thu 15th; a park cottage goes on Wed (quietest).
+    const reqs = [
+      { id: "a", requestedDate: "2026-10-13", createdAt: "1" }, { id: "b", requestedDate: "2026-10-13", createdAt: "2" },
+      { id: "c", requestedDate: "2026-10-14", createdAt: "3" },
+      { id: "d", requestedDate: "2026-10-15", createdAt: "4" }, { id: "e", requestedDate: "2026-10-15", createdAt: "5" },
+      { id: "p", parkOwned: "rental", cottageId: "kr" }
+    ];
+    const plan = Object.fromEntries(autoPlanWinter(reqs, db, { today: "2026-10-06", byArea: false }).map((x) => [x.request.id, x.date]));
+    // Thursday over the limit with a park cottage on it: the park cottage moves, even though it's first by site.
+    const thu = [{ id: "d", plannedDate: "2026-10-15", requestedDate: "2026-10-15" }, { id: "e", plannedDate: "2026-10-15" }, { id: "p", plannedDate: "2026-10-15", parkOwned: "inventory" }];
+    const tidy = carryOverWinter(thu, db, "2026-10-13").map((x) => [x.request.id, x.date]);
+    // A new customer sign-up asks for Wednesday, full with c and the park cottage: the park cottage steps aside to a quiet day.
+    const wed = [{ id: "a", plannedDate: "2026-10-13" }, { id: "c", plannedDate: "2026-10-14" }, { id: "p", plannedDate: "2026-10-14", parkOwned: "rental" }, { id: "n", requestedDate: "2026-10-14" }];
+    const placed = placeNewWinterSignups(wed, db, "2026-10-06").map((x) => [x.request.id, x.date, !!x.shifted]);
+    return { found: found.list.map((x) => [x.cottage.id, x.kind]), missing: found.unitsWithoutCottage.map((x) => x.unit.id), plan, tidy, placed };
+  });
+  assert.deepEqual(out.found, [["k1", "inventory"], ["kt", "inventory"], ["ko", "inventory"], ["kr", "rental"]], "rental, a site tagged QIC Inventory, one owned by our QIC Inventory customer, and unsold, delivered inventory in Sales; not sold, not on order, not already on the list");
+  assert.deepEqual(out.missing, ["o4"], "an inventory unit with no cottage record is pointed out");
+  assert.deepEqual(out.plan, { a: "2026-10-13", b: "2026-10-13", c: "2026-10-14", d: "2026-10-15", e: "2026-10-15", p: "2026-10-14" });
+  assert.deepEqual(out.tidy, [["p", "2026-10-16"]]);
+  assert.deepEqual(out.placed, [["n", "2026-10-14", false], ["p", "2026-10-13", true]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: Add park cottages puts the rentals on the list, marked Park, with no customer", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.locator("[data-park-add]").click();
+  await page.locator("[data-park-list]").getByText("Site 301 \u00B7 Lakeview Rental").waitFor();
+  await page.getByRole("button", { name: "Add 1" }).click();
+  const saved = await page.evaluate(() => window.__saved.filter((r) => r.cottageId === "k4"));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].parkOwned, "rental");
+  assert.equal(saved[0].customerId, null);
+  assert.equal(await page.evaluate((r) => winterOwnerLabel(r, {}), saved[0]), "Park \u00B7 rental cottage");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    const reqs = [
+      { id: "a", plannedDate: "2026-10-18" }, // a Sunday
+      { id: "b", plannedDate: "2026-10-16" },
+      { id: "c", plannedDate: "2026-10-16" },
+      { id: "d", plannedDate: "2026-10-16", requestedDate: "2026-10-16" },
+      { id: "e", plannedDate: "2026-10-16", keepOnDay: true }, // "Put it on Fri anyway"
+      { id: "f", requestedDate: "2026-10-17" }, // not placed yet: left alone
+      { id: "g", plannedDate: "2026-10-17", keepOnDay: true },
+      { id: "h", plannedDate: "2026-10-20", completed: true }
+    ];
+    return carryOverWinter(reqs, db, "2026-10-14").map((p) => [p.request.id, p.date, p.why]);
+  });
+  // Friday keeps the one who asked for it and the one put there on purpose; b and c move to Monday,
+  // where Sunday's a already is, so c (the last) goes on to Tuesday.
+  assert.deepEqual(out, [["a", "2026-10-19", "offDay"], ["b", "2026-10-19", "full"], ["c", "2026-10-20", "full"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing on a phone: picking a weekend in Planned for puts it on the Monday", async () => {
+  const page = await openApp(browser, "stub");
+  const info = await page.evaluate(() => {
+    window.__saved = [];
+    window.__toasts = [];
+    const today = todayISO();
+    const add = (n) => winterAddDays(today, n);
+    let sunday = add(7);
+    while (new Date(sunday + "T12:00").getDay() !== 0) sunday = winterAddDays(sunday, 1);
+    let monday = winterAddDays(sunday, 1);
+    let planned = add(1);
+    while (!winterIsWeekday(planned)) planned = winterAddDays(planned, 1);
+    let db = {
+      settings: { winterSeasonStart: add(-10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }],
+      customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }],
+      winterizingRequests: [{ id: "r1", cottageId: "k1", customerId: "c1", plannedDate: planned, options: {} }]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const save = (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); };
+    const render = () => root.render(React.createElement(FieldWinterTab, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, actor: "Dave", saveWinterizingRequest: save, saveInvoice() {}, saveWorkOrder() {}, onGoToDesktopTab() {}, setToast: (t) => window.__toasts.push(t) }));
+    render();
+    return { sunday, monday, planned };
+  });
+  await page.getByRole("tab", { name: "All sign-ups" }).click();
+  await page.locator('[data-field-winter="r1"]').first().click();
+  await page.locator("[data-winter-panel] input[type=date]").fill(info.sunday);
+  await page.waitForFunction(() => window.__saved.length > 0);
+  const saved = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+  assert.equal(saved.plannedDate, info.monday);
+  assert.equal(saved.keepOnDay, false);
+  assert.match(await page.evaluate(() => window.__toasts.join("|")), /Weekends are off/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: a new sign-up for a full day goes on it when its area has the most there and a smaller area's cottage didn't ask for the day (it moves, marked Moved); earlier sign-ups who asked keep it", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
     const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0103", "Front of Park"], ["s4", "0490", "Limestone South"], ["s5", "0495", "Limestone South"], ["s6", "0480", "Limestone South"]].map(([id, number, section]) => ({ id, number, section }));
@@ -541,7 +693,7 @@ test("winterizing: a new sign-up for a full day goes on it when its area has the
     const protectedDate = run(req("n", "k2", { requestedDate: "2026-10-14" }));
     return { frontOfPark, limestone, protectedDate };
   });
-  assert.deepEqual(out.frontOfPark, [["n", "2026-10-14", ""], ["c", "2026-10-15", "2026-10-14 for Front of Park"]], "Front of Park has the most that day, so Limestone South's one moves");
+  assert.deepEqual(out.frontOfPark, [["n", "2026-10-15", ""]], "Limestone South's one asked for the day and signed up earlier, so it keeps it; the new one goes to the next day");
   assert.deepEqual(out.limestone, [["n", "2026-10-15", ""]], "Limestone South is the smaller area there, so the new one goes to the next day with room");
   assert.deepEqual(out.protectedDate, [["n", "2026-10-14", ""], ["d", "2026-10-15", "2026-10-14 for Front of Park"]], "the Limestone South cottage that asked for the day stays; the other one moves");
   // On the Plan board and in the notice.
@@ -591,9 +743,14 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
   const today = await page.evaluate(() => todayISO());
   const col = page.locator(`[data-plan-column="${today}"]`);
   assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
-  // Dropping Cedar on a full day offers the next day with room.
+  // Dropping Cedar on a full day offers the next day with room (on a
+  // weekend, it says it's a weekend instead - and there's no "anyway").
   await page.locator('[data-plan-card="r2"]').dragTo(col);
-  await page.getByText("That day is full").waitFor();
+  if (await page.evaluate(() => winterIsWeekday(todayISO()))) await page.getByText("That day is full").waitFor();
+  else {
+    await page.getByText("That's a weekend").waitFor();
+    assert.equal(await page.getByRole("button", { name: /anyway/ }).count(), 0);
+  }
   await page.getByRole("button", { name: "Cancel" }).click();
   // Block a day (when the board shows one ahead).
   const blockBtn = page.getByRole("button", { name: "Block", exact: true }).first();

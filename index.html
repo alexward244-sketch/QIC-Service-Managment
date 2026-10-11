@@ -13788,6 +13788,8 @@ function PendingSignupMatchForm({ entry, db, onConfirm, onDiscard, onCancel }) {
       options,
       completed: false,
       completedDate: null,
+      // When the customer sent the form: the earliest sign-ups keep a full day.
+      submittedAt: entry.receivedAt || null,
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     });
   };
@@ -14225,6 +14227,62 @@ function WinterizingReminderModal({ db, persist, rows, actor, onClose, inline })
 // ---------------------------------------------------------------------------
 // The day the crew plans to do it: set by dragging on the Plan board, else
 // the day the customer asked for. "" = taken off the schedule.
+// The park's own cottages (the rentals and QIC Inventory units for sale)
+// are winterized too: added from Winterizing ("Add park cottages"), with no
+// customer, they fill in on quiet days and are the first to move when a day
+// is full - a customer's sign-up never waits for one.
+const WINTER_PARK_LABELS = { rental: "Park \u00B7 rental cottage", inventory: "Park \u00B7 inventory" };
+function winterOwnerLabel(r, info, none) {
+  if (r.parkOwned) return WINTER_PARK_LABELS[r.parkOwned] || "Park";
+  return info.customer ? info.customer.name : none;
+}
+// Park cottages not on this season's list yet: cottages on Rental Cottage
+// sites, owned by the "QIC Inventory" customer, on sites tagged "QIC
+// Inventory" (anyone can see those), and on the
+// sites of QIC Inventory units in Sales on the park and unsold (only Admin /
+// Sales Manager can read those).
+// unitsWithoutCottage: inventory units whose site has no cottage record.
+function winterParkCottages(db) {
+  const active = new Set((db.winterizingRequests || []).filter((r) => !r.archived).map((r) => r.cottageId));
+  const out = [], seen = new Set(), unitsWithoutCottage = [];
+  const add = (cottage, site, kind) => {
+    if (seen.has(cottage.id)) return;
+    seen.add(cottage.id);
+    if (!active.has(cottage.id)) out.push({ cottage, site, kind });
+  };
+  (db.sites || []).filter((site) => siteTypeOf(site) === "Rental Cottage").forEach((site) => (db.cottages || []).filter((c) => c.siteId === site.id).forEach((c) => add(c, site, "rental")));
+  // Owned by our "QIC Inventory" customer record.
+  (db.cottages || []).forEach((c) => {
+    if (cottageOwners(db, c).some((o) => /\binventory\b/i.test(String(o.name || "")))) add(c, (db.sites || []).find((x) => x.id === c.siteId) || null, "inventory");
+  });
+  (db.sites || []).filter((site) => (site.tags || []).some((t) => /\binventory\b/i.test(String(t)))).forEach((site) => (db.cottages || []).filter((c) => c.siteId === site.id).forEach((c) => add(c, site, "inventory")));
+  (db.cottageOrders || []).filter((o) => o.type === "Display Model" && o.status === "Delivered/Onsite" && !o.soldDate && o.siteId).forEach((o) => {
+    const site = (db.sites || []).find((x) => x.id === o.siteId);
+    const onSite = (db.cottages || []).filter((c) => c.siteId === o.siteId);
+    if (!onSite.length) unitsWithoutCottage.push({ unit: o, site });
+    onSite.forEach((c) => add(c, site, "inventory"));
+  });
+  out.sort((a, b) => String(a.site && a.site.number).localeCompare(String(b.site && b.site.number), void 0, { numeric: true }));
+  return { list: out, unitsWithoutCottage };
+}
+// The quietest workday (fewest cottages, earliest on a tie) from `first` to
+// the last day anything is planned; `count(day)` gives how many are on it.
+function winterQuietDay(first, last, season, count) {
+  let best = null, d = winterWorkday(first, season);
+  for (let guard = 0; guard < 400 && d <= (last > first ? last : first); guard++) {
+    if (count(d) < season.limit && (best == null || count(d) < count(best))) best = d;
+    d = winterNextWorkday(d, season);
+  }
+  if (best) return best;
+  while (count(d) >= season.limit) d = winterNextWorkday(d, season);
+  return d;
+}
+// When the customer signed up (the web form's time, or when it was entered):
+// breaks a tie between two who asked for the same date.
+function winterSignedUpAt(r) {
+  return String(r.submittedAt || r.createdAt || "");
+}
+const winterBySignup = (a, b) => winterSignedUpAt(a).localeCompare(winterSignedUpAt(b));
 function winterPlannedDate(r) {
   return r.plannedDate != null ? r.plannedDate : r.requestedDate || "";
 }
@@ -14357,11 +14415,20 @@ function autoPlanWinter(requests, db, { today, byArea, replanAll }) {
     counts[d] = (counts[d] || 0) + 1;
     return d;
   };
-  const asked = toPlan.filter((r) => r.requestedDate && r.requestedDate >= first).sort((a, b) => a.requestedDate.localeCompare(b.requestedDate));
-  const rest = toPlan.filter((r) => !asked.includes(r)).sort(byArea ? winterSiteSort(db) : (a, b) => String(a.createdAt || a.requestedDate || "").localeCompare(String(b.createdAt || b.requestedDate || "")));
+  const park = toPlan.filter((r) => r.parkOwned).sort(winterSiteSort(db));
+  const customers = toPlan.filter((r) => !r.parkOwned);
+  const asked = customers.filter((r) => r.requestedDate && r.requestedDate >= first).sort((a, b) => a.requestedDate.localeCompare(b.requestedDate) || winterBySignup(a, b));
+  const rest = customers.filter((r) => !asked.includes(r)).sort(byArea ? winterSiteSort(db) : (a, b) => String(winterSignedUpAt(a) || a.requestedDate || "").localeCompare(String(winterSignedUpAt(b) || b.requestedDate || "")));
   const plan = [];
   asked.forEach((r) => plan.push({ request: r, date: roomFrom(r.requestedDate) }));
   rest.forEach((r) => plan.push({ request: r, date: roomFrom(first) }));
+  // Park cottages last, each on the quietest day.
+  park.forEach((r) => {
+    const last = Object.keys(counts).sort().pop() || first;
+    const d = winterQuietDay(first, last, season, (x) => counts[x] || 0);
+    counts[d] = (counts[d] || 0) + 1;
+    plan.push({ request: r, date: d });
+  });
   return plan;
 }
 // New sign-ups (never planned, not taken off the schedule by hand) go on a
@@ -14388,11 +14455,23 @@ function placeNewWinterSignups(requests, db, today) {
   const sectionOf = (r) => winterInfo(db, r).section;
   const sortSites = winterSiteSort(db);
   const moved = new Map();
-  const asked = fresh.filter((r) => r.requestedDate && r.requestedDate >= first).sort((x, y) => x.requestedDate.localeCompare(y.requestedDate));
-  const rest = fresh.filter((r) => !asked.includes(r)).sort((x, y) => String(x.createdAt || "").localeCompare(String(y.createdAt || "")));
+  const parkFresh = fresh.filter((r) => r.parkOwned).sort(sortSites);
+  const asked = fresh.filter((r) => !r.parkOwned && r.requestedDate && r.requestedDate >= first).sort((x, y) => x.requestedDate.localeCompare(y.requestedDate) || winterBySignup(x, y));
+  const rest = fresh.filter((r) => !r.parkOwned && !asked.includes(r)).sort(winterBySignup);
+  const shifted = new Set();
+  const quiet = () => winterQuietDay(first, [...dateOf.values()].filter(Boolean).sort().pop() || first, season, (d) => onDay(d).length);
   [...asked, ...rest].forEach((r) => {
     const want = asked.includes(r) ? winterWorkday(r.requestedDate, season) : null;
     const list = want ? onDay(want) : [];
+    // A full day with a park cottage on it: the park cottage moves to a quiet day.
+    const parkThere = want && list.length >= season.limit ? list.filter((x) => x.parkOwned && !x.keepOnDay).sort(sortSites).pop() : null;
+    if (parkThere) {
+      dateOf.set(r, want);
+      dateOf.set(parkThere, null);
+      dateOf.set(parkThere, quiet());
+      if (!fresh.includes(parkThere)) shifted.add(parkThere);
+      return;
+    }
     if (want && list.length >= season.limit) {
       // Full day: if this cottage's area has the most there, it goes on, and
       // one from the area with the fewest moves to the next day with room.
@@ -14402,11 +14481,15 @@ function placeNewWinterSignups(requests, db, today) {
       const others = sortWinterSections(Object.keys(counts).filter((k) => k !== sectionOf(r)));
       const fewest = others.reduce((best, k) => best == null || counts[k] <= counts[best] ? k : best, null);
       if (mine > 0 && fewest != null && others.every((k) => counts[k] <= mine) && counts[fewest] < mine) {
-        // Someone who didn't ask for this day goes first - from the smallest
-        // area that has one; only if everyone asked for it, the smallest area's last.
+        // Someone who didn't ask for this day (or an earlier one) moves -
+        // from the smallest area that has one. Those who did asked first, so
+        // they keep it: if that's all of them, this one goes to the next day.
         const smaller = others.filter((k) => counts[k] < mine).sort((x, y) => counts[x] - counts[y] || others.indexOf(y) - others.indexOf(x));
-        const free = smaller.map((k) => list.filter((x) => sectionOf(x) === k && x.requestedDate !== want).sort(sortSites).pop()).find(Boolean);
-        const bumped = free || list.filter((x) => sectionOf(x) === fewest).sort(sortSites).pop();
+        const bumped = smaller.map((k) => list.filter((x) => sectionOf(x) === k && !(x.requestedDate && x.requestedDate <= want) && !x.keepOnDay).sort(sortSites).pop()).find(Boolean);
+        if (!bumped) {
+          dateOf.set(r, roomFrom(want));
+          return;
+        }
         dateOf.set(r, want);
         const to = roomFrom(winterNextWorkday(want, season));
         dateOf.set(bumped, to);
@@ -14416,9 +14499,11 @@ function placeNewWinterSignups(requests, db, today) {
     }
     dateOf.set(r, roomFrom(want || first));
   });
+  parkFresh.forEach((r) => dateOf.set(r, quiet()));
   return [
     ...fresh.map((r) => ({ request: r, date: dateOf.get(r) })),
-    ...[...moved].filter(([r]) => dateOf.get(r) !== winterPlannedDate(r)).map(([r, m]) => ({ request: r, date: dateOf.get(r), moved: m }))
+    ...[...moved].filter(([r]) => dateOf.get(r) !== winterPlannedDate(r)).map(([r, m]) => ({ request: r, date: dateOf.get(r), moved: m })),
+    ...[...shifted].filter((r) => !moved.has(r) && dateOf.get(r) !== winterPlannedDate(r)).map((r) => ({ request: r, date: dateOf.get(r), shifted: true }))
   ];
 }
 // Rain day: everything not done on that day or after moves to the next
@@ -14428,30 +14513,39 @@ function pushBackWinterDay(requests, db, day) {
   return requests.filter((r) => !r.completed && !r.archived && winterPlannedDate(r) && winterPlannedDate(r) >= day).map((r) => ({ request: r, date: winterNextWorkday(winterPlannedDate(r), season) }));
 }
 // Cottages planned for a past day but not done go on the next workday,
-// ahead of what's already there; anything over the limit then moves on a
-// day (the last ones on the list), and so on. Returns [{ request, date }].
+// ahead of what's already there. Cottages on a weekend or blocked day (from
+// today on) go on the next workday. Anything then over the limit moves on a
+// day (the last ones on the list), and so on - except ones someone put on
+// that day on purpose ("anyway", keepOnDay). Returns [{ request, date, why }]
+// with why "late", "offDay" or "full".
 function carryOverWinter(requests, db, today) {
   const season = winterSeason(db);
   const target = winterFirstWorkday(season, today);
   const open = requests.filter((r) => !r.completed && !r.archived);
   const late = open.filter((r) => r.plannedDate && r.plannedDate < today);
-  if (!late.length) return [];
+  const offDay = open.filter((r) => r.plannedDate && r.plannedDate >= today && !r.keepOnDay && winterWorkday(r.plannedDate, season) !== r.plannedDate);
   const dateOf = new Map(open.map((r) => [r, winterPlannedDate(r)]));
   late.forEach((r) => dateOf.set(r, target));
+  offDay.forEach((r) => dateOf.set(r, winterWorkday(r.plannedDate, season)));
   const sortSites = winterSiteSort(db);
+  // Only cottages already given a day are moved (a sign-up not placed yet
+  // just shows on the day it asked for).
+  const movable = (r) => r.plannedDate && !r.keepOnDay;
   let day = target;
   for (let guard = 0; guard < 400; guard++) {
-    // Kept first: the unfinished ones, then anyone who asked for this day.
-    const rank = (r) => late.includes(r) ? 0 : r.requestedDate === day ? 1 : 2;
-    const onDay = open.filter((r) => dateOf.get(r) === day).sort((a, b) => rank(a) - rank(b) || sortSites(a, b));
-    if (onDay.length <= season.limit) {
-      if (!open.some((r) => dateOf.get(r) > day)) break;
-    } else {
-      onDay.slice(season.limit).forEach((r) => dateOf.set(r, winterNextWorkday(day, season)));
+    // Kept first: the unfinished ones, ones that can't move, then those who
+    // asked for this day or an earlier one (earliest date first, then
+    // earliest sign-up), then the rest.
+    const asked = (r) => r.requestedDate && r.requestedDate <= day;
+    const rank = (r) => late.includes(r) ? 0 : !movable(r) ? 1 : r.parkOwned ? 4 : asked(r) ? 2 : 3;
+    const onDay = open.filter((r) => dateOf.get(r) === day).sort((a, b) => rank(a) - rank(b) || (rank(a) === 2 ? a.requestedDate.localeCompare(b.requestedDate) || winterBySignup(a, b) : 0) || sortSites(a, b));
+    if (onDay.length > season.limit) {
+      onDay.slice(season.limit).filter(movable).forEach((r) => dateOf.set(r, winterNextWorkday(day, season)));
     }
+    if (!open.some((r) => dateOf.get(r) > day)) break;
     day = winterNextWorkday(day, season);
   }
-  return open.filter((r) => dateOf.get(r) !== winterPlannedDate(r)).map((r) => ({ request: r, date: dateOf.get(r) }));
+  return open.filter((r) => dateOf.get(r) !== winterPlannedDate(r)).map((r) => ({ request: r, date: dateOf.get(r), why: late.includes(r) ? "late" : offDay.includes(r) && dateOf.get(r) === winterWorkday(r.plannedDate, season) ? "offDay" : "full" }));
 }
 function winterStatus(r, today) {
   const planned = winterPlannedDate(r);
@@ -14570,7 +14664,7 @@ function WinterizingOverview({ db, all, shown, today, notSignedUp, chip, setChip
             { key: r.id, "data-winter-row": r.id, onClick: () => selectMode ? onToggleSelect(r.id) : onOpen(r.id), className: `border-t border-[#EEEBE5] cursor-pointer hover:bg-[#F1EEE9] ${r.completed ? "bg-[#DDF1E1]/30" : ""}` },
             React.createElement("td", { className: "px-3 py-2.5 w-8" }, selectMode ? React.createElement("input", { type: "checkbox", checked: selectedIds.has(r.id), onChange: () => onToggleSelect(r.id), onClick: (e) => e.stopPropagation(), className: "accent-[#C1652F] w-4 h-4", "aria-label": "Select" }) : React.createElement("span", { className: `inline-flex w-4 h-4 rounded border-2 items-center justify-center text-[10px] ${r.completed ? "bg-[#377249] border-[#377249] text-white" : "border-[#C7C2B8]"}` }, r.completed ? "✓" : "")),
             React.createElement("td", { className: "px-3 py-2.5 font-semibold whitespace-nowrap" }, info.site ? info.site.number : "—"),
-            React.createElement("td", { className: "px-3 py-2.5" }, React.createElement("div", { className: "font-medium" }, info.cottage ? info.cottage.name : "Unknown cottage"), React.createElement("div", { className: "text-xs text-[#75716A]" }, info.customer ? info.customer.name : "No owner linked", info.history.length ? React.createElement("span", { className: "text-[#2E6E8E]" }, " · done before") : React.createElement("span", { className: "text-[#9A6B1F]" }, " · new"))),
+            React.createElement("td", { className: "px-3 py-2.5" }, React.createElement("div", { className: "font-medium" }, info.cottage ? info.cottage.name : "Unknown cottage"), React.createElement("div", { className: "text-xs text-[#75716A]" }, winterOwnerLabel(r, info, "No owner linked"), info.history.length ? React.createElement("span", { className: "text-[#2E6E8E]" }, " · done before") : React.createElement("span", { className: "text-[#9A6B1F]" }, " · new"))),
             React.createElement("td", { className: "px-3 py-2.5 text-[#4B4740] whitespace-nowrap" }, info.section),
             React.createElement("td", { className: "px-3 py-2.5 whitespace-nowrap" }, r.completed ? React.createElement("span", { className: "text-[#4B4740]" }, winterShortDate(r.completedDate)) : React.createElement(React.Fragment, null, React.createElement("div", { className: "text-[#4B4740]" }, info.planned ? winterShortDate(info.planned) : "—"), moved && React.createElement("div", { className: "text-[11px] text-[#9A968D]" }, `asked ${winterShortDate(r.requestedDate)}`))),
             React.createElement("td", { className: "px-3 py-2.5" }, info.extras.length ? React.createElement("div", { className: "flex flex-wrap gap-1" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))) : React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Standard only")),
@@ -14617,7 +14711,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
         e.dataTransfer.setData("text/plain", r.id);
         e.dataTransfer.effectAllowed = "move";
       }, onClick: () => onOpen(r.id), className: `rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-2.5 mb-2 shadow-sm cursor-pointer hover:border-[#377249]/50 ${!readOnly && !r.completed ? "active:cursor-grabbing" : ""}` },
-      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner", " · ", info.section), winterHowToShort(info.site) && React.createElement("div", { className: "text-[11px] font-semibold text-[#2E6E8E] truncate", "data-howto-short": true }, winterHowToShort(info.site)), r.newOnPlan && !r.completed && React.createElement("span", { "data-new-tag": true, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E9C46A] text-[#1E1A13]" }, "New"), !r.newOnPlan && r.movedOnPlan && !r.completed && React.createElement("span", { "data-moved-tag": true, title: `Moved from ${winterShortDate(r.movedOnPlan.from)} to keep ${r.movedOnPlan.forSection} together`, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E]" }, `Moved from ${winterShortDate(r.movedOnPlan.from)}`)), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
+      React.createElement("div", { className: "flex justify-between items-start gap-1" }, React.createElement("div", { className: "min-w-0" }, React.createElement("div", { className: "text-[13px] font-semibold truncate" }, info.site ? `Site ${info.site.number} · ` : "", info.cottage ? info.cottage.name : "Cottage"), React.createElement("div", { className: "text-[11px] text-[#75716A] truncate" }, winterOwnerLabel(r, info, "No owner"), " · ", info.section), winterHowToShort(info.site) && React.createElement("div", { className: "text-[11px] font-semibold text-[#2E6E8E] truncate", "data-howto-short": true }, winterHowToShort(info.site)), r.newOnPlan && !r.completed && React.createElement("span", { "data-new-tag": true, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E9C46A] text-[#1E1A13]" }, "New"), !r.newOnPlan && r.movedOnPlan && !r.completed && React.createElement("span", { "data-moved-tag": true, title: `Moved from ${winterShortDate(r.movedOnPlan.from)} to keep ${r.movedOnPlan.forSection} together`, className: "inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#E4EEF2] text-[#2E6E8E]" }, `Moved from ${winterShortDate(r.movedOnPlan.from)}`)), r.completed ? React.createElement("span", { className: "text-[#28633C]" }, "✓") : null),
       poolLabel && React.createElement("div", { className: `text-[11px] mt-1 font-semibold ${poolLabel.tone}` }, poolLabel.text),
       info.extras.length > 0 && React.createElement("div", { className: "flex flex-wrap gap-1 mt-1.5" }, info.extras.map((o) => React.createElement(WinterExtraChip, { key: o.key, opt: o, small: true }))),
       info.note && React.createElement("div", { className: "mt-1.5 rounded-md bg-[#FBEEDA]/70 border border-[#E9D3B5] px-2 py-1 text-[11px] text-[#4B4740] line-clamp-3" }, React.createElement("span", { className: "font-semibold text-[#9A6B1F]" }, "Note: "), info.note),
@@ -14852,10 +14946,10 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
         "div",
         null,
         label(request.completed ? "Winterized" : "Planned for"),
-        request.completed ? React.createElement("div", { className: "text-[#28633C] font-medium" }, winterShortDate(request.completedDate, { weekday: "long", month: "long", day: "numeric" })) : React.createElement("input", { type: "date", value: info.planned || "", disabled: readOnly, onChange: (e) => onSchedule(request.id, e.target.value), className: inputCls + " w-48", "aria-label": "Planned for" }),
+        request.completed ? React.createElement("div", { className: "text-[#28633C] font-medium" }, winterShortDate(request.completedDate, { weekday: "long", month: "long", day: "numeric" })) : React.createElement("input", { type: "date", value: info.planned || "", disabled: readOnly, onChange: (e) => (!e.target.value || /^20\d\d-/.test(e.target.value)) && onSchedule(request.id, e.target.value), className: inputCls + " w-48", "aria-label": "Planned for" }),
         request.requestedDate && React.createElement("div", { className: "text-xs text-[#75716A] mt-1" }, `Customer asked for ${winterShortDate(request.requestedDate, { weekday: "short", month: "short", day: "numeric" })}`)
       ),
-      React.createElement("div", null, label("Owner"), info.customer ? React.createElement(React.Fragment, null, React.createElement("div", { className: "font-medium" }, info.customer.name), React.createElement("div", { className: "text-[#4B4740]" }, [info.customer.email, info.customer.phone].filter(Boolean).join(" · ") || React.createElement("span", { className: "text-[#a8532a]" }, "No email or phone on file"))) : React.createElement("div", { className: "text-[#9A968D]" }, "No owner linked to this sign-up")),
+      React.createElement("div", null, label("Owner"), request.parkOwned ? React.createElement("div", { className: "font-medium", "data-park-owned": true }, winterOwnerLabel(request, info)) : info.customer ? React.createElement(React.Fragment, null, React.createElement("div", { className: "font-medium" }, info.customer.name), React.createElement("div", { className: "text-[#4B4740]" }, [info.customer.email, info.customer.phone].filter(Boolean).join(" · ") || React.createElement("span", { className: "text-[#a8532a]" }, "No email or phone on file"))) : React.createElement("div", { className: "text-[#9A968D]" }, "No owner linked to this sign-up")),
       info.note && React.createElement(WinterizingNote, { text: info.note }),
       !request.completed && React.createElement(
         "div",
@@ -14904,10 +14998,11 @@ function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinter
   };
   const applyWinterPlan = (changes, logText) => {
     if (!changes.length) return;
-    changes.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date }));
+    changes.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, keepOnDay: false }));
     persist({ ...db, activityLog: addLog(db, actor, logText) });
   };
-  // Not finished on its day: moved on to the next workday by itself.
+  // Not finished on its day: moved on to the next workday by itself. Same
+  // for a cottage on a weekend or blocked day, or over the day's limit.
   const carriedFor = useRef("");
   useEffect(() => {
     if (readOnly || !requests.length) return;
@@ -14916,19 +15011,32 @@ function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinter
     carriedFor.current = today;
     const changes = carryOverWinter(requests, db, today);
     if (!changes.length) return;
-    const lateCount = changes.filter((c) => c.request.plannedDate < today).length;
-    applyWinterPlan(changes, `Moved ${lateCount} unfinished winterizing cottage${lateCount === 1 ? "" : "s"} to ${changes[0] && changes.find((c) => c.request.plannedDate < today).date}`);
-    setCarryNotice(`${lateCount} cottage${lateCount === 1 ? " wasn't" : "s weren't"} finished on ${lateCount === 1 ? "its" : "their"} day and moved to ${winterShortDate(changes.find((c) => c.request.plannedDate < today).date, { weekday: "short", month: "short", day: "numeric" })}${changes.length > lateCount ? `; ${changes.length - lateCount} more moved on a day to stay within ${winterSeason(db).limit} a day` : ""}.`);
+    const late = changes.filter((c) => c.why === "late"), off = changes.filter((c) => c.why === "offDay"), full = changes.filter((c) => c.why === "full");
+    const s = (n) => n === 1 ? "" : "s";
+    const limit = winterSeason(db).limit;
+    const logParts = [
+      late.length ? `moved ${late.length} unfinished winterizing cottage${s(late.length)} to ${late[0].date}` : "",
+      off.length ? `moved ${off.length} off a weekend or blocked day (${off.map((c) => `${cottageName(c.request.cottageId)} \u2192 ${c.date}`).join(", ")})` : "",
+      full.length ? `moved ${full.length} on a day to stay within ${limit} a day` : ""
+    ].filter(Boolean);
+    applyWinterPlan(changes, `Winterizing plan: ${logParts.join("; ")}`);
+    const day = (iso) => winterShortDate(iso, { weekday: "short", month: "short", day: "numeric" });
+    setCarryNotice([
+      late.length ? `${late.length} cottage${late.length === 1 ? " wasn't" : "s weren't"} finished on ${late.length === 1 ? "its" : "their"} day and moved to ${day(late[0].date)}.` : "",
+      off.length ? `${off.length} cottage${off.length === 1 ? " was" : "s were"} on a weekend or blocked day and moved to the next workday.` : "",
+      full.length ? `${full.length} ${late.length || off.length ? "more " : ""}moved on a day to stay within ${limit} a day.` : ""
+    ].filter(Boolean).join(" "));
   }, [requests.length, readOnly]);
   // New sign-ups onto the schedule (when that's on), marked New.
   useEffect(() => {
     if (readOnly) return;
     const placed = placeNewWinterSignups(requests, db, todayISO());
     if (!placed.length) return;
-    const added = placed.filter((p) => !p.moved), bumped = placed.filter((p) => p.moved);
-    added.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, newOnPlan: true }));
+    const added = placed.filter((p) => !p.moved && !p.shifted), bumped = placed.filter((p) => p.moved), shifted = placed.filter((p) => p.shifted);
+    added.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date, newOnPlan: !request.parkOwned }));
+    shifted.forEach(({ request, date }) => saveWinterizingRequest({ ...request, plannedDate: date }));
     bumped.forEach(({ request, date, moved }) => saveWinterizingRequest({ ...request, plannedDate: date, movedOnPlan: { from: moved.from, forSection: moved.forSection, at: (/* @__PURE__ */ new Date()).toISOString() } }));
-    persist({ ...db, activityLog: addLog(db, actor, `Put ${added.length} new winterizing sign-up${added.length === 1 ? "" : "s"} on the schedule (${added.map((p) => `${cottageName(p.request.cottageId)} \u2192 ${p.date}`).join(", ")})${bumped.length ? `; moved ${bumped.map((p) => `${cottageName(p.request.cottageId)} ${p.moved.from} \u2192 ${p.date} to keep ${p.moved.forSection} together`).join(", ")}` : ""}`) });
+    persist({ ...db, activityLog: addLog(db, actor, `Put ${added.length} new winterizing sign-up${added.length === 1 ? "" : "s"} on the schedule (${added.map((p) => `${cottageName(p.request.cottageId)} \u2192 ${p.date}`).join(", ")})${bumped.length ? `; moved ${bumped.map((p) => `${cottageName(p.request.cottageId)} ${p.moved.from} \u2192 ${p.date} to keep ${p.moved.forSection} together`).join(", ")}` : ""}${shifted.length ? `; moved park cottage${shifted.length === 1 ? "" : "s"} ${shifted.map((p) => `${cottageName(p.request.cottageId)} \u2192 ${p.date}`).join(", ")} to make room` : ""}`) });
   }, [requests.map((r) => r.id + (r.plannedDate == null ? "?" : "")).join(","), readOnly, !!(db.settings || {}).winterAutoPlaceNew]);
   return [carryNotice, setCarryNotice];
 }
@@ -14974,6 +15082,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const [autoReplanAll, setAutoReplanAll] = useState(false);
   const [problemFor, setProblemFor] = useState(null);
   const [howToImport, setHowToImport] = useState(null);
+  const [parkAdd, setParkAdd] = useState(null);
   const confirm = useConfirm();
   const actor = useCurrentActor();
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
@@ -15103,10 +15212,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     saveWinterizingRequest({ ...request, anodeRodReplacedAt: replacedAt });
   };
   // Plan a cottage for a day (or "" to take it off the schedule).
-  const schedule = (id, date) => {
+  // keep: put on a full or blocked day on purpose, so the daily tidy-up leaves it.
+  const schedule = (id, date, keep) => {
     const request = requests.find((r) => r.id === id);
-    if (!request || request.completed || winterPlannedDate(request) === (date || "")) return;
-    saveWinterizingRequest({ ...request, plannedDate: date || "", movedOnPlan: null });
+    if (!request || request.completed || winterPlannedDate(request) === (date || "") && !!request.keepOnDay === !!keep) return;
+    saveWinterizingRequest({ ...request, plannedDate: date || "", movedOnPlan: null, keepOnDay: !!keep });
     persist({ ...db, activityLog: addLog(db, actor, date ? `Planned winterizing for ${cottageName(request.cottageId)} on ${date}` : `Took winterizing for ${cottageName(request.cottageId)} off the schedule`) });
   };
   // Several cottages planned at once (auto-plan, a rain day, carry-over).
@@ -15127,10 +15237,11 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     if (!date) return schedule(id, date);
     const season = winterSeason(db);
     const count = requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length;
-    if (count < season.limit && season.blocked[date] == null) return schedule(id, date);
+    const weekend = !winterIsWeekday(date);
+    if (!weekend && count < season.limit && season.blocked[date] == null) return schedule(id, date);
     let next = winterNextWorkday(date, season);
     while (requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === next).length >= season.limit) next = winterNextWorkday(next, season);
-    setFullDrop({ id, date, next, blocked: season.blocked[date] });
+    setFullDrop({ id, date, next, blocked: season.blocked[date], weekend });
   };
   const [carryNotice, setCarryNotice] = useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinterizingRequest });
   const newOnPlan = requests.filter((r) => (r.newOnPlan || r.movedOnPlan) && !r.completed);
@@ -15240,7 +15351,12 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     type: "button",
     onClick: () => setHowToImport({}),
     className: "hidden sm:inline-flex px-3 py-2 rounded-md border border-[#2E6E8E]/30 text-[#2E6E8E] text-sm font-medium hover:bg-[#2E6E8E]/10 transition whitespace-nowrap"
-  }, "How-to list\u2026"), !readOnly && /* @__PURE__ */ React.createElement("button", {
+  }, "How-to list\u2026"), !readOnly && React.createElement("button", {
+    type: "button",
+    "data-park-add": true,
+    onClick: () => setParkAdd(winterParkCottages(db)),
+    className: "hidden sm:inline-flex px-3 py-2 rounded-md border border-[#5B4B8A]/30 text-[#5B4B8A] text-sm font-medium hover:bg-[#5B4B8A]/10 transition whitespace-nowrap"
+  }, "Add park cottages\u2026"), !readOnly && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setModal({ mode: "new" }),
     className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
   }, "+ New Sign-Up"))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap mt-3" }, selectMode && /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 bg-[#F1EEE9] rounded-md px-3 py-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, selectedIds.size, " selected"), /* @__PURE__ */ React.createElement("button", {
@@ -15474,10 +15590,10 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       applyWinterPlan(rainChanges, `Rain day: pushed winterizing from ${rainDay} back a day (${rainChanges.length} cottages)`);
       setRainDay(null);
     }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Push back a day")));
-  const fullDropEl = !readOnly && fullDrop && React.createElement(Modal, { title: fullDrop.blocked != null ? "That day is blocked" : "That day is full", onClose: () => setFullDrop(null) },
-    React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, fullDrop.blocked != null ? `${dayLabel(fullDrop.date)} is blocked${fullDrop.blocked ? ` for ${fullDrop.blocked}` : ""}. Put it on ${dayLabel(fullDrop.next)} instead?` : `${dayLabel(fullDrop.date)} already has ${winterSeason(db).limit}. Put it on ${dayLabel(fullDrop.next)} (the next day with room) instead?`),
-    React.createElement("div", { className: "flex justify-end gap-2 flex-wrap" }, React.createElement("button", { type: "button", onClick: () => setFullDrop(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), React.createElement("button", { type: "button", onClick: () => {
-      schedule(fullDrop.id, fullDrop.date);
+  const fullDropEl = !readOnly && fullDrop && React.createElement(Modal, { title: fullDrop.weekend ? "That's a weekend" : fullDrop.blocked != null ? "That day is blocked" : "That day is full", onClose: () => setFullDrop(null) },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-4" }, fullDrop.weekend ? `Winterizing is Monday to Friday. Put it on ${dayLabel(fullDrop.next)} instead?` : fullDrop.blocked != null ? `${dayLabel(fullDrop.date)} is blocked${fullDrop.blocked ? ` for ${fullDrop.blocked}` : ""}. Put it on ${dayLabel(fullDrop.next)} instead?` : `${dayLabel(fullDrop.date)} already has ${winterSeason(db).limit}. Put it on ${dayLabel(fullDrop.next)} (the next day with room) instead?`),
+    React.createElement("div", { className: "flex justify-end gap-2 flex-wrap" }, React.createElement("button", { type: "button", onClick: () => setFullDrop(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), !fullDrop.weekend && React.createElement("button", { type: "button", onClick: () => {
+      schedule(fullDrop.id, fullDrop.date, true);
       setFullDrop(null);
     }, className: "px-4 py-2 text-sm text-[#377249] border border-[#377249]/30 rounded-md hover:bg-[#377249]/10" }, `Put it on ${dayLabel(fullDrop.date)} anyway`), React.createElement("button", { type: "button", onClick: () => {
       schedule(fullDrop.id, fullDrop.next);
@@ -15498,7 +15614,21 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       const info = winterInfo(db, r);
       return React.createElement("li", { key: r.id, className: "flex items-center gap-2 flex-wrap" }, React.createElement("span", { "data-moved": r.movedOnPlan && !r.newOnPlan ? r.id : void 0 }, !r.newOnPlan && r.movedOnPlan ? `Moved: ${info.site ? `Site ${info.site.number}` : info.cottage ? info.cottage.name : "Cottage"} (${info.section}) ${winterShortDate(r.movedOnPlan.from, { weekday: "short", month: "short", day: "numeric" })} \u2192 ${winterShortDate(winterPlannedDate(r), { weekday: "short", month: "short", day: "numeric" })} to keep ${r.movedOnPlan.forSection} together` : `${info.site ? `Site ${info.site.number}` : info.cottage ? info.cottage.name : "Cottage"}${info.customer ? ` (${info.customer.name})` : ""} \u2192 ${winterShortDate(winterPlannedDate(r), { weekday: "short", month: "short", day: "numeric" })}`), React.createElement("button", { type: "button", onClick: () => setPanelId(r.id), className: "text-xs text-[#2E6E8E] hover:underline" }, "Change day"));
     })));
-  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, newEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl, autoPlanEl, rainEl, fullDropEl, blockEl, howToEl);
+  // The rentals and QIC Inventory units, added to this season's list with no
+  // customer; they're placed on quiet days (see winterParkCottages).
+  const addParkCottages = () => {
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    parkAdd.list.forEach(({ cottage, kind }) => saveWinterizingRequest({ id: uid(), cottageId: cottage.id, customerId: null, parkOwned: kind, notes: "", options: {}, completed: false, completedDate: null, createdAt: now }));
+    persist({ ...db, activityLog: addLog(db, actor, `Added ${parkAdd.list.length} park cottage${parkAdd.list.length === 1 ? "" : "s"} to winterizing (${parkAdd.list.map((x) => x.cottage.name).join(", ")})`) });
+    setParkAdd(null);
+  };
+  const parkAddEl = !readOnly && parkAdd && React.createElement(Modal, { title: "Add park cottages", onClose: () => setParkAdd(null) },
+    React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "The rental cottages and QIC Inventory (owned by QIC Inventory, sites tagged QIC Inventory, and units for sale in Sales), added to this season's winterizing. They fill in on quiet days, never take a customer's spot, and get no customer emails."),
+    parkAdd.list.length ? React.createElement("ul", { className: "rounded-lg border border-[#E2DED5] divide-y divide-[#EEEBE5] mb-3 max-h-72 overflow-y-auto text-sm", "data-park-list": true }, parkAdd.list.map(({ cottage, site, kind }) => React.createElement("li", { key: cottage.id, className: "flex justify-between gap-2 px-3 py-2" }, React.createElement("span", null, site ? `Site ${site.number} \u00B7 ` : "", cottage.name), React.createElement("span", { className: "text-xs text-[#5B4B8A] font-medium" }, kind === "rental" ? "Rental" : "Inventory")))) : React.createElement("p", { className: "text-sm text-[#75716A] italic mb-3" }, "They're all on this season's list already."),
+    !(db.cottageOrders || []).length && React.createElement("p", { className: "text-xs text-[#75716A] mb-3" }, "Units in Sales \u2192 QIC Inventory show here for Admin and Sales Manager; sites tagged QIC Inventory show for everyone."),
+    parkAdd.unitsWithoutCottage.length > 0 && React.createElement("p", { className: "text-xs text-[#9A6B1F] mb-3", "data-park-missing": true }, `No cottage record yet for: ${parkAdd.unitsWithoutCottage.map(({ unit, site }) => `${unit.model || "inventory unit"}${site ? ` (site ${site.number})` : ""}`).join(", ")} \u2014 add one on the Cottages tab, then come back.`),
+    React.createElement("div", { className: "flex justify-end gap-2" }, React.createElement("button", { type: "button", onClick: () => setParkAdd(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), parkAdd.list.length > 0 && React.createElement("button", { type: "button", onClick: addParkCottages, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md font-medium" }, `Add ${parkAdd.list.length}`)));
+  return /* @__PURE__ */ React.createElement("div", null, header, switcher, incomingEl, newEl, content, panelEl, problemEl, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, batchEl, autoPlanEl, rainEl, fullDropEl, blockEl, howToEl, parkAddEl);
 }
 function PropaneRequestRow({ request, db, onEdit, onDelete, onComplete, onExpired, onMoveRun, onPrint }) {
   const cottage = db.cottages.find((c) => c.id === request.cottageId);
@@ -20626,14 +20756,17 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
   const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
   // Moved from the panel's date box; a full or blocked day is still allowed
   // (the crew may know better) but says so.
-  const schedule = (id, date) => {
+  const schedule = (id, picked) => {
     const request = requests.find((r) => r.id === id);
+    // Monday to Friday only: a weekend goes on the Monday.
+    const date = picked && !winterIsWeekday(picked) ? winterNextWorkday(picked, { blocked: {} }) : picked;
     if (!request || request.completed || winterPlannedDate(request) === (date || "")) return;
-    saveWinterizingRequest({ ...request, plannedDate: date || "", newOnPlan: false });
+    const count = date ? requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length + 1 : 0;
+    // Over the limit or on a blocked day from here is on purpose: the daily tidy-up leaves it.
+    saveWinterizingRequest({ ...request, plannedDate: date || "", newOnPlan: false, keepOnDay: !!date && (count > season.limit || season.blocked[date] != null) });
     persist({ ...db, activityLog: addLog(db, actor, date ? `Planned winterizing for ${cottageName(request.cottageId)} on ${date}` : `Took winterizing for ${cottageName(request.cottageId)} off the schedule`) });
     if (!date) return setToast("Taken off the schedule");
-    const count = requests.filter((r) => !r.completed && r.id !== id && winterPlannedDate(r) === date).length + 1;
-    setToast(season.blocked[date] != null ? `Moved to ${dayLabel(date)} \u2014 that day is blocked` : count > season.limit ? `Moved to ${dayLabel(date)} \u2014 now ${count}, over ${season.limit}` : `Moved to ${dayLabel(date)}`);
+    setToast(date !== picked ? `Weekends are off \u2014 moved to ${dayLabel(date)}` : season.blocked[date] != null ? `Moved to ${dayLabel(date)} \u2014 that day is blocked` : count > season.limit ? `Moved to ${dayLabel(date)} \u2014 now ${count}, over ${season.limit}` : `Moved to ${dayLabel(date)}`);
   };
   const todo = requests.filter((r) => !r.completed);
   const hasWork = (d) => todo.some((r) => winterPlannedDate(r) === d) || requests.some((r) => r.completed && r.completedDate === d);
@@ -20660,7 +20793,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
           "div",
           { className: "min-w-0" },
           React.createElement("div", { className: "text-[15px] font-semibold text-[#1E1A13] truncate" }, info.site ? `Site ${info.site.number}` : "No site", React.createElement("span", { className: "font-normal text-[#4B4740]" }, ` \u00B7 ${info.cottage ? info.cottage.name : "Cottage"}`)),
-          React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, info.customer ? info.customer.name : "No owner linked", " \u00B7 ", info.section),
+          React.createElement("div", { className: "text-xs text-[#75716A] truncate" }, winterOwnerLabel(r, info, "No owner linked"), " \u00B7 ", info.section),
           !r.completed && winterHowToShort(info.site) && React.createElement("div", { className: "text-[13px] font-semibold text-[#2E6E8E] mt-0.5", "data-howto-short": true }, "\uD83D\uDD27 ", winterHowToShort(info.site))
         ),
         r.completed ? React.createElement("span", { className: "flex-none text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#DDF1E1] text-[#28633C]" }, "\u2713 Done") : r.newOnPlan ? React.createElement("span", { className: "flex-none text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-[#E9C46A] text-[#1E1A13]" }, "New") : st.key === "overdue" ? React.createElement("span", { className: `flex-none text-[11px] font-semibold px-2 py-0.5 rounded-full ${st.cls}` }, st.label) : null
@@ -20702,7 +20835,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
   const matches = (r) => {
     if (!q) return true;
     const info = winterInfo(db, r);
-    return `${info.site ? info.site.number : ""} ${info.cottage ? info.cottage.name : ""} ${info.customer ? info.customer.name : ""} ${info.section}`.toLowerCase().includes(q);
+    return `${info.site ? info.site.number : ""} ${info.cottage ? info.cottage.name : ""} ${winterOwnerLabel(r, info, "")} ${info.section}`.toLowerCase().includes(q);
   };
   const allEl = () => {
     const shown = requests.filter(matches);

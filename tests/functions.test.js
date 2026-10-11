@@ -444,7 +444,10 @@ test("winterizing keys: the open day before (Friday for Monday, Thanksgiving and
     set("winterizingRequests", "r2", { cottageId: "k2", plannedDate: "2026-10-19" }),
     set("winterizingRequests", "r3", { cottageId: "k3", requestedDate: "2026-10-19", options: { keyAtReception: true } }),
     set("winterizingRequests", "r4", { cottageId: "k1", plannedDate: "2026-10-19", completed: true }),
-    set("winterizingRequests", "r5", { cottageId: "k1", plannedDate: "2026-10-20" })
+    set("winterizingRequests", "r5", { cottageId: "k1", plannedDate: "2026-10-20" }),
+    // A park rental the same day: we have its keys, so it's not on the email.
+    set("cottages", "k4", { name: "Rental 1", siteId: "s1" }),
+    set("winterizingRequests", "r6", { cottageId: "k4", plannedDate: "2026-10-19", parkOwned: "rental" })
   ]);
   // Friday Oct 16, 9am Toronto.
   await fns.winterKeyList({ scheduleTime: "2026-10-16T13:00:00Z" });
@@ -454,6 +457,7 @@ test("winterizing keys: the open day before (Friday for Monday, Thanksgiving and
   assert.match(emails[0].message, /These 2 cottages are being winterized on Monday, October 19/);
   assert.match(emails[0].message, /Front of Park\n- Site 0010 · Willow · Bo Day, 6135550177\n\nLimestone South\n- Site 0490 · Birch · no owner linked \(customer said the key is at reception; not on the master list - check\)/);
   assert.doesNotMatch(emails[0].message, /Cedar/);
+  assert.doesNotMatch(emails[0].message, /Rental 1/);
   // Once per day, and not at all when turned off or nothing needs a key.
   await fns.winterKeyList({ scheduleTime: "2026-10-16T13:00:00Z" });
   assert.equal(emails.length, 1);
