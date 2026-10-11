@@ -826,11 +826,12 @@ function appointmentLinkLabel(appt, db) {
   return "";
 }
 const WINTERIZING_OPTIONS = [
-  { key: "dishwasher", label: "Dishwasher" },
-  { key: "washingMachine", label: "Washing machine" },
-  { key: "fridgeWater", label: "Water line to fridge" },
-  { key: "outsideTap", label: "Outside tap or shower" },
-  { key: "anodeRod", label: "Replace the anode rod", gateExempt: true },
+  // doneLabel: how the completion email to the customer says it was done.
+  { key: "dishwasher", label: "Dishwasher", doneLabel: "Dishwasher drained" },
+  { key: "washingMachine", label: "Washing machine", doneLabel: "Washing machine drained" },
+  { key: "fridgeWater", label: "Water line to fridge", doneLabel: "Fridge water line drained" },
+  { key: "outsideTap", label: "Outside tap or shower", doneLabel: "Outside tap / shower drained" },
+  { key: "anodeRod", label: "Replace the anode rod", doneLabel: "Anode rod replaced", gateExempt: true },
   { key: "keyAtReception", label: "Key left with reception", gateExempt: true }
 ];
 const COTTAGE_ORDER_STATUS = ["Ordered/Being Built", "Delivered/Onsite"];
@@ -8867,7 +8868,7 @@ function buildWinterizingEmailText(request, db) {
       <div style="margin:0 0 16px;">
         <p style="font-size:12px;text-transform:uppercase;letter-spacing:0.04em;color:#75716A;margin:0 0 6px;">Also Included</p>
         <ul style="margin:0;padding-left:18px;color:#4B4740;font-size:14px;line-height:1.6;">
-          ${servicedItems.map((opt) => `<li>${escapeHtml(opt.label)}</li>`).join("")}
+          ${servicedItems.map((opt) => `<li>${escapeHtml(opt.doneLabel || opt.label)}</li>`).join("")}
         </ul>
       </div>` : "";
   return `
@@ -8883,7 +8884,7 @@ function buildWinterizingEmailText(request, db) {
     <div style="background-color:#377249 !important;color:#F9F5EC !important;padding:22px 26px;border-radius:10px 10px 0 0;" bgcolor="#377249">
       <h1 style="margin:0;font-size:20px;font-weight:600;">Your Cottage Has Been Winterized</h1>
       <p style="margin:6px 0 0;font-size:13px;opacity:0.85;">
-        ${escapeHtml(request.completedDate || todayISO())}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}
+        ${escapeHtml(winterShortDate(request.completedDate || todayISO(), { weekday: "long", month: "long", day: "numeric", year: "numeric" }))}${cottage ? ` \u00B7 ${escapeHtml(cottage.name)}` : ""}${site ? ` \u00B7 Site ${escapeHtml(site.number)}` : ""}
       </p>
     </div>
     <div style="border:1px solid #E2DED5;border-top:none;padding:24px 26px;border-radius:0 0 10px 10px;background-color:#FFFDFA !important;color:#1E1A13 !important;" bgcolor="#FFFDFA">
