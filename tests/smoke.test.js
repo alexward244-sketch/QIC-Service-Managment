@@ -820,10 +820,11 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
   await page.getByRole("tab", { name: "Plan" }).click();
   const today = await page.evaluate(() => todayISO());
   const inTwo = await page.evaluate(() => winterAddDays(todayISO(), 2));
-  const inOne = await page.evaluate(() => winterAddDays(todayISO(), 1));
+  // The next open workday (not a weekend or closed day like Thanksgiving).
+  const inOne = await page.evaluate(() => winterNextWorkday(todayISO(), winterSeason({ settings: {} })));
   // Cedar is planned for its requested day; Willow for today.
   await page.locator(`[data-plan-column="${today}"] [data-plan-card="r1"]`).waitFor();
-  // Drag Willow to tomorrow (a weekday or not, a dropped-on day shows).
+  // Drag Willow to the next workday (when the board shows it).
   const target = page.locator(`[data-plan-column="${inOne}"]`);
   if (await target.count()) {
     await page.locator('[data-plan-card="r1"]').dragTo(target);
