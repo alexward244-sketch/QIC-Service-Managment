@@ -693,6 +693,58 @@ test("Admin Storage keeps the park map PDF and every section map, each with open
   await page.close();
 });
 
+test("a refresh keeps your place: the open tab, Admin page and email come back after a reload", async () => {
+  const page = await openApp(browser, "stub");
+  const mount = () => page.evaluate(() => {
+    const Probe = () => {
+      const [tab, setTab] = useSessionState("qic-tab", "dashboard");
+      return React.createElement("button", { id: "probe", onClick: () => setTab("winterizing") }, tab);
+    };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Probe));
+  });
+  await mount();
+  assert.equal(await page.locator("#probe").innerText(), "dashboard");
+  await page.locator("#probe").click();
+  await page.locator("#probe", { hasText: "winterizing" }).waitFor();
+  await page.reload();
+  await page.waitForFunction(() => typeof useSessionState === "function");
+  await mount();
+  assert.equal(await page.locator("#probe").innerText(), "winterizing", "still on Winterizing after the refresh");
+  // The Admin settings page remembers its pane the same way.
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AdminSettingsView, { db: { settings: {}, sites: [], activityLog: [] }, persist() {} })));
+  await page.getByRole("button", { name: "Storage" }).click();
+  await page.reload();
+  await page.waitForFunction(() => typeof AdminSettingsView === "function");
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AdminSettingsView, { db: { settings: {}, sites: [], activityLog: [] }, persist() {} })));
+  await page.locator("[data-storage]").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("typing in an open pop-up makes a refresh ask first; closing it (saved or cancelled) stops asking", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__setOpen = null;
+    const Box = () => {
+      const [open, setOpen] = React.useState(true);
+      const [v, setV] = React.useState("");
+      window.__setOpen = setOpen;
+      return open ? React.createElement(Modal, { title: "New Work Order", onClose: () => setOpen(false) }, React.createElement("input", { id: "f", value: v, onChange: (e) => setV(e.target.value) })) : null;
+    };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Box));
+  });
+  const leaving = () => page.evaluate(() => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
+  await page.locator("#f").waitFor();
+  assert.equal(await leaving(), false, "nothing typed yet");
+  await page.locator("#f").fill("Leaky tap");
+  assert.equal(await leaving(), true, "typed in it: the browser asks before leaving");
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.locator("#f").waitFor({ state: "detached" });
+  assert.equal(await leaving(), false, "closed: no question");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {

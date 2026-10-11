@@ -2658,8 +2658,38 @@ function Toast({ message, onDismiss }) {
   }
   return /* @__PURE__ */ React.createElement("div", { className: "fixed bottom-5 right-5 z-[100] bg-[#1E1A13] text-white text-sm px-4 py-2.5 rounded-lg shadow-lg flex items-center gap-2" }, /* @__PURE__ */ React.createElement("span", { className: "text-[#7ED9A0]" }, "\u2713"), " ", message);
 }
+// Kept through a refresh of this browser tab (sessionStorage), so a refresh
+// doesn't drop people back on the dashboard.
+function useSessionState(key, initial) {
+  const [value, setValue] = useState(() => {
+    try {
+      const raw = sessionStorage.getItem(key);
+      return raw != null ? JSON.parse(raw) : initial;
+    } catch (e) {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+    }
+  }, [key, value]);
+  return [value, setValue];
+}
+// Pop-up windows someone has typed in. While any is open, refreshing or
+// closing the page asks first ("Leave site? Changes may not be saved").
+const MODALS_WITH_EDITS = /* @__PURE__ */ new Set();
+if (typeof window !== "undefined") window.addEventListener("beforeunload", (e) => {
+  if (!MODALS_WITH_EDITS.size) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
 function Modal({ title, onClose, children, wide, xl }) {
-  return /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#181611]/40 p-4 sm:p-8" }, /* @__PURE__ */ React.createElement(
+  const editsRef = useRef({});
+  useEffect(() => () => MODALS_WITH_EDITS.delete(editsRef.current), []);
+  const noteEdit = () => MODALS_WITH_EDITS.add(editsRef.current);
+  return /* @__PURE__ */ React.createElement("div", { className: "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[#181611]/40 p-4 sm:p-8", onInputCapture: noteEdit, onChangeCapture: noteEdit, "data-modal": true }, /* @__PURE__ */ React.createElement(
     "div",
     {
       className: `bg-[#FFFDFA] rounded-xl shadow-2xl w-full ${xl ? "max-w-4xl" : wide ? "max-w-2xl" : "max-w-md"} mt-4 mb-8 border border-[#E2DED5]`
@@ -18887,7 +18917,7 @@ function EmailIntakePane({ db, persist }) {
   );
 }
 function AdminSettingsView({ db, persist, saveSite, bulkWriteSites }) {
-  const [pane, setPane] = useState("sitefees");
+  const [pane, setPane] = useSessionState("qic-admin-pane", "sitefees");
   let content;
   if (pane === "sitefees") content = React.createElement(SiteFeesPane, { db, persist, saveSite, bulkWriteSites });
   else if (pane === "laborrates") content = React.createElement(LaborRatesPane, { db, persist });
@@ -19362,8 +19392,8 @@ function markEmailReadInZoho(item) {
 }
 function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice, onOpenEmailTrash }) {
   const actor = useCurrentActor();
-  const [selectedId, setSelectedId] = useState(null);
-  const [viewCustomerId, setViewCustomerId] = useState(null);
+  const [selectedId, setSelectedId] = useSessionState("qic-corr-selected", null);
+  const [viewCustomerId, setViewCustomerId] = useSessionState("qic-corr-customer", null);
   const [composePickerOpen, setComposePickerOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [creatingFrom, setCreatingFrom] = useState(null);
@@ -22582,9 +22612,9 @@ function AppContent() {
   const [fieldModeOverride, setFieldModeOverride] = useState(
     () => typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("mode") : null
   );
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useSessionState("qic-tab", "dashboard");
   const [moneyVisible, setMoneyVisible] = useState(false);
-  const [mode, setMode] = useState("service");
+  const [mode, setMode] = useSessionState("qic-mode", "service");
   useEffect(() => {
     setMoneyVisible(mode === "accounting");
   }, [tab, mode]);

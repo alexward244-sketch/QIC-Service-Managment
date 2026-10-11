@@ -42,6 +42,12 @@ Alex is the owner and the person you're working with; Tim
     update this note).
 - Explain things in plain language; Alex isn't a developer. Keep replies
   short and lead with what changed for them.
+- A refresh keeps people where they were: the computer app's tab and menu
+  section, the Admin settings page and the open email are kept in this
+  browser tab (`useSessionState`, sessionStorage); the field app keeps its
+  screen in history.state; email replies are saved as typed
+  (`saveEmailDraft`). Typing in any `Modal` makes a refresh/close ask first
+  (`MODALS_WITH_EDITS` + beforeunload) until it's closed.
 - Alex reviews on desktop; phone layouts matter for field staff screens
   (`useIsMobile()` = under 640px), not for accounting/review pages.
 
