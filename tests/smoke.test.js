@@ -622,6 +622,129 @@ test("winterizing: Add park cottages puts the rentals on the list, marked Park, 
   await page.close();
 });
 
+test("winterizing maps: each site is found on its section map; colours come from the how-to; a day prints one page per map with its cottages circled", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const pin = (n) => { const p = winterMapPin({ number: n }); return p ? p.map.key : null; };
+    const sites = [
+      { id: "s1", number: "0126", section: "Front of Park", winterHowTo: { code: "BP" } },
+      { id: "s2", number: "0412A", section: "4 Season", winterHowTo: { code: "IN KT W DT" } },
+      { id: "s3", number: "0490", section: "Limestone South" },
+      { id: "s4", number: "1009", section: "Pebble Beach" },
+      { id: "s5", number: "000A", section: "Front of Park", winterHowTo: { code: "DT" } },
+      { id: "s6", number: "9999", section: "Somewhere" }
+    ];
+    const cottages = sites.map((x, i) => ({ id: "k" + i, name: "Cottage " + x.number, siteId: x.id }));
+    const db = { sites, cottages, customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }], settings: {} };
+    const reqs = [{ id: "r1", cottageId: "k0", customerId: "c1", options: { keyAtReception: true }, notes: "Dog in yard" }, { id: "r2", cottageId: "k1", parkOwned: "rental", options: {} }, { id: "r3", cottageId: "k2", options: {} }, { id: "r6", cottageId: "k5", options: {} }];
+    const html = buildWinterMapPages(winterMapEntriesForDay(reqs, db), db, "Tuesday, October 14");
+    const box = document.createElement("div"); box.innerHTML = html;
+    return {
+      pins: ["0126", "0412A", "0490", "1009", "000A", "K1", "0023A", "9999"].map(pin),
+      kinds: [sites[0], sites[1], sites[2]].map((x) => winterMapKinds(x).map((k) => k.letter).join("")),
+      pages: [...box.querySelectorAll(".wmap")].map((p) => [p.querySelector(".meta").textContent, p.querySelectorAll("svg text").length, [...p.querySelectorAll(".wmap-list tr")].length - 1]),
+      firstRow: box.querySelector(".wmap .wmap-list tr:nth-child(2)").textContent,
+      parkRow: [...box.querySelectorAll(".wmap-list tr")].map((r) => r.textContent).find((t) => /0412A/.test(t)),
+      offMap: [...box.querySelectorAll(".wo")].pop().textContent
+    };
+  });
+  assert.deepEqual(out.pins, ["front-of-park", "four-season", "limestone-south", "pebble-beach-west", "front-of-park", "front-of-park", "front-of-park", null]);
+  assert.deepEqual(out.kinds, ["B", "ID", ""]);
+  // Front of Park, 4 Season, Limestone South: one page each, one badge per cottage; 9999 isn't on a map.
+  assert.deepEqual(out.pages, [["Front of Park1 cottage", 1, 1], ["4 Season1 cottage", 1, 1], ["Limestone South1 cottage", 1, 1]]);
+  assert.match(out.firstRow, /0126.*Cottage 0126.*Bo Day.*Bypass.*Key left with reception.*Dog in yard/);
+  assert.match(out.parkRow, /Park · rental cottage/);
+  assert.match(out.offMap, /Not on a map.*9999/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing plan board: a day's Map button and the Section map picker print maps", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.evaluate(() => { window.__printed = []; window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } }); });
+  await page.getByRole("tab", { name: "Plan" }).click();
+  const today = await page.evaluate(() => todayISO());
+  await page.locator(`[data-plan-column="${today}"] [data-day-map]`).click();
+  const day = await page.evaluate(() => window.__printed.pop());
+  assert.match(day, /class="wo wmap"/);
+  assert.match(day, /<svg viewBox=/);
+  await page.locator("[data-section-map]").selectOption("front-of-park");
+  const section = await page.evaluate(() => window.__printed.pop());
+  assert.match(section, /Front of Park — how each site is winterized/);
+  assert.match(section, /5 cottages/, "sites 126, 233, 107, 301 and 302 are all on the Front of Park map");
+  await page.locator("[data-section-map]").selectOption("pebble-beach-west");
+  assert.match(await page.evaluate(() => window.__printed.pop()), /None of these sites are set up in the app yet/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("Admin Storage keeps the park map PDF and every section map, each with open / print / download", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => { window.__printed = []; window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } }); ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(StoragePane)); });
+  await page.locator("[data-storage]").waitFor();
+  const files = await page.locator("[data-storage-file]").evaluateAll((els) => els.map((e) => [e.getAttribute("data-storage-file"), [...e.querySelectorAll("a[download]")].map((a) => a.getAttribute("href")).join()]));
+  assert.deepEqual(files, [["park-map", "maps/park-map.pdf"], ["front-of-park", "maps/front-of-park.jpg"], ["four-season", "maps/four-season.jpg"], ["limestone-south", "maps/limestone-south.jpg"], ["pebble-beach-east", "maps/pebble-beach-east.jpg"], ["pebble-beach-west", "maps/pebble-beach-west.jpg"]]);
+  // Every file it points at is in the repo.
+  for (const [, href] of files) assert.ok(require("fs").existsSync(require("path").join(__dirname, "..", href)), href);
+  await page.locator('[data-storage-file="limestone-south"]').getByRole("button", { name: "Print" }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Limestone South[\s\S]*maps\/limestone-south\.jpg/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("a refresh keeps your place: the open tab, Admin page and email come back after a reload", async () => {
+  const page = await openApp(browser, "stub");
+  const mount = () => page.evaluate(() => {
+    const Probe = () => {
+      const [tab, setTab] = useSessionState("qic-tab", "dashboard");
+      return React.createElement("button", { id: "probe", onClick: () => setTab("winterizing") }, tab);
+    };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Probe));
+  });
+  await mount();
+  assert.equal(await page.locator("#probe").innerText(), "dashboard");
+  await page.locator("#probe").click();
+  await page.locator("#probe", { hasText: "winterizing" }).waitFor();
+  await page.reload();
+  await page.waitForFunction(() => typeof useSessionState === "function");
+  await mount();
+  assert.equal(await page.locator("#probe").innerText(), "winterizing", "still on Winterizing after the refresh");
+  // The Admin settings page remembers its pane the same way.
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AdminSettingsView, { db: { settings: {}, sites: [], activityLog: [] }, persist() {} })));
+  await page.getByRole("button", { name: "Storage" }).click();
+  await page.reload();
+  await page.waitForFunction(() => typeof AdminSettingsView === "function");
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AdminSettingsView, { db: { settings: {}, sites: [], activityLog: [] }, persist() {} })));
+  await page.locator("[data-storage]").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("typing in an open pop-up makes a refresh ask first; closing it (saved or cancelled) stops asking", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__setOpen = null;
+    const Box = () => {
+      const [open, setOpen] = React.useState(true);
+      const [v, setV] = React.useState("");
+      window.__setOpen = setOpen;
+      return open ? React.createElement(Modal, { title: "New Work Order", onClose: () => setOpen(false) }, React.createElement("input", { id: "f", value: v, onChange: (e) => setV(e.target.value) })) : null;
+    };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Box));
+  });
+  const leaving = () => page.evaluate(() => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
+  await page.locator("#f").waitFor();
+  assert.equal(await leaving(), false, "nothing typed yet");
+  await page.locator("#f").fill("Leaky tap");
+  assert.equal(await leaving(), true, "typed in it: the browser asks before leaving");
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.locator("#f").waitFor({ state: "detached" });
+  assert.equal(await leaving(), false, "closed: no question");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {

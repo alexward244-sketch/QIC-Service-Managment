@@ -42,6 +42,12 @@ Alex is the owner and the person you're working with; Tim
     update this note).
 - Explain things in plain language; Alex isn't a developer. Keep replies
   short and lead with what changed for them.
+- A refresh keeps people where they were: the computer app's tab and menu
+  section, the Admin settings page and the open email are kept in this
+  browser tab (`useSessionState`, sessionStorage); the field app keeps its
+  screen in history.state; email replies are saved as typed
+  (`saveEmailDraft`). Typing in any `Modal` makes a refresh/close ask first
+  (`MODALS_WITH_EDITS` + beforeunload) until it's closed.
 - Alex reviews on desktop; phone layouts matter for field staff screens
   (`useIsMobile()` = under 640px), not for accounting/review pages.
 
@@ -168,6 +174,16 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the
   computer screen.
+- Section maps: the Plan board's "Map" on a day prints each section's map
+  (`maps/*.jpg`, `WINTER_MAPS` pins) with that day's cottages circled by how
+  they're winterized - blue B bypass, orange I inside, green D drain tap,
+  split ring for two, grey ? no how-to - plus the list. "Section map" prints
+  a whole section (Pebble Beach / By the Woods days). Cut from the park's
+  vector map PDF with `tools/winter-maps/` (see its README). Pins match
+  site numbers without leading zeros (`winterMapKey`).
+- Admin > Settings > Files > Storage (`StoragePane`) keeps files for any
+  use: the park's large map PDF (`maps/park-map.pdf`) and the section maps
+  (open / print / download). Add future files there.
 - How to winterize each cottage comes from Alex's master list, kept on the
   site as `winterHowTo { code, note, masterKey }` (Winterizing → "How-to
   list…" imports the Excel; edit one on the checklist). Codes: BP = bypass,
