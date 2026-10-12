@@ -342,3 +342,9 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Service Manager's list misses them. Plan: let them look up just the unsold
   delivered display models' sites (rules change + deploy), not the rest of
   the sales records. Alex said to remind him another time (Oct 2026).
+- Claude API without a key: switch the Cloud Functions from the
+  `ANTHROPIC_API_KEY` secret to Anthropic identity federation (Google Cloud
+  issues short-lived tokens, so nothing expires or needs replacing). Needs
+  setup in Google Cloud and the Anthropic console plus a change to how
+  `getAnthropicClient` signs in. Alex renewed the key by hand in Oct 2026
+  and wants this eventually.
