@@ -164,7 +164,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
   (`winterKeyEmails/{date sent}`); off with `settings.winterKeyEmailOff`
-  (checkbox on the Plan board).
+  (checkbox on the Plan board). "Resend keys email now" next to it
+  (`resendWinterKeyList`, Admin / Service Manager) sends the list as planned
+  now, even if today's already went or the daily email is off - marked
+  "UPDATED" when it replaces one sent that day.
 - Closed days: Thanksgiving Monday automatically, plus blocked days ticked
   "We're closed" (`winterBlockedDays[].closed`). Nothing is planned on them,
   no keys email goes out that morning, and the open day before covers
@@ -202,12 +205,31 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Sign-ups use the same review forms as their own screens. It's in the
   menu's "Today" group (`SERVICE_NAV_GROUPS`, not just `TABS`), and the
   Dashboard's "Sign-Ups Needing Review" card opens it.
+- Website service requests are read by Claude on arrival
+  (`generalServiceRequest` runs `triageCorrespondence`, saved as the
+  sign-up's `triage`): the draft work order's title and priority come from
+  it, and the appliance is guessed from the words (`guessAppliance`). If
+  Claude can't be reached the request is saved without it.
 - The Service Requests tab is hidden (taken out of `TABS` and the menu);
   `GeneralServiceView` is still in the code until Alex says to delete it.
 - A website form confirmed for a customer (from anywhere) is saved in their
   correspondence as `correspondence/webform_<sign-up id>` (handled, linked to
   what it made) so a reply to it reads in order. Web forms and logged calls
   never touch Zoho (`notFromZoho`).
+
+**Work orders**
+- Statuses: Open, In Progress, Pending, Completed. Pending is for jobs booked
+  well ahead and needs a `startDate`. Pending jobs stay out of the open /
+  urgent / overdue counts, the nav badge and the crew's lists (`woActive`)
+  until someone moves them to In Progress - never automatically.
+- Reminders: a month, two weeks, a week, two days and the day before the
+  start date - weekends included, the park is open - (only those still ahead
+  when it was set, `pendingSince`), in the morning
+  summary on those days and the start date only (not daily), and as a pop-up
+  (`PendingJobsPrompt`) for Admins and Service Managers: each person answers
+  their own ("Not yet" is saved per person in `reminderSeen`), one nobody
+  saw (app not opened that day) shows next time, and it's daily once the start date has
+  come. Changing the start date (pop-up or form) resets the reminders.
 
 **Parts**
 - Each part is its own document in the `parts` collection (not in
@@ -291,6 +313,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
   accounting but not shown on the invoice form or anything customers see.
+- A part's Description (Parts) is its usual customer-facing wording: adding
+  the part to an invoice or quote copies it onto the line as `details`
+  (shown under the part name on the form, print and email), editable there
+  without changing the part ("Use the part's usual wording" puts it back).
 - Shop supplies (default 5%) is a share of parts + labour + the service
   call (lines with `withServiceCall`). Older lines and the old
   shop-supplies fields stay parts + labour, so invoices already sent keep

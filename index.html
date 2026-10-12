@@ -524,7 +524,7 @@ function buildDealsFromLegacyData(db) {
   return deals;
 }
 
-const STATUS = ["Open", "In Progress", "Completed"];
+const STATUS = ["Open", "In Progress", "Pending", "Completed"];
 const PRIORITY = ["Low", "Medium", "High", "Urgent"];
 const PRIORITY_STYLES = {
   Low: "bg-[#F1EEE9] text-[#75716A]",
@@ -535,8 +535,42 @@ const PRIORITY_STYLES = {
 const WO_STATUS_STYLES = {
   Open: "bg-[#F1EEE9] text-[#4B4740]",
   "In Progress": "bg-[#DCEBE8] text-[#3E7A72]",
+  Pending: "bg-[#EDE7F6] text-[#5E4B8B]",
   Completed: "bg-[#DDF1E1] text-[#28633C]"
 };
+// Pending: a job booked well ahead, with a start date. It stays out of the
+// open / urgent / overdue counts and the crew's lists until someone moves
+// it to In Progress. Reminders come a month, two weeks, a week, two days
+// and the day before the start date (only the ones still ahead when it was
+// set; weekends count - we're open), in the
+// morning summary on those days and as a pop-up in the app for Admins and
+// Service Managers - each person answers their own - and every day once the
+// start date has come. Changing the start date starts the reminders over.
+const PENDING_REMINDER_DAYS = [30, 14, 7, 2, 1];
+function addDaysISO(iso, n) {
+  const d = /* @__PURE__ */ new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function woActive(w) {
+  return w.status !== "Completed" && w.status !== "Pending";
+}
+function pendingReminderDates(w) {
+  if (!w || !w.startDate) return [];
+  return PENDING_REMINDER_DAYS.map((n) => addDaysISO(w.startDate, -n)).filter((d) => !w.pendingSince || d >= w.pendingSince);
+}
+// The reminder due today for a pending job, as a key (null if none): the
+// latest reminder day reached - so one missed (nobody opened the app that
+// day) still shows next time - or today, once the start date has come.
+function pendingReminderDue(w, today) {
+  if (!w || w.status !== "Pending" || !w.startDate) return null;
+  if (w.startDate <= today) return `${w.startDate}@${today}`;
+  const reached = pendingReminderDates(w).filter((d) => d <= today);
+  return reached.length ? `${w.startDate}@${reached[reached.length - 1]}` : null;
+}
+function reminderPersonKey(email) {
+  return String(email || "").trim().toLowerCase().replace(/\./g, ",");
+}
 const TREE_STAGES = ["To be Inspected", "Inspected", "QIC Job", "Hire Out"];
 const TREE_STAGE_STYLES = {
   "To be Inspected": "bg-[#FBEEDA] text-[#9A6B1F]",
@@ -923,7 +957,7 @@ function isThisMonth(dateStr) {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }
 function isOverdue(wo) {
-  return wo.status !== "Completed" && wo.date && wo.date < todayISO();
+  return woActive(wo) && wo.date && wo.date < todayISO();
 }
 function defaultPropaneRun(requestedDate) {
   const today = todayISO();
@@ -1373,6 +1407,7 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       return {
         id: uid(),
         description: part ? part.name : "Part",
+        details: part ? part.description || "" : "",
         quantity: Number(pu.quantity) || 1,
         unitPrice: part ? Number(part.price) || 0 : 0,
         account: part ? part.salesAccount || "" : "",
@@ -7278,8 +7313,29 @@ function isPropaneWorkOrder(wo, propaneRequests) {
 function shopSuppliesInvoiceLine(percent) {
   return { id: uid(), kind: "shopSupplies", description: "Shop supplies", percent: percent != null ? percent : 5, withServiceCall: true, quantity: 1, unitPrice: 0, account: "" };
 }
+// A part's line starts with the part's saved description under its name
+// (`details`), the same wording every time; it can be changed on this
+// invoice or quote without touching the part.
 function partInvoiceLine(part, quantity) {
-  return { id: uid(), description: part.name, quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+  return { id: uid(), description: part.name, details: part.description || "", quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+}
+// Under a line's description on printed/emailed quotes and invoices.
+function lineDetailsHtml(li) {
+  const d = (li && li.details || "").trim();
+  return d ? `<div style="font-size:12px;color:#75716A;white-space:pre-line;margin-top:2px;">${escapeHtml(d)}</div>` : "";
+}
+// The editable text under a part's line in the invoice and quote forms.
+function InvoiceLineDetails({ li, parts, updateLine }) {
+  if (!li.partId && !li.details) return null;
+  const part = li.partId ? (parts || []).find((p) => p.id === li.partId) : null;
+  const original = part && part.description || "";
+  if (!li.details && !original) return null;
+  return React.createElement(
+    "div",
+    { className: "basis-full pl-1 -mt-1" },
+    React.createElement("textarea", { className: inputCls + " text-xs", rows: 2, value: li.details || "", onChange: (e) => updateLine(li.id, "details", e.target.value), placeholder: "Description shown to the customer", "aria-label": "Description shown to the customer" }),
+    original && (li.details || "") !== original && React.createElement("button", { type: "button", onClick: () => updateLine(li.id, "details", original), className: "text-[11px] text-[#377249] hover:underline font-medium" }, "Use the part's usual wording")
+  );
 }
 // The lines an invoice opens with in the form: an older invoice's labour
 // and service call fields become lines, with a blank line to type into last.
@@ -7338,6 +7394,7 @@ function InvoiceLineAmounts({ li, partsAndLabour, serviceCall, updateLine }) {
 function cleanInvoiceLine(li, partsAndLabour, serviceCall) {
   const base = { id: li.id, description: li.description.trim(), quantity: Number(li.quantity) || 0, unitPrice: Number(li.unitPrice) || 0, account: (li.account || "").trim() };
   if (li.partId) base.partId = li.partId;
+  if ((li.details || "").trim()) base.details = li.details.trim();
   if (li.kind) Object.assign(base, { kind: li.kind, rateType: li.rateType || "" });
   if (li.kind === "shopSupplies" && li.percent != null && li.percent !== "") Object.assign(base, { percent: Number(li.percent) || 0, ...(li.withServiceCall ? { withServiceCall: true } : {}), quantity: 1, unitPrice: shopSuppliesLineAmount(li, partsAndLabour, serviceCall) });
   return base;
@@ -7572,7 +7629,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
+  ), React.createElement(InvoiceLineDetails, { li, parts, updateLine })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
     step: "0.01",
@@ -7655,7 +7712,7 @@ function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, o
       lineItems.map((li) => /* @__PURE__ */ React.createElement(
         "div",
         { key: li.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" },
-        /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, li.description || "—", " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\xD7", li.quantity)),
+        /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, li.description || "—", " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\xD7", li.quantity), li.details && React.createElement("span", { className: "block text-xs text-[#75716A] whitespace-pre-line" }, li.details)),
         /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0)))
       ))
     ),
@@ -8267,7 +8324,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const actor = useCurrentActor();
   const [viewingWO, setViewingWO] = useState(null);
   const dashboardWorkOrders = withoutTreeWorkOrders(db, db.workOrders);
-  const openWorkOrders = dashboardWorkOrders.filter((w) => w.status !== "Completed");
+  const openWorkOrders = dashboardWorkOrders.filter(woActive);
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const [reviewChooserOpen, setReviewChooserOpen] = useState(false);
   const [unrecognizedOpen, setUnrecognizedOpen] = useState(false);
@@ -8310,7 +8367,7 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const pendingPropaneSubtitle = pendingPropaneParts.length > 0 ? pendingPropaneParts.join(" \xB7 ") : "All caught up";
   const recentWorkOrders = dashboardWorkOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 6);
   const upcomingAppointments = (db.serviceAppointments || []).filter((a) => !a.completedDate).map((a) => ({ ...a, itemType: "appointment" }));
-  const scheduledWorkOrders = dashboardWorkOrders.filter((w) => w.status !== "Completed" && w.date && w.date > todayISO()).map((w) => ({ id: w.id, title: w.title, date: w.date, time: "", itemType: "workOrder", wo: w }));
+  const scheduledWorkOrders = dashboardWorkOrders.filter((w) => woActive(w) && w.date && w.date > todayISO()).map((w) => ({ id: w.id, title: w.title, date: w.date, time: "", itemType: "workOrder", wo: w }));
   const upcomingItems = [...upcomingAppointments, ...scheduledWorkOrders].sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
   const completeAppointment = (appt) => {
     const next = (db.serviceAppointments || []).map((a) => a.id === appt.id ? { ...a, completedDate: todayISO() } : a);
@@ -8894,7 +8951,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
+  ), React.createElement(InvoiceLineDetails, { li, parts, updateLine })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
 }
 
 function escapeHtml(str) {
@@ -8978,7 +9035,7 @@ function buildQuoteHtml(quote, db, taxRate) {
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
   const rows = quote.lineItems.map(
     (li) => `<tr>
-        <td>${escapeHtml(li.description)}</td>
+        <td>${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="text-align:right;">${escapeHtml(String(li.quantity))}</td>
         <td style="text-align:right;">${formatPrice(li.unitPrice)}</td>
         <td style="text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
@@ -9048,7 +9105,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
     .map(
       (li) => `
       <tr>
-        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;">${escapeHtml(li.description)}</td>
+        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;">${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#75716A;font-size:14px;text-align:center;">${escapeHtml(String(li.quantity))}</td>
         <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
       </tr>`
@@ -9329,8 +9386,8 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
   const laborHours = Number(invoice.laborHours) || 0;
   const laborRate = Number(invoice.laborRate) || 0;
   const rows = (invoice.lineItems || []).map(
-    (li) => infoSheet ? `<tr><td>${escapeHtml(li.description)}</td></tr>` : `<tr>
-        <td>${escapeHtml(li.description)}</td>
+    (li) => infoSheet ? `<tr><td>${escapeHtml(li.description)}${lineDetailsHtml(li)}</td></tr>` : `<tr>
+        <td>${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="text-align:right;">${escapeHtml(String(li.quantity))}</td>
         <td style="text-align:right;">${formatPrice(li.unitPrice)}</td>
         <td style="text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
@@ -9402,7 +9459,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
   const balance = total - (Number(invoice.depositAmount) || 0);
   const lineRows = (invoice.lineItems || []).map(
     (li) => `<tr>
-        <td style="padding:5px 0;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(li.description)}</td>
+        <td style="padding:5px 0;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="padding:5px 0;text-align:right;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(String(li.quantity))}</td>
         <td style="padding:5px 0;text-align:right;color:#4B4740;border-bottom:1px solid #F1EEE9;">${formatPrice(li.unitPrice)}</td>
         <td style="padding:5px 0;text-align:right;color:#1E1A13;border-bottom:1px solid #F1EEE9;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
@@ -12122,7 +12179,7 @@ function WorkOrderRow({ wo, db, onOpen, onAdvance, onText, smsStatus, onCreateIn
       },
       /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014"),
       PAYMENT_STATUS.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.value, value: p.value }, p.label))
-    ) : /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] flex-shrink-0 whitespace-nowrap" }, wo.date),
+    ) : /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] flex-shrink-0 whitespace-nowrap" }, wo.status === "Pending" && wo.startDate ? `Starts ${wo.startDate}` : wo.date),
     !isDone && !selectMode && EMAIL_ENABLED && (assignedStaff == null ? void 0 : assignedStaff.phone) && /* @__PURE__ */ React.createElement(
       "button",
       {
@@ -12144,7 +12201,7 @@ function WorkOrderRow({ wo, db, onOpen, onAdvance, onText, smsStatus, onCreateIn
         },
         className: "flex-shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#377249]/10 text-[#377249] hover:bg-[#377249]/20 whitespace-nowrap"
       },
-      wo.status === "Open" ? "Start \u2192" : "Complete \u2192"
+      wo.status === "Open" || wo.status === "Pending" ? "Start \u2192" : "Complete \u2192"
     ),
     isDone && !selectMode && onCreateInvoice && !wo.salesSourced && !hasInvoice && /* @__PURE__ */ React.createElement(
       "button",
@@ -12364,8 +12421,7 @@ function WorkOrdersView({ db, persist, saveWorkOrder, deleteWorkOrder, saveCotta
     else changeStatus(wo, nextStatus);
   };
   const advance = (wo) => {
-    const idx = STATUS.indexOf(wo.status);
-    const nextStatus = STATUS[Math.min(idx + 1, STATUS.length - 1)];
+    const nextStatus = wo.status === "Open" || wo.status === "Pending" ? "In Progress" : "Completed";
     completeOrWrapUp(wo, nextStatus);
   };
   const [archiveSelectMode, setArchiveSelectMode] = useState(false);
@@ -12701,7 +12757,7 @@ function BulkEditWorkOrdersForm({ workOrders, staff, sites, cottages, onSave, on
     onSave(field, field === "assignedTo" ? value.trim() : value, Array.from(selected));
   };
   const sortedWorkOrders = workOrders.slice().sort((a, b) => a.date < b.date ? 1 : -1);
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Pick a field and a value, then check off which work orders should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => handleFieldChange(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "status" }, "Status"), /* @__PURE__ */ React.createElement("option", { value: "assignedTo" }, "Assigned To"))), field === "status" ? /* @__PURE__ */ React.createElement(Field, { label: "New Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value, onChange: (e) => setValue(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))) : /* @__PURE__ */ React.createElement(Field, { label: "Assign To" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Pick a field and a value, then check off which work orders should get it."), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Field to Update" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: field, onChange: (e) => handleFieldChange(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "status" }, "Status"), /* @__PURE__ */ React.createElement("option", { value: "assignedTo" }, "Assigned To"))), field === "status" ? /* @__PURE__ */ React.createElement(Field, { label: "New Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value, onChange: (e) => setValue(e.target.value) }, STATUS.filter((s) => s !== "Pending").map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))) : /* @__PURE__ */ React.createElement(Field, { label: "Assign To" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -13234,6 +13290,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   const [applianceId, setApplianceId] = useState((initial == null ? void 0 : initial.applianceId) || "");
   const [assignedTo, setAssignedTo] = useState((initial == null ? void 0 : initial.assignedTo) || "");
   const [status, setStatus] = useState((initial == null ? void 0 : initial.status) || "Open");
+  const [startDate, setStartDate] = useState((initial == null ? void 0 : initial.startDate) || "");
   const [priority, setPriority] = useState((initial == null ? void 0 : initial.priority) || "Medium");
   const [workGroup, setWorkGroup] = useState((initial == null ? void 0 : initial.workGroup) || "");
   const [date, setDate] = useState((initial == null ? void 0 : initial.date) || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
@@ -13388,6 +13445,9 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
   };
   const submit = () => {
     if (!title.trim()) return needToSave("a title");
+    if (status === "Pending" && !startDate) return needToSave("a start date");
+    // A new start date (or newly Pending) starts its reminders over.
+    const samePending = !!(initial && initial.status === "Pending" && initial.startDate === startDate);
     onSave({
       // When editing, keep everything this form doesn't manage (the notes
       // log, links set elsewhere) - saving replaces the whole Firestore
@@ -13403,6 +13463,9 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       applianceId: applianceId && (((cottages || []).find((c) => c.id === cottageId) || {}).appliances || []).some((a) => a.id === applianceId) ? applianceId : null,
       assignedTo: assignedTo.trim(),
       status,
+      startDate: startDate || null,
+      pendingSince: status === "Pending" ? samePending ? initial.pendingSince || todayISO() : todayISO() : (initial && initial.pendingSince) || null,
+      ...status === "Pending" && !samePending ? { reminderSeen: {} } : {},
       priority,
       workGroup: workGroup.trim(),
       date,
@@ -13456,7 +13519,7 @@ function WorkOrderForm({ initial, sites, cottages, staff, parts, customers, work
       placeholder: "e.g. Dave",
       list: "wo-staff-list"
     }
-  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-staff-list" }, (staff || []).map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.name })))), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), (showMore || status !== "Open") && /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), (showMore || workGroup) && /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("datalist", { id: "wo-staff-list" }, (staff || []).map((s) => /* @__PURE__ */ React.createElement("option", { key: s.id, value: s.name })))), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), (showMore || status !== "Open") && /* @__PURE__ */ React.createElement(Field, { label: "Status" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: status, onChange: (e) => setStatus(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), status === "Pending" && React.createElement(Field, { label: "Start date" }, React.createElement("input", { type: "date", className: inputCls, value: startDate, min: todayISO(), onChange: (e) => setStartDate(e.target.value), "aria-label": "Start date" }), React.createElement("p", { className: "text-[11px] text-[#75716A] mt-1" }, startDate ? `Reminders: ${pendingReminderDates({ startDate, pendingSince: initial && initial.status === "Pending" && startDate === initial.startDate ? initial.pendingSince : todayISO() }).map((d) => d.slice(5)).join(", ") || "none left before the start"} \u2014 in the morning summary and a pop-up for Admins and Service Managers, then daily from the start date until it's moved to In Progress.` : "Pending jobs need a start date.")), (showMore || workGroup) && /* @__PURE__ */ React.createElement(Field, { label: "Work Group (optional)" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       className: inputCls,
@@ -14657,6 +14720,28 @@ function winterNextWorkday(iso, season) {
 // a day (25 unless changed), and days blocked off for other work (e.g.
 // Pebble Beach and By the Woods, whose winterizing is in their fee and who
 // don't sign up), each with a label.
+// Sends the keys email again now (marked UPDATED when today's already went
+// out), for when the next day's plan changed after the 9am email.
+function WinterKeysResendButton() {
+  const [state, setState] = useState(null);
+  const send = async () => {
+    if (!window.confirm("Send reception the keys list for the next winterizing day again, as it is planned now?")) return;
+    setState({ busy: true });
+    try {
+      const res = await functions_.httpsCallable("resendWinterKeyList")({});
+      const d = res.data || {};
+      setState({ text: d.count ? `Sent \u2014 ${d.count} cottage${d.count === 1 ? "" : "s"} for ${d.when}` : `Sent \u2014 no keys needed for ${d.when}` });
+    } catch (e) {
+      setState({ error: true, text: (e && e.message) || "Couldn't send it \u2014 try again." });
+    }
+  };
+  return React.createElement(
+    "span",
+    { className: "flex items-center gap-1.5 text-xs" },
+    React.createElement("button", { type: "button", onClick: send, disabled: !!(state && state.busy), "data-winter-keys-resend": true, className: "px-2 py-1 rounded-md border border-[#E2DED5] bg-white text-[#377249] font-semibold hover:bg-[#F1EEE9] disabled:opacity-50" }, state && state.busy ? "Sending\u2026" : "Resend keys email now"),
+    state && state.text && React.createElement("span", { className: state.error ? "text-[#a8532a]" : "text-[#28633C]" }, state.text)
+  );
+}
 // Thanksgiving Monday is always a closed day (blocked, and no keys email
 // that morning); other blocked days can be marked closed too.
 function winterSeason(db) {
@@ -15070,6 +15155,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Weekdays only"),
       React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "New sign-ups go on the next day with room (their requested day if possible), marked New" }, React.createElement("input", { type: "checkbox", checked: !!(db.settings || {}).winterAutoPlaceNew, onChange: (e) => onSaveSeason({ winterAutoPlaceNew: e.target.checked }), className: "accent-[#377249]" }), "Put new sign-ups on the schedule"),
       React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "Each weekday morning (Friday for Monday), reception gets the next day's cottages where our master key doesn't work, so the keys can be collected" }, React.createElement("input", { type: "checkbox", checked: !(db.settings || {}).winterKeyEmailOff, onChange: (e) => onSaveSeason({ winterKeyEmailOff: !e.target.checked }), className: "accent-[#377249]", "aria-label": "Email reception the keys needed" }), "Email reserve@ the keys needed the day before"),
+      React.createElement(WinterKeysResendButton, null),
       onPrintSectionMap && React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "Print one section's map with every site circled by how it's winterized (e.g. for Pebble Beach and By the Woods days)" }, "\uD83D\uDDFA Section map", React.createElement("select", { "data-section-map": true, value: "", onChange: (e) => e.target.value && onPrintSectionMap(WINTER_MAPS.find((m) => m.key === e.target.value)), className: "border border-[#E2DED5] rounded-md px-1.5 py-1 bg-white text-xs" }, React.createElement("option", { value: "" }, "Print\u2026"), WINTER_MAPS.map((m) => React.createElement("option", { key: m.key, value: m.key }, m.name)))),
       React.createElement("button", { type: "button", onClick: onAutoPlan, className: "ml-auto px-4 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]" }, "Auto-plan\u2026")
     ),
@@ -16601,9 +16687,26 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
     setCottageId(m.cottageId);
     setCustomerId(m.customerId);
   });
-  const [title, setTitle] = useState(entry.submittedCategory || "Service Request");
+  // Claude's reading of the request (entry.triage) gives the title and
+  // priority when the form didn't; the appliance is guessed from the words.
+  const triage = entry.triage || {};
+  const [title, setTitle] = useState(entry.submittedCategory || triage.summary || "Service Request");
   const [description, setDescription] = useState(entry.submittedDescription || "");
-  const [priority, setPriority] = useState(entry.submittedUrgency && PRIORITY.includes(entry.submittedUrgency) ? entry.submittedUrgency : "Medium");
+  const [priority, setPriority] = useState(entry.submittedUrgency && PRIORITY.includes(entry.submittedUrgency) ? entry.submittedUrgency : PRIORITY.includes(triage.priority) ? triage.priority : "Medium");
+  const cottageNow = cottageId ? (db.cottages || []).find((c) => c.id === cottageId) : null;
+  const appliances = cottageNow && cottageNow.appliances || [];
+  const [applianceId, setApplianceId] = useState(() => {
+    const a = guessAppliance(guessCottage, entry.submittedDescription);
+    return a ? a.id : "";
+  });
+  // Picking another cottage re-guesses from its appliances.
+  const lastCottage = useRef(cottageId);
+  useEffect(() => {
+    if (lastCottage.current === cottageId) return;
+    lastCottage.current = cottageId;
+    const a = guessAppliance(cottageNow, entry.submittedDescription);
+    setApplianceId(a ? a.id : "");
+  }, [cottageId]);
   const [linkWorkOrderId, setLinkWorkOrderId] = useState("");
   const [linkInvoiceId, setLinkInvoiceId] = useState("");
   const nameMismatchWarning = signupMatch.warning;
@@ -16656,6 +16759,7 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
       siteId: siteId || null,
       cottageId: cottageId || null,
       customerId: customerId || null,
+      applianceId: applianceId && appliances.some((a) => a.id === applianceId) ? applianceId : null,
       assignedTo: "",
       status: "Open",
       priority,
@@ -16742,7 +16846,7 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
     onChange: pickCustomer,
     placeholder: "Search customers\u2026",
     noneLabel: "No customer linked"
-  })), matchAssist.rememberEl, /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: description, onChange: (e) => setDescription(e.target.value) })), footer("Create Work Order", confirm, !siteId && !cottageId));
+  })), matchAssist.rememberEl, appliances.length > 0 && React.createElement(Field, { label: "Appliance (optional)" }, React.createElement("select", { className: inputCls, value: applianceId, onChange: (e) => setApplianceId(e.target.value) }, React.createElement("option", { value: "" }, "Not for a particular appliance"), appliances.map((a) => React.createElement("option", { key: a.id, value: a.id }, [a.type, [a.make, a.model].filter(Boolean).join(" ")].filter(Boolean).join(" \u2014 "))))), /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: description, onChange: (e) => setDescription(e.target.value) })), footer("Create Work Order", confirm, !siteId && !cottageId));
 }
 // What linking a website service request to a job already on file does -
 // shared by Service Requests and Incoming.
@@ -17272,7 +17376,7 @@ function AdminDashboardView({ db, persist }) {
   const occupiedSites = sites.filter((s) => (db.customers || []).some((c) => customerSiteIds(c).includes(s.id)));
   const transientCount = (db.sites || []).filter((s) => siteTypeOf(s) === "Transient").length;
   const rentalCount = (db.sites || []).filter((s) => siteTypeOf(s) === "Rental Cottage").length;
-  const openWorkOrders = (db.workOrders || []).filter((w) => w.status !== "Completed");
+  const openWorkOrders = (db.workOrders || []).filter(woActive);
   const overdueWorkOrders = (db.workOrders || []).filter(isOverdue);
   const yearSelect = /* @__PURE__ */ React.createElement(
     "select",
@@ -19747,7 +19851,7 @@ function incomingItems(db, pendingSignups) {
       customer: m.customer || null,
       site: m.site || null,
       name: p.submittedName || "(no name given)",
-      title: p.type === "generalservice" ? p.submittedCategory || INCOMING_SIGNUP_TITLES.generalservice : INCOMING_SIGNUP_TITLES[p.type],
+      title: p.type === "generalservice" ? p.submittedCategory || p.triage && p.triage.summary || INCOMING_SIGNUP_TITLES.generalservice : INCOMING_SIGNUP_TITLES[p.type],
       text: [p.submittedDescription, p.requestedDate && p.type !== "generalservice" ? `Requested date: ${p.requestedDate}` : "", p.notes].filter(Boolean).join("\n\n")
     });
   });
@@ -19989,7 +20093,8 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
       const e = it.entry;
       const m = computeSignupMatch(e, db);
       who = !m.customer || m.warning ? h("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-3.5 py-2.5 text-sm text-[#7A5418] mb-3" }, h("b", null, "Who is this? "), m.warning || `Site typed as “${e.submittedSiteNumber || "—"}” — no match. You'll pick them in the next step.`) : null;
-      body = card(e.type === "generalservice" ? "Work order, ready to review" : e.type === "propane" ? "Propane fill, ready to add" : "Winterizing, ready to add", h(React.Fragment, null, row("For", placeLine(m.customer, m.site && m.site.id, m.cottage && m.cottage.id) || "—"), e.type === "generalservice" && row("Priority", e.submittedUrgency || "Medium"), e.requestedDate && e.type !== "generalservice" && row("Asked for", e.requestedDate), row("Phone", e.submittedPhone), row("Email", e.submittedEmail)));
+      const guessed = e.type === "generalservice" ? guessAppliance(m.cottage, e.submittedDescription) : null;
+      body = card(e.type === "generalservice" ? "Work order, ready to review" : e.type === "propane" ? "Propane fill, ready to add" : "Winterizing, ready to add", h(React.Fragment, null, e.type === "generalservice" && row("Title", it.title), row("For", placeLine(m.customer, m.site && m.site.id, m.cottage && m.cottage.id) || "\u2014"), guessed && row("Appliance", [guessed.type, applianceDetails(guessed)].filter(Boolean).join(" \u2014 ")), e.type === "generalservice" && row("Priority", e.submittedUrgency || e.triage && e.triage.priority || "Medium"), e.requestedDate && e.type !== "generalservice" && row("Asked for", e.requestedDate), row("Phone", e.submittedPhone), row("Email", e.submittedEmail)));
       const mainLabel = e.type === "generalservice" ? "Create work order" : e.type === "propane" ? "Add to propane run" : "Add to winterizing";
       actionsEl = e.type === "winterizing" && !canWinterize ? link("Open Winterizing", () => onGoToTab("winterizing")) : btnMain(mainLabel, () => setModal({ signup: it }), { "data-incoming-main": true });
       if (e.submittedEmail) sideActions.push(link("Reply", () => setModal({ signupReply: e })));
@@ -20882,8 +20987,8 @@ function FieldJobGroups({ jobs, db, onOpenJob, Row, limitUpcoming }) {
 function FieldTodayScreen({ db, actor, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const signupsNeedingReview = (pendingSignups || []).length;
-  const myOpenJobs = db.workOrders.filter((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff));
-  const openWorkOrders = db.workOrders.filter((w) => w.status !== "Completed");
+  const myOpenJobs = db.workOrders.filter((w) => woActive(w) && fieldIsMine(w, actor, db.staff));
+  const openWorkOrders = db.workOrders.filter(woActive);
   const urgentCount = openWorkOrders.filter((w) => w.priority === "Urgent").length;
   const overdueCount = db.workOrders.filter(isOverdue).length;
   const activePropane = (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank);
@@ -20979,7 +21084,7 @@ function FieldJobsScreen({ db, persist, actor, saveWorkOrder, filter, onFilter, 
   // A search looks through every status, so finished jobs turn up too.
   const filtered = scoped.filter((w) => (searching || w.status === filter) && fieldJobMatches(w, db, query));
   const byNewest = (a, b) => (b.completedDate || b.date || "").localeCompare(a.completedDate || a.date || "");
-  const mineCount = db.workOrders.filter((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff)).length;
+  const mineCount = db.workOrders.filter((w) => woActive(w) && fieldIsMine(w, actor, db.staff)).length;
   const workGroups = Array.from(new Set(db.workOrders.map((w) => w.workGroup).filter(Boolean))).sort();
   const saveNew = (wo) => {
     const activityLog = addLog(db, actor, `Created work order "${wo.title}"`);
@@ -21215,8 +21320,8 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
     setToast(newStatus === "Completed" ? "Marked complete" : newStatus === "In Progress" ? "Job started" : "Job reopened");
   };
   const isDone = wo.status === "Completed";
-  const primaryLabel = wo.status === "Open" ? "Start Job" : wo.status === "In Progress" ? "Complete Job" : "Reopen Job";
-  const primaryNext = wo.status === "Open" ? "In Progress" : wo.status === "In Progress" ? "Completed" : "Open";
+  const primaryLabel = wo.status === "Open" || wo.status === "Pending" ? "Start Job" : wo.status === "In Progress" ? "Complete Job" : "Reopen Job";
+  const primaryNext = wo.status === "Open" || wo.status === "Pending" ? "In Progress" : wo.status === "In Progress" ? "Completed" : "Open";
   const hasInvoice = (db.invoices || []).some((inv) => inv.sourceType === "workOrder" && inv.sourceId === wo.id);
   const updateBilling = (patch) => {
     const nextLaborRateType = patch.laborRateType !== void 0 ? patch.laborRateType : wo.laborRateType || "N/A";
@@ -22547,7 +22652,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
       if (saved === "mine" || saved === "all") return saved;
     } catch (e) {
     }
-    return db.workOrders.some((w) => w.status !== "Completed" && fieldIsMine(w, actor, db.staff)) ? "mine" : "all";
+    return db.workOrders.some((w) => woActive(w) && fieldIsMine(w, actor, db.staff)) ? "mine" : "all";
   });
   const setJobWhose = (v) => {
     setJobWhoseState(v);
@@ -23359,6 +23464,68 @@ function AdminApp({ db, persist, actor, saveSite, bulkWriteSites, onSignOut }) {
     React.createElement(AdminTabBar, { screen, onSelect: selectTab })
   );
 }
+// The pop-up for Pending jobs whose reminder is due (see
+// pendingReminderDue). Each person answers their own: "Not yet" only
+// hides it for whoever clicked, until the next reminder day.
+function PendingJobsPrompt({ db, persist, saveWorkOrder }) {
+  const h = React.createElement;
+  const me = useAuthEmail();
+  const actor = useCurrentActor();
+  const [closed, setClosed] = useState(false);
+  const [editing, setEditing] = useState({});
+  const today = todayISO();
+  const who = reminderPersonKey(me);
+  const due = (db.workOrders || []).map((w) => ({ w, key: pendingReminderDue(w, today) })).filter((x) => x.key && who && (x.w.reminderSeen || {})[who] !== x.key).sort((a, b) => (a.w.startDate || "").localeCompare(b.w.startDate || ""));
+  if (closed || !who || !due.length) return null;
+  const log = (text) => persist({ ...db, activityLog: addLog(db, actor, text) });
+  const start = (w) => {
+    saveWorkOrder({ ...w, status: "In Progress" });
+    log(`Moved pending work order ${w.workOrderNumber || w.title} to In Progress`);
+  };
+  const changeDate = (w) => {
+    const d = editing[w.id];
+    if (!d) return;
+    saveWorkOrder({ ...w, startDate: d, pendingSince: today, reminderSeen: {} });
+    log(`Changed the start date of pending work order ${w.workOrderNumber || w.title} to ${d}`);
+    setEditing((e) => ({ ...e, [w.id]: undefined }));
+  };
+  const notYet = () => {
+    due.forEach(({ w, key }) => saveWorkOrder({ ...w, reminderSeen: { ...w.reminderSeen || {}, [who]: key } }));
+    setClosed(true);
+  };
+  const daysTo = (d) => Math.round((/* @__PURE__ */ new Date(`${d}T12:00:00`) - /* @__PURE__ */ new Date(`${today}T12:00:00`)) / 864e5);
+  const placeOf = (w) => {
+    const site = w.siteId && (db.sites || []).find((st) => st.id === w.siteId);
+    const cust = w.customerId && (db.customers || []).find((c) => c.id === w.customerId);
+    return [site && `Site ${site.number}`, cust && cust.name].filter(Boolean).join(" \xB7 ");
+  };
+  return h(
+    Modal,
+    { title: "Pending jobs coming up", onClose: () => setClosed(true) },
+    h("p", { className: "text-sm text-[#75716A] mb-3" }, "These jobs are booked ahead. Move them to In Progress when it's time, or change the date."),
+    h("div", { className: "space-y-3 mb-4" }, due.map(({ w }) => {
+      const n = daysTo(w.startDate);
+      const when = n > 0 ? `Starts ${w.startDate} (in ${n} day${n === 1 ? "" : "s"})` : n === 0 ? `Starts today (${w.startDate})` : `Start date was ${w.startDate} — still pending`;
+      return h(
+        "div",
+        { key: w.id, "data-pending-job": w.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] px-3.5 py-3" },
+        h("div", { className: "font-semibold text-sm text-[#1E1A13]" }, w.workOrderNumber ? `${w.workOrderNumber} \xB7 ` : "", w.title),
+        h("div", { className: "text-xs text-[#75716A] mt-0.5" }, [placeOf(w), w.assignedTo].filter(Boolean).join(" \xB7 ")),
+        h("div", { className: `text-xs font-semibold mt-1 ${n <= 0 ? "text-[#a8532a]" : "text-[#5E4B8B]"}` }, when),
+        h(
+          "div",
+          { className: "flex items-center gap-2 flex-wrap mt-2" },
+          h("button", { type: "button", onClick: () => start(w), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white hover:bg-[#135C30]" }, "Move to In Progress"),
+          editing[w.id] !== undefined ? h(React.Fragment, null,
+            h("input", { type: "date", value: editing[w.id] || "", min: today, onChange: (e) => setEditing((x) => ({ ...x, [w.id]: e.target.value })), className: "text-xs border border-[#E2DED5] rounded-md px-1.5 py-1.5", "aria-label": "New start date" }),
+            h("button", { type: "button", disabled: !editing[w.id], onClick: () => changeDate(w), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740] disabled:opacity-50" }, "Save date")
+          ) : h("button", { type: "button", onClick: () => setEditing((x) => ({ ...x, [w.id]: w.startDate })), className: "px-3 py-1.5 rounded-md text-xs font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Change date")
+        )
+      );
+    })),
+    h("div", { className: "flex justify-end" }, h("button", { type: "button", onClick: notYet, className: "px-4 py-2 text-sm rounded-md border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]" }, "Not yet — remind me next time"))
+  );
+}
 function AppContent() {
   const { db, pendingSignups, loading, error, persist, removePendingSignup, confirmPendingSignup, savePropaneRequest, deletePropaneRequest, saveTreeRequest, deleteTreeRequest, saveWinterizingRequest, deleteWinterizingRequest, saveWorkOrder, deleteWorkOrder, saveCustomer, deleteCustomer, saveQuote, deleteQuote, saveInvoice, deleteInvoice, saveCorrespondence, deleteCorrespondence, saveSite, deleteSite, saveCottage, deleteCottage, bulkWriteSites, retry } = useDb();
   const isMobileViewport = useIsMobile();
@@ -23539,7 +23706,7 @@ function AppContent() {
   const groupDefaultTab = visibleGroup === "sales" ? "salesdashboard" : visibleGroup === "admin" ? "admindashboard" : visibleGroup === "accounting" ? "hydroreview" : "dashboard";
   const effectiveTab = (!allowedTabKeys || allowedTabKeys.has(tab)) && TABS.some((t) => t.key === tab && t.group === visibleGroup) ? tab : groupDefaultTab;
   window.__qicScreen = effectiveTab;
-  const openCount = withoutTreeWorkOrders(db, db.workOrders).filter((w) => w.status !== "Completed").length;
+  const openCount = withoutTreeWorkOrders(db, db.workOrders).filter(woActive).length;
   const handleImportFile = (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
@@ -23700,7 +23867,7 @@ function AppContent() {
         onSignOut: signOut
       }));
     }
-    return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, React.createElement(FieldSaveErrorBar, { error, onRetry: retry }), /* @__PURE__ */ React.createElement(FieldApp, {
+    return /* @__PURE__ */ React.createElement(PinNameContext.Provider, { value: pinIdentity.name }, React.createElement(FieldSaveErrorBar, { error, onRetry: retry }), (isAdmin || isManager) && React.createElement(PendingJobsPrompt, { db, persist, saveWorkOrder }), /* @__PURE__ */ React.createElement(FieldApp, {
       db,
       persist,
       actor,
@@ -23825,7 +23992,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "incoming" && React.createElement(IncomingView, { db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest: isAdminOrManager ? saveWinterizingRequest : null, onGoToTab: selectTab }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite: isAdminOrManager ? saveSite : null, bulkWriteSites: isAdminOrManager ? bulkWriteSites : null, saveCottage: isAdminOrManager ? saveCottage : null }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, saveSite, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null, onOpenEmailTrash: isAdminOrManager ? () => setTrashOpen("emails") : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), (isAdmin || isManager) && React.createElement(PendingJobsPrompt, { db, persist, saveWorkOrder }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "incoming" && React.createElement(IncomingView, { db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest: isAdminOrManager ? saveWinterizingRequest : null, onGoToTab: selectTab }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite: isAdminOrManager ? saveSite : null, bulkWriteSites: isAdminOrManager ? bulkWriteSites : null, saveCottage: isAdminOrManager ? saveCottage : null }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, saveSite, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null, onOpenEmailTrash: isAdminOrManager ? () => setTrashOpen("emails") : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),

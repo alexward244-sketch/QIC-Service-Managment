@@ -41,6 +41,39 @@ test("a sign-up with no site number isn't lost silently: Admins are emailed once
   assert.match(emails[0].message, /Sam Lee, sam@x\.com/);
 });
 
+test("Claude reads a website service request for the draft work order; without Claude it's still saved", async () => {
+  claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ flag: null, needsReply: true, category: "service", summary: "Furnace clicking on start-up", siteNumber: "1051", requestedDate: null, priority: "High" }) }] });
+  await callWebhook(fns.generalServiceRequest, { firstName: "Linda", lastName: "Smith", email: "l@x.com", siteNumber: "1051", description: "The furnace clicks every time it starts." });
+  const [p] = await all("pendingSignups");
+  assert.equal(p.triage.summary, "Furnace clicking on start-up");
+  assert.equal(p.triage.priority, "High");
+  assert.match(claude.calls[0].messages[0].content, /The furnace clicks every time it starts/);
+  await clearData();
+  claude.script.push(new Error("Claude is down"));
+  const res = await callWebhook(fns.generalServiceRequest, { firstName: "Sam", email: "s@x.com", siteNumber: "20", description: "Door sticks" });
+  assert.equal(res.statusCode, 200);
+  const [q] = await all("pendingSignups");
+  assert.equal(q.submittedDescription, "Door sticks");
+  assert.equal(q.triage, undefined);
+});
+
+test("morning summary: pending jobs only on their reminder days and start date, never as open or overdue work", async () => {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const plus = (n) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  await db.doc("workOrders/a").set({ id: "a", title: "Deck rebuild", status: "Pending", startDate: plus(7), pendingSince: plus(-20), date: plus(-20) });
+  await db.doc("workOrders/b").set({ id: "b", title: "Skirting", status: "Pending", startDate: plus(9), pendingSince: plus(-20), date: plus(-20) });
+  await db.doc("workOrders/c").set({ id: "c", title: "Roof", status: "Pending", startDate: plus(14), pendingSince: plus(-1), date: plus(-1) });
+  await db.doc("workOrders/d").set({ id: "d", title: "Shed", status: "Pending", startDate: today, pendingSince: plus(-40), date: plus(-40) });
+  await db.doc("workOrders/e").set({ id: "e", title: "Porch", status: "Pending", startDate: plus(1), pendingSince: plus(-40), date: plus(-40) });
+  const res = await call(fns.generateMorningSummary, {}, "admin");
+  assert.equal(res.ok, true);
+  const summary = (await db.doc(`dailySummaries/${res.date}`).get()).data();
+  assert.deepEqual(summary.facts.pendingJobsComingUp.map((w) => w.title), ["Shed", "Porch", "Deck rebuild", "Roof"], "start day, the day before, a week before, two weeks before - not the one with no reminder today");
+  assert.equal(summary.facts.pendingJobsComingUp[2].daysUntilStart, 7);
+  assert.equal(summary.facts.openWorkOrders, 0);
+  assert.equal(summary.facts.overdueWorkOrders, 0);
+});
+
 test("incoming email: forwards keep their content, staff mail comes in, our own replies are skipped", async () => {
   const send = (fromEmail, subject, body) => callWebhook(fns.serviceCorrespondence, { fromEmail, subject, body });
   await send("jane@gmail.com", "Fwd: Deck quote", "See below\n\n---------- Forwarded message ---------\nFrom: Bob <bob@builders.ca>\nDate: Mon\nSubject: Deck quote\n\nThe deck needs 3 new joists.");
@@ -481,6 +514,33 @@ test("winterizing keys: the open day before (Friday for Monday, Thanksgiving and
   await db.collection("winterizingRequests").doc("r6").set({ cottageId: "k1", plannedDate: "2026-10-21" });
   await fns.winterKeyList({ scheduleTime: "2026-10-23T13:00:00Z" });
   assert.equal(emails.length, 4, "turned off");
+});
+
+test("winterizing keys: Resend now sends the list as planned now, marked UPDATED once today's went out", async () => {
+  assert.deepEqual(await call(fns.resendWinterKeyList, {}, "office"), { error: "permission-denied" });
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // Every weekday of the next two weeks, so whichever is "next" has one.
+  const days = [];
+  for (let i = 1; days.length < 10; i++) {
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + i);
+    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) days.push(d.toISOString().slice(0, 10));
+  }
+  await db.doc("sites/s1").set({ number: "0010", section: "Front of Park" });
+  await db.doc("cottages/k1").set({ name: "Willow", siteId: "s1" });
+  await Promise.all(days.map((d, i) => db.doc(`winterizingRequests/r${i}`).set({ cottageId: "k1", plannedDate: d })));
+  await db.doc("campground/data").set({ settings: { winterKeyEmailOff: true } }, { merge: true });
+  const first = await call(fns.resendWinterKeyList, {}, "manager");
+  assert.equal(first.ok, true);
+  assert.equal(first.count, 1);
+  assert.equal(emails.length, 1, "sent even with the daily email off - it was asked for");
+  assert.doesNotMatch(emails[0].subject, /UPDATED/);
+  await call(fns.resendWinterKeyList, {}, "admin");
+  assert.equal(emails.length, 2);
+  assert.match(emails[1].subject, /^UPDATED - Winterizing keys needed for /);
+  assert.match(emails[1].message, /replaces the one sent earlier today/);
+  const sent = (await db.doc(`winterKeyEmails/${today}`).get()).data();
+  assert.equal(sent.resends, 1);
 });
 
 test("nameplate reader: staff only, sends the photo to Claude and tidies what comes back", async () => {

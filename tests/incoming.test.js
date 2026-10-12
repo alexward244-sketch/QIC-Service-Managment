@@ -163,3 +163,23 @@ test("a form confirmed with only the cottage picked still goes in the owner's co
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("a website service request Claude has read: title, priority and appliance carry into the work order", async () => {
+  await seed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await page.evaluate(() => firebase.firestore().doc("pendingSignups/p3").set({ type: "generalservice", submittedName: "Linda Smith", submittedEmail: "rob@x.com", submittedSiteNumber: "1051", submittedDescription: "Our fridge isn't cooling since yesterday.", receivedAt: "2026-10-09T14:30:00Z", triage: { category: "service", summary: "Fridge not cooling", priority: "High", siteNumber: "1051", requestedDate: null } }));
+  await open(page);
+  await page.locator('[data-incoming-row="s-p3"]').waitFor();
+  await page.locator('[data-incoming-row="s-p3"]').click();
+  await page.getByText("Fridge not cooling").first().waitFor();
+  await page.getByText("Refrigerator — Dometic").waitFor();
+  await page.locator("[data-incoming-main]").click();
+  await page.getByRole("button", { name: "Create Work Order" }).last().click();
+  const wo = await waitFor(async () => (await readCollection("workOrders")).find((w) => w.sourceType === "generalServiceRequest"), "the work order");
+  assert.equal(wo.title, "Fridge not cooling");
+  assert.equal(wo.priority, "High");
+  assert.equal(wo.applianceId, "ap2");
+  assert.equal(wo.cottageId, "k1");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});

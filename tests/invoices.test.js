@@ -98,3 +98,31 @@ test("Invoices: the email column keeps where it was sent (or why it didn't send)
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("a part's description comes onto the invoice under its name, editable there without changing the part", async () => {
+  await resetData({
+    "campground/data": { settings: { taxRate: 13 }, activityLog: [], staff: [], workOrderTemplates: [], parts: [{ id: "p1", name: "Washer", price: 20, quantity: 5, description: "Replaced the tap washer and tested for leaks." }] },
+    "sites/s1": { id: "s1", number: "42" },
+    "customers/c1": { id: "c1", name: "Robert Smith", email: "rsmith@x.com", siteIds: ["s1"] },
+    "workOrders/w1": { id: "w1", title: "Leaky tap", status: "Completed", completedDate: "2026-09-30", date: "2026-09-30", workOrderNumber: "WO-0050", siteId: "s1", customerId: "c1", partsUsed: [{ partId: "p1", quantity: 1 }] }
+  });
+  const page = await openApp(browser, "emulator", { role: "admin" });
+  await mountWithDb(page, `(api) => {
+    if (window.__prefill === undefined) { const wo = (api.db.workOrders || []).find((w) => w.id === "w1"); window.__prefill = wo ? { source: wo, sourceType: "workOrder" } : undefined; }
+    return React.createElement(InvoicesView, { db: api.db, persist: api.persist, saveInvoice: api.saveInvoice, deleteInvoice: api.deleteInvoice, saveWorkOrder: api.saveWorkOrder, saveCorrespondence: api.saveCorrespondence, invoicePrefill: window.__prefill || null, onConsumeInvoicePrefill: () => { window.__prefill = null; } });
+  }`, "(api) => api.db.workOrders.length === 1 && api.db.customers.length === 1 && (api.db.parts || []).length === 1");
+  const box = page.getByLabel("Description shown to the customer");
+  await box.waitFor({ timeout: 20000 });
+  assert.equal(await box.inputValue(), "Replaced the tap washer and tested for leaks.");
+  await box.fill("Replaced the tap washer in the bathroom.");
+  await page.getByRole("button", { name: "Use the part's usual wording" }).waitFor();
+  await page.getByRole("button", { name: "Save Invoice" }).click();
+  const inv = await waitFor(() => findIn("invoices", (i) => i.sourceId === "w1"), "the invoice");
+  assert.equal(inv.lineItems[0].details, "Replaced the tap washer in the bathroom.");
+  const html = await page.evaluate((i) => buildInvoiceHtml(i, window.__api.db, 13), inv);
+  assert.match(html, /Replaced the tap washer in the bathroom\./);
+  const part = await page.evaluate(() => window.__api.db.parts.find((p) => p.id === "p1"));
+  assert.equal(part.description, "Replaced the tap washer and tested for leaks.", "the part keeps its usual wording");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
