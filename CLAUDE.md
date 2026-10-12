@@ -252,6 +252,19 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   (`logWorkOrderToAppliance` in `saveWorkOrder`); untagged ones still get
   the "Log to an Appliance?" prompt.
 
+**Customers tab**
+- First view is a table with filters (Needs a reply, Open work orders, No
+  email on file, each area). Clicking a customer opens their full page
+  (`CustomerPage`); "← All customers" goes back with the filter kept.
+- The page: contact, cottage cards, "Needs attention", `notes` (a free
+  text field on the customer - gate codes, pets, "call first"), and one
+  history (`customerHistory`) with All / Emails / Work / Bills & invoices.
+  Every line opens its item. An email still waiting (`customerNeedsReply`)
+  shows opened with the reply box under it; sending marks it handled.
+- Office sees invoices and hydro bills (view + print) but can't edit
+  invoices - same as before (firestore.rules). Other screens still use the
+  older `CustomerDetailModal` pop-up.
+
 **Forms**
 - Saves replace the whole Firestore document, so every edit form spreads
   the original record first (`...initial && initial.id ? initial : {}`)

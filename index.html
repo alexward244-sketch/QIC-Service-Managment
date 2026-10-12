@@ -5519,6 +5519,212 @@ function PhoneTidyModal({ db, persist, saveCustomer, onClose }) {
     )
   );
 }
+// Customers tab: the table (with filters for what needs doing), and a
+// customer's full page - contact, cottages, notes, and one clickable
+// history with a reply box under emails still waiting for an answer.
+function customerNeedsReply(c) {
+  return c.direction !== "out" && !correspondenceVoicemail(c) && CorrespondenceIsNew(c) && !CorrespondenceIsFYI(c);
+}
+// Theirs: named on it, or - when it names no one - on one of their sites
+// (same as correspondenceTimelineMarkers).
+function customerOwns(customer, r) {
+  return r.customerId ? r.customerId === customer.id : !!r.siteId && customerSiteIds(customer).includes(r.siteId);
+}
+function customerCottages(db, customer) {
+  const siteIds = customerSiteIds(customer);
+  return (db.cottages || []).filter((c) => c.siteId ? siteIds.includes(c.siteId) : c.ownerCustomerId === customer.id);
+}
+// Everything with this customer, newest first. kind: email | work | bill
+// (the filter buttons). `open` = still waiting on us.
+function customerHistory(db, customer, { canSeeHydro } = {}) {
+  const out = [];
+  const siteIds = customerSiteIds(customer);
+  const cottageIds = new Set(customerCottages(db, customer).map((c) => c.id));
+  const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  (db.correspondence || []).filter((c) => c.customerId === customer.id).forEach((c) => {
+    const vm = correspondenceVoicemail(c);
+    const out_ = c.direction === "out";
+    out.push({ key: "c-" + c.id, at: c.receivedAt || "", kind: "email", tag: vm ? "Voicemail" : out_ ? "Sent" : "Email", text: vm ? voicemailLabel(vm) : `${out_ ? "To" : "From"} ${out_ ? c.toEmail || "" : c.fromName || c.fromEmail || ""}${c.subject ? `: ${c.subject}` : ""}`, email: c, needsReply: customerNeedsReply(c), open: customerNeedsReply(c) });
+  });
+  (db.workOrders || []).filter((w) => customerOwns(customer, w)).forEach((w) => {
+    const done = w.status === "Completed";
+    out.push({ key: "w-" + w.id, at: done ? w.completedDate || w.date : w.createdAt || w.date, kind: "work", tag: "Work order", text: `${w.workOrderNumber ? w.workOrderNumber + " \xB7 " : ""}${w.title || "Work order"}${done ? "" : ` — ${w.status}`}`, wo: w, open: !done });
+  });
+  (db.quotes || []).filter((q) => q.customerId === customer.id).forEach((q) => out.push({ key: "q-" + q.id, at: q.date, kind: "bill", tag: "Quote", text: `${q.title || "Quote"}`, sub: CUSTOMER_STATUS_LABEL[q.status] || q.status, quote: q }));
+  (db.invoices || []).filter((i) => customerOwns(customer, i)).forEach((i) => {
+    const status = invoiceStatus(i, i.taxRate != null ? i.taxRate : taxRate);
+    out.push({ key: "i-" + i.id, at: i.date, kind: "bill", tag: "Invoice", text: `${i.invoiceNumber || "Invoice"}${i.title ? ` \xB7 ${i.title}` : ""}`, sub: [i.sentDate ? `sent ${i.sentDate}` : "not sent yet", status].filter(Boolean).join(" \xB7 "), invoice: i });
+  });
+  if (canSeeHydro) {
+    (db.hydroReadings || []).filter((r) => r.status === "invoiced" && (hydroBillTo(db, r) || {}).id === customer.id).forEach((r) => {
+      const p = hydroBillParts(db, r);
+      out.push({ key: "h-" + r.id, at: String(r.invoicedAt || r.date || ""), kind: "bill", tag: "Hydro", text: `${r.invoiceNumber || "Hydro bill"} \xB7 Site ${p.site.number}${p.usage != null ? ` \xB7 ${p.usage} kWh` : ""}`, hydro: r });
+    });
+  }
+  (db.winterizingRequests || []).filter((r) => cottageIds.has(r.cottageId)).forEach((r) => {
+    const cot = (db.cottages || []).find((c) => c.id === r.cottageId) || {};
+    if (r.completed) out.push({ key: "wz-" + r.id, at: r.completedDate || r.plannedDate || r.requestedDate, kind: "work", tag: "Service", text: `Winterized \xB7 ${cot.name || ""}` });
+    else if (!r.archived) out.push({ key: "wz-" + r.id, at: r.plannedDate || r.requestedDate, kind: "work", tag: "Service", text: `Winterizing booked \xB7 ${cot.name || ""}`, open: true });
+  });
+  (db.propaneRequests || []).filter((r) => r.customerId === customer.id || cottageIds.has(r.cottageId)).forEach((r) => out.push({ key: "p-" + r.id, at: r.completed ? r.completedDate || r.requestedDate : r.requestedDate, kind: "work", tag: "Service", text: r.completed ? "Propane fill" : "Propane requested", open: !r.completed }));
+  (db.sites || []).filter((s) => siteIds.includes(s.id)).forEach((s) => (s.transferHistory || []).forEach((t) => out.push({ key: "t-" + t.id, at: t.date, kind: "work", tag: "Ownership", text: `Site ${s.number}: ${t.fromCustomerName} → ${t.toCustomerName}` })));
+  return out.sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+}
+const HISTORY_TAG_STYLE = {
+  Email: "bg-[#FBEEDA] text-[#9A6B1F]",
+  Voicemail: "bg-[#FBEEDA] text-[#9A6B1F]",
+  Sent: "bg-[#F1EEE9] text-[#75716A]",
+  "Work order": "bg-[#DDF1E1] text-[#28633C]",
+  Service: "bg-[#DDF1E1] text-[#28633C]",
+  Quote: "bg-[#E4EEF2] text-[#2E6E8E]",
+  Invoice: "bg-[#E4EEF2] text-[#2E6E8E]",
+  Hydro: "bg-[#E4EEF2] text-[#2E6E8E]",
+  Ownership: "bg-[#F1EEE9] text-[#75716A]"
+};
+function historyWhen(iso) {
+  const s = String(iso || "");
+  if (!s) return "No date";
+  if (s.length > 10 && s.slice(0, 10) === todayISO()) {
+    const d = new Date(s);
+    return isNaN(d) ? "Today" : `Today ${d.toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" })}`;
+  }
+  return formatHistoryDate(s);
+}
+// A document as the customer got it (invoice / quote email), with Print.
+function DocumentViewModal({ title, html, onClose, extra }) {
+  const ref = useRef(null);
+  return React.createElement(Modal, { title, onClose, wide: true },
+    React.createElement("iframe", { ref, title, srcDoc: html, "data-document-view": title, className: "w-full h-[70vh] rounded-lg border border-[#E2DED5] bg-white" }),
+    React.createElement("div", { className: "flex justify-end gap-2 mt-3" },
+      React.createElement("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"),
+      extra || null,
+      React.createElement("button", { type: "button", onClick: () => {
+        try {
+          ref.current.contentWindow.print();
+        } catch (e) {
+        }
+      }, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print")));
+}
+function CustomerNotes({ customer, saveCustomer, persist, db, readOnly }) {
+  const actor = useCurrentActor();
+  const [text, setText] = useState(customer.notes || "");
+  useEffect(() => setText(customer.notes || ""), [customer.id, customer.notes]);
+  const changed = text.trim() !== (customer.notes || "").trim();
+  const save = () => {
+    persist({ ...db, activityLog: addLog(db, actor, `Updated notes for ${customer.name}`) });
+    saveCustomer({ ...customer, notes: text.trim() });
+  };
+  if (readOnly) return customer.notes ? React.createElement("p", { className: "text-sm text-[#4B4740] whitespace-pre-line" }, customer.notes) : React.createElement("p", { className: "text-sm text-[#9A968D] italic" }, "No notes.");
+  return React.createElement("div", null,
+    React.createElement("textarea", { className: inputCls + " text-sm", rows: 3, value: text, "aria-label": "Customer notes", placeholder: "e.g. Call before going in \xB7 dog on site \xB7 gate code", onChange: (e) => setText(e.target.value) }),
+    changed && React.createElement("div", { className: "flex justify-end gap-2 mt-1.5" }, React.createElement("button", { type: "button", onClick: () => setText(customer.notes || ""), className: "text-xs text-[#75716A] hover:underline" }, "Cancel"), React.createElement("button", { type: "button", onClick: save, className: "px-3 py-1 text-xs bg-[#377249] text-[#F9F5EC] rounded-md font-semibold" }, "Save note")));
+}
+function CustomerPage({ customer, db, persist, saveCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, onBack, onEdit, onDelete }) {
+  const h = React.createElement;
+  const role = useUserRole(db);
+  const [show, setShow] = useState("all");
+  const [viewing, setViewing] = useState(null);
+  const [creating, setCreating] = useState(null);
+  const [viewingCottageId, setViewingCottageId] = useState(null);
+  const canSeeHydro = ["admin", "accounting", "manager", "office"].includes(role);
+  const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const siteIds = customerSiteIds(customer);
+  const sites = siteIds.map((id) => db.sites.find((s) => s.id === id)).filter(Boolean);
+  const cottages = customerCottages(db, customer);
+  const history = customerHistory(db, customer, { canSeeHydro });
+  const waiting = history.filter((e) => e.needsReply);
+  const openWOs = history.filter((e) => e.wo && e.open);
+  const shown = history.filter((e) => show === "all" || e.kind === show);
+  const prefill = correspondenceWorkOrderPrefill(db, customer.id);
+  const fromEmailPrefill = (item) => ({ ...prefill, title: item.subject || "Email follow-up", description: displayEmailBody(item.body || "").slice(0, 2e3) });
+  const markHandled = (item, extra) => saveCorrespondence({ ...item, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString(), followUpAt: null, ...extra || {} });
+  const placeLabel = [sites.map((s) => "Site " + s.number).join(", "), cottages.map((c) => c.name).join(", ")].filter(Boolean).join(" \xB7 ") || "No site";
+  const btn = (label, onClick, primary) => h("button", { type: "button", onClick, className: primary ? "px-3.5 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-semibold" : "px-3.5 py-2 text-sm text-[#4B4740] border border-[#E2DED5] rounded-md hover:bg-[#F1EEE9] font-semibold bg-[#FFFDFA]" }, label);
+  const label = (t) => h("h4", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold mb-1.5" }, t);
+  const kv = (k, v) => v ? h("div", { className: "mb-2.5" }, h("div", { className: "text-[10.5px] uppercase tracking-wider text-[#75716A] font-bold" }, k), h("div", { className: "text-sm text-[#1E1A13] whitespace-pre-line" }, v)) : null;
+  const chip = (key, text) => h("button", { type: "button", key, onClick: () => setShow(key), className: `px-3 py-1 rounded-full text-xs font-semibold border ${show === key ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "text-[#4B4740] border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9]"}` }, text);
+  const open = (e) => {
+    if (e.wo) setViewing({ wo: e.wo });
+    else if (e.email) setViewing({ email: e.email });
+    else if (e.invoice) setViewing({ invoice: e.invoice });
+    else if (e.quote) setViewing({ quote: e.quote });
+    else if (e.hydro) setViewing({ hydro: e.hydro });
+  };
+  const clickable = (e) => !!(e.wo || e.email || e.invoice || e.quote || e.hydro);
+  const waitingCard = (e) => {
+    const item = e.email;
+    return h("div", { className: "mt-1.5 rounded-xl border border-[#E9D3B5] bg-[#FFF8EE] px-3.5 py-3" },
+      h("div", { className: "flex items-center justify-between gap-2 text-xs text-[#75716A]" }, h("span", null, h("b", { className: "text-[#1E1A13]" }, item.subject || "(no subject)"), item.fromEmail ? ` \xB7 ${item.fromEmail}` : ""), h("button", { type: "button", className: "hover:underline", onClick: () => setViewing({ email: item }) }, "Whole conversation ↗")),
+      h("p", { className: "text-sm text-[#1E1A13] mt-1.5 mb-2 whitespace-pre-line" }, displayEmailBody(item.body || "")),
+      saveCorrespondence && h(CorrespondenceComposeBox, { key: item.id, customer, replyTo: item, noScroll: true, cannedReplies: db.cannedReplies, lastInboundEmail: item.fromEmail, saveCorrespondence: (rec) => {
+        const r = saveCorrespondence(rec);
+        if (rec.direction === "out") markHandled(item);
+        return r;
+      } }),
+      saveCorrespondence && h("div", { className: "flex gap-4 text-xs -mt-2" },
+        saveWorkOrder && h("button", { type: "button", className: "text-[#377249] font-semibold hover:underline", onClick: () => setCreating({ kind: "wo", initial: fromEmailPrefill(item), fromEmail: item }) }, "+ Work order from this email"),
+        h("button", { type: "button", className: "text-[#75716A] hover:underline", onClick: () => markHandled(item) }, "Mark handled (no reply needed)")));
+  };
+  const historyEl = h("div", null,
+    h("div", { className: "flex items-center justify-between gap-2 flex-wrap mb-2" }, label("History"), h("div", { className: "flex gap-1.5 flex-wrap" }, chip("all", "All"), chip("email", "Emails"), chip("work", "Work"), chip("bill", "Bills & invoices"))),
+    shown.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic" }, show === "all" ? "Nothing recorded for this customer yet." : "Nothing here.") : h("div", { className: "relative pl-5" },
+      h("div", { className: "absolute left-[5px] top-1 bottom-1 w-0.5 bg-[#E2DED5]" }),
+      shown.map((e) => h("div", { key: e.key, "data-history": e.key, className: "relative mb-2.5" },
+        h("span", { className: `absolute -left-[19px] top-1.5 w-2.5 h-2.5 rounded-full ${e.open ? "bg-[#C1652F]" : e.kind === "bill" ? "bg-[#2E6E8E]" : e.kind === "email" ? "bg-[#C9A36B]" : "bg-[#377249]"}` }),
+        h(clickable(e) && !e.needsReply ? "button" : "div", { type: clickable(e) && !e.needsReply ? "button" : void 0, onClick: clickable(e) && !e.needsReply ? () => open(e) : void 0, className: `w-full text-left rounded-md px-1.5 -mx-1.5 py-0.5 ${clickable(e) && !e.needsReply ? "hover:bg-[#F1EEE9]" : ""}` },
+          h("div", { className: "flex items-start justify-between gap-2" },
+            h("div", { className: "min-w-0" },
+              h("div", { className: "text-[11px] font-bold text-[#75716A] uppercase tracking-wide" }, historyWhen(e.at)),
+              h("div", { className: "text-sm text-[#1E1A13]" }, h("span", { className: `text-[10.5px] font-bold px-1.5 py-0.5 rounded-full mr-1.5 ${HISTORY_TAG_STYLE[e.tag] || ""}` }, e.needsReply ? "Email \xB7 needs reply" : e.tag), e.text),
+              e.sub && h("div", { className: "text-xs text-[#75716A]" }, e.sub)),
+            clickable(e) && !e.needsReply && h("span", { className: "text-[#9A968D] mt-3" }, "›"))),
+        e.needsReply && waitingCard(e)))));
+  const v = viewing || {};
+  const viewEl = v.wo ? h(WorkOrderViewModal, { wo: db.workOrders.find((w) => w.id === v.wo.id) || v.wo, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setViewing(null), variant: "drawer" }) : v.email ? h(Modal, { title: `Emails — ${customer.name}`, onClose: () => setViewing(null), wide: true }, saveCorrespondence && h(CorrespondenceComposeBox, { key: customer.id, customer, saveCorrespondence, cannedReplies: db.cannedReplies, lastInboundEmail: lastInboundEmailFor(db, customer.id), noScroll: true }), h(CorrespondenceThread, { customer, db, persist, saveCorrespondence, saveWorkOrder, saveInvoice, focusId: v.email.id, onReply: () => {
+  } })) : v.invoice ? h(DocumentViewModal, { title: `${v.invoice.invoiceNumber || "Invoice"}${v.invoice.title ? ` \xB7 ${v.invoice.title}` : ""}`, html: buildInvoiceEmailText(v.invoice, db, v.invoice.taxRate != null ? v.invoice.taxRate : taxRate), onClose: () => setViewing(null), extra: saveInvoice ? btn("Edit invoice", () => setViewing({ editInvoice: v.invoice })) : null }) : v.editInvoice ? h(QuickInvoiceModal, { db, initial: v.editInvoice, saveInvoice, onClose: () => setViewing(null) }) : v.quote ? saveQuote ? h(QuickQuoteModal, { db, initial: v.quote, saveQuote, onClose: () => setViewing(null) }) : h(DocumentViewModal, { title: `Quote \xB7 ${v.quote.title || ""}`, html: buildQuoteEmailText(v.quote, db, taxRate), onClose: () => setViewing(null) }) : v.hydro ? (() => {
+    const p = hydroBillParts(db, v.hydro);
+    return h(Modal, { title: `${v.hydro.invoiceNumber || "Hydro bill"} \xB7 Site ${p.site.number}`, onClose: () => setViewing(null), wide: true },
+      h("iframe", { title: "Hydro bill", "data-hydro-bill-view": v.hydro.id, srcDoc: buildHydroInvoiceEmailText(p.site, p.owner, p.usage, p.rate, p.subtotal, p.taxAmount, p.total, p.taxRate, db, p.meter, v.hydro.invoiceNumber), className: "w-full h-[70vh] rounded-lg border border-[#E2DED5] bg-white" }),
+      h("div", { className: "flex justify-end gap-2 mt-3" }, h("button", { type: "button", onClick: () => setViewing(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), h("button", { type: "button", onClick: () => printHydroBills([v.hydro], db), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print")));
+  })() : null;
+  const createEl = !creating ? null : creating.kind === "wo" ? h(QuickWorkOrderModal, { db, initial: creating.initial, saveWorkOrder: (wo) => {
+    saveWorkOrder(wo);
+    if (creating.fromEmail) markHandled(creating.fromEmail, { workOrderId: wo.id });
+  }, onClose: () => setCreating(null) }) : creating.kind === "quote" ? h(QuickQuoteModal, { db, initial: prefill, saveQuote, onClose: () => setCreating(null) }) : h(QuickInvoiceModal, { db, initial: prefill, saveInvoice, onClose: () => setCreating(null) });
+  const phones = [customer.phone && `${formatPhoneDisplay(customer.phone)}${customer.name2 ? ` (${customer.name.split(/[ &]/)[0]})` : ""}`, customer.phone2 && `${formatPhoneDisplay(customer.phone2)}${customer.name2 ? ` (${customer.name2})` : ""}`].filter(Boolean);
+  return h("div", null,
+    h("button", { type: "button", onClick: onBack, className: "text-sm text-[#377249] font-semibold hover:underline mb-3" }, "← All customers"),
+    h("div", { className: "bg-[#FFFDFA] border border-[#E2DED5] rounded-xl px-5 sm:px-7 py-6" },
+      h("div", { className: "flex items-start justify-between gap-3 flex-wrap mb-4" },
+        h("div", { className: "min-w-0" },
+          h("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold" }, placeLabel),
+          h("h2", { className: "font-serif text-[28px] leading-tight text-[#1E1A13] font-semibold" }, customer.name),
+          customer.companyName && h("div", { className: "text-sm text-[#4B4740]" }, customer.companyName),
+          h("div", { className: "flex gap-x-5 gap-y-1 flex-wrap mt-1 text-sm font-semibold text-[#28633C]" }, phones.map((p) => h("span", { key: p }, "☎ ", p)), [customer.email, customer.email2].filter(Boolean).map((m) => h("span", { key: m }, "✉ ", m)))),
+        h("div", { className: "flex gap-2 flex-wrap" }, onEdit && btn("Edit Customer", () => onEdit(customer)), saveQuote && btn("+ Quote", () => setCreating({ kind: "quote" })), saveInvoice && btn("+ Invoice", () => setCreating({ kind: "invoice" })), saveWorkOrder && btn("+ Work Order", () => setCreating({ kind: "wo", initial: prefill }), true))),
+      (cottages.length > 0 || waiting.length > 0 || openWOs.length > 0) && h("div", { className: "grid sm:grid-cols-2 gap-3 mb-5" },
+        cottages.map((c) => {
+          const s = db.sites.find((x) => x.id === c.siteId);
+          return h("button", { key: c.id, type: "button", onClick: () => setViewingCottageId(c.id), className: "flex items-center gap-3 border border-[#E2DED5] rounded-xl px-3.5 py-3 text-left hover:bg-[#FBF8F2]" },
+            h("span", { className: "w-12 h-10 rounded-lg flex-shrink-0 flex items-center justify-center text-[11px] font-bold text-white", style: { background: colorDot(c.color) || "#7C7A73" } }, s ? s.number : "OFF"),
+            h("span", { className: "min-w-0" }, h("span", { className: "block font-semibold text-[#1E1A13]" }, c.name), h("span", { className: "block text-xs text-[#75716A] truncate" }, [c.modelNumber, c.year, c.serialNumber ? `Serial ${c.serialNumber}` : "no serial #"].filter(Boolean).join(" \xB7 "))));
+        }),
+        (waiting.length > 0 || openWOs.length > 0) && h("div", { className: "rounded-xl border border-[#E9D3B5] bg-[#FBEEDA] px-4 py-3" }, h("div", { className: "text-[10.5px] uppercase tracking-wider text-[#9A6B1F] font-bold" }, "Needs attention"), h("div", { className: "text-sm text-[#1E1A13] mt-1" }, [waiting.length && `${waiting.length} unanswered email${waiting.length === 1 ? "" : "s"}`, openWOs.length && `${openWOs.length} open work order${openWOs.length === 1 ? "" : "s"}`].filter(Boolean).join(" \xB7 ")))),
+      h("div", { className: "grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.7fr)] gap-x-8 gap-y-5" },
+        h("div", { className: "min-w-0" },
+          label("Contact"),
+          kv("Mailing address", formatCustomerAddress(customer.billingAddress) || customer.address),
+          kv("Language", customer.customerLanguage && customer.customerLanguage !== "English" ? customer.customerLanguage : ""),
+          kv("Other emails we match", (customer.matchEmails || []).join(", ")),
+          !customer.phone && !customer.email && h("p", { className: "text-sm text-[#a8532a] italic mb-2.5" }, "No phone or email on file."),
+          openWOs.length > 0 && h("div", { className: "mt-4" }, label("Open"), openWOs.map((e) => h("button", { key: e.key, type: "button", onClick: () => open(e), className: "block text-left text-sm text-[#377249] font-semibold hover:underline mb-1" }, e.text, " ›"))),
+          h("div", { className: "mt-4" }, label("Notes"), h(CustomerNotes, { customer, saveCustomer, persist, db, readOnly: !saveCustomer })),
+          onDelete && h("button", { type: "button", onClick: onDelete, className: "mt-6 text-xs text-[#a8532a] hover:underline" }, "Delete customer")),
+        h("div", { className: "min-w-0" }, historyEl))),
+    viewEl, createEl,
+    viewingCottageId && h(CottageDetailModal, { cottage: db.cottages.find((c) => c.id === viewingCottageId), db, persist, saveWorkOrder, saveCottage, saveCorrespondence, readOnly: true, nested: true, onClose: () => setViewingCottageId(null), onEdit: () => {
+    } }));
+}
 function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, saveSite, canTransfer, filterPrefill }) {
   var _a, _b;
   const [modal, setModal] = useState(null);
@@ -5529,7 +5735,10 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
   useEffect(() => {
     if (filterPrefill) setFilter(filterPrefill.term);
   }, [filterPrefill && filterPrefill.ts]);
-  const [detailId, setDetailId] = useState(null);
+  // The customer whose page is open (the table stays as it was, filters and
+  // all, for "All customers").
+  const [openId, setOpenId] = useState(null);
+  const [show, setShow] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [tidyOpen, setTidyOpen] = useState(false);
   const [phoneTidyOpen, setPhoneTidyOpen] = useState(false);
@@ -5583,7 +5792,8 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
       const s = db.sites.find((x) => x.id === id);
       return s ? s.number : "";
     }).filter(Boolean).join(" ");
-    const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.name2 || ""} ${c.phone2 || ""} ${c.email2 || ""} ${c.address || ""} ${siteNumbers}`.toLowerCase();
+    const cottageNames = customerCottages(db, c).map((x) => x.name).join(" ");
+    const hay = `${c.name} ${c.phone || ""} ${c.email || ""} ${c.name2 || ""} ${c.phone2 || ""} ${c.email2 || ""} ${c.address || ""} ${c.companyName || ""} ${siteNumbers} ${cottageNames}`.toLowerCase();
     return hay.includes(filter.toLowerCase());
   }).sort((a, b) => {
     const aSiteIds = customerSiteIds(a);
@@ -5595,47 +5805,60 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
     if (!bSite) return -1;
     return aSite.number.localeCompare(bSite.number, void 0, { numeric: true });
   });
-  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between mb-5 gap-3 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Customers"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Names, contact info, and their assigned site.")), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 flex-wrap" }, /* @__PURE__ */ React.createElement(
-    "input",
-    {
-      className: inputCls + " w-full sm:w-48",
-      placeholder: "Search customers\u2026",
-      value: filter,
-      onChange: (e) => setFilter(e.target.value)
-    }
-  ), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setBulkOpen(true),
-      className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap"
-    },
-    "Bulk Add"
-  ), coupleCount > 0 && React.createElement("button", { type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), phonesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setPhoneTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${phonesToTidy} phone number${phonesToTidy === 1 ? "" : "s"}`), namesToTidy > 0 && React.createElement("button", { type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`), /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      onClick: () => setModal({ mode: "new" }),
-      className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap"
-    },
-    "+ New Customer"
-  ))), db.customers.length === 0 ? /* @__PURE__ */ React.createElement(
-    EmptyState,
-    {
-      text: "No customers yet.",
-      action: /* @__PURE__ */ React.createElement("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a customer")
-    }
-  ) : filtered.length === 0 ? /* @__PURE__ */ React.createElement(EmptyState, { text: "No customers match your search." }) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "hidden sm:block overflow-x-auto rounded-lg border border-[#E2DED5]" }, /* @__PURE__ */ React.createElement("table", { className: "w-full text-sm" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Name"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Phone"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Email"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Address"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5" }, "Site"), /* @__PURE__ */ React.createElement("th", { className: "px-4 py-2.5 w-40" }))), /* @__PURE__ */ React.createElement("tbody", null, filtered.map((c) => {
-    const linkedSiteNumbers = customerSiteIds(c).map((id) => {
-      var _a2;
-      return (_a2 = db.sites.find((s) => s.id === id)) == null ? void 0 : _a2.number;
-    }).filter(Boolean);
-    return /* @__PURE__ */ React.createElement("tr", { key: c.id, className: "border-t border-[#EEEBE5] hover:bg-[#FFFDFA]" }, /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 font-semibold text-[#1E1A13]" }, /* @__PURE__ */ React.createElement("button", { className: "hover:underline block", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "hover:underline block font-normal text-xs text-[#75716A] mt-0.5", onClick: () => setDetailId(c.id) }, c.name2)), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.phone || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.email || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740] max-w-[14rem] truncate" }, c.address || "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-[#4B4740]" }, linkedSiteNumbers.length ? linkedSiteNumbers.join(", ") : "\u2014"), /* @__PURE__ */ React.createElement("td", { className: "px-4 py-2.5 text-right" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-3 justify-end text-xs" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline", onClick: () => confirm.ask(c.id) }, "Delete"))));
-  })))), /* @__PURE__ */ React.createElement("div", { className: "sm:hidden space-y-3" }, filtered.map((c) => {
-    const linkedSiteNumbers = customerSiteIds(c).map((id) => {
-      var _a2;
-      return (_a2 = db.sites.find((s) => s.id === id)) == null ? void 0 : _a2.number;
-    }).filter(Boolean);
-    return /* @__PURE__ */ React.createElement("div", { key: c.id, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-4" }, /* @__PURE__ */ React.createElement("button", { className: "text-left block font-semibold text-[#1E1A13] hover:underline", onClick: () => setDetailId(c.id) }, c.name), c.name2 && /* @__PURE__ */ React.createElement("button", { className: "text-left block font-normal text-xs text-[#75716A] hover:underline mt-0.5", onClick: () => setDetailId(c.id) }, c.name2), /* @__PURE__ */ React.createElement("div", { className: "text-sm text-[#4B4740] mt-1.5 space-y-0.5" }, c.phone && /* @__PURE__ */ React.createElement("div", null, c.phone), c.email && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.email), c.address && /* @__PURE__ */ React.createElement("div", { className: "truncate" }, c.address), linkedSiteNumbers.length > 0 && /* @__PURE__ */ React.createElement("div", null, "Site ", linkedSiteNumbers.join(", "))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-4 mt-3 text-sm" }, /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setDetailId(c.id) }, "View"), /* @__PURE__ */ React.createElement("button", { className: "text-[#377249] hover:underline py-1", onClick: () => setModal({ mode: "edit", data: c }) }, "Edit"), /* @__PURE__ */ React.createElement("button", { className: "text-[#a8532a] hover:underline py-1", onClick: () => confirm.ask(c.id) }, "Delete")));
-  }))), coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), phoneTidyOpen && React.createElement(PhoneTidyModal, { db, persist, saveCustomer, onClose: () => setPhoneTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null), onTransferInstead: canTransfer && saveSite && saveCottage ? (t) => {
+  const h = React.createElement;
+  const role = useUserRole(db);
+  const siteOf = (id) => db.sites.find((x) => x.id === id);
+  const lastContact = (c) => {
+    const items = (db.correspondence || []).filter((x) => x.customerId === c.id);
+    const latest = items.reduce((best, x) => !best || String(x.receivedAt || "") > String(best.receivedAt || "") ? x : best, null);
+    return latest ? latest.receivedAt : "";
+  };
+  const waitingFor = (c) => (db.correspondence || []).some((x) => x.customerId === c.id && customerNeedsReply(x));
+  const openWOsFor = (c) => (db.workOrders || []).filter((w) => w.status !== "Completed" && customerOwns(c, w)).length;
+  const areaOf = (c) => {
+    const ids = customerSiteIds(c);
+    if (!ids.length) return customerCottages(db, c).length ? "Off-site" : "No site";
+    return (siteOf(ids[0]) || {}).section || "Other";
+  };
+  const counts = { reply: 0, open: 0, noemail: 0 };
+  db.customers.forEach((c) => {
+    if (waitingFor(c)) counts.reply++;
+    if (openWOsFor(c)) counts.open++;
+    if (!c.email && !c.email2) counts.noemail++;
+  });
+  const areas = Array.from(new Set(db.customers.map(areaOf))).sort((a, b) => a === "No site" ? 1 : b === "No site" ? -1 : a.localeCompare(b));
+  const shownRows = filtered.filter((c) => !show ? true : show === "reply" ? waitingFor(c) : show === "open" ? openWOsFor(c) > 0 : show === "noemail" ? !c.email && !c.email2 : areaOf(c) === show);
+  const openCustomer = openId ? db.customers.find((c) => c.id === openId) : null;
+  const chip = (key, text) => h("button", { type: "button", key: key || "all", onClick: () => setShow(key), className: `px-3 py-1.5 rounded-full text-xs font-semibold border whitespace-nowrap ${show === key ? "bg-[#377249] text-[#F9F5EC] border-[#377249]" : "text-[#4B4740] border-[#E2DED5] bg-[#FFFDFA] hover:bg-[#F1EEE9]"}` }, text);
+  const when = (iso) => iso ? historyWhen(iso) : "—";
+  const tidyButtons = [coupleCount > 0 && h("button", { key: "couple", type: "button", onClick: () => setCoupleOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Fix ${coupleCount} couple name${coupleCount === 1 ? "" : "s"}`), phonesToTidy > 0 && h("button", { key: "phones", type: "button", onClick: () => setPhoneTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${phonesToTidy} phone number${phonesToTidy === 1 ? "" : "s"}`), namesToTidy > 0 && h("button", { key: "names", type: "button", onClick: () => setTidyOpen(true), className: "px-3 py-2 rounded-md border border-[#9A6B1F]/40 text-[#9A6B1F] text-sm font-medium hover:bg-[#FBEEDA] transition whitespace-nowrap" }, `Tidy ${namesToTidy} name${namesToTidy === 1 ? "" : "s"}`)];
+  const table = h("div", { className: "overflow-x-auto rounded-xl border border-[#E2DED5] bg-[#FFFDFA]" }, h("table", { className: "w-full text-sm" },
+    h("thead", null, h("tr", { className: "bg-[#F1EEE9] text-left text-[#75716A] uppercase text-[11px] tracking-wider" }, ["Name", "Site", "Cottage", "Phone", "Email", "Last contact", "Open"].map((t) => h("th", { key: t, className: "px-4 py-2.5 whitespace-nowrap" }, t)))),
+    h("tbody", null, shownRows.map((c) => {
+      const sites = customerSiteIds(c).map(siteOf).filter(Boolean);
+      const cots = customerCottages(db, c);
+      const waiting = waitingFor(c);
+      const openN = openWOsFor(c);
+      return h("tr", { key: c.id, onClick: () => setOpenId(c.id), className: "border-t border-[#EEEBE5] hover:bg-[#FBF8F2] cursor-pointer" },
+        h("td", { className: "px-4 py-2.5" }, h("button", { type: "button", className: "font-semibold text-[#1E1A13] hover:underline text-left", onClick: (e) => {
+          e.stopPropagation();
+          setOpenId(c.id);
+        } }, c.name), c.companyName && h("div", { className: "text-xs text-[#75716A]" }, c.companyName)),
+        h("td", { className: "px-4 py-2.5 whitespace-nowrap" }, sites.length ? sites.map((s) => h("span", { key: s.id, className: "inline-block bg-[#F1EEE9] rounded px-1.5 py-0.5 text-[11px] font-bold text-[#4B4740] mr-1" }, s.number)) : h("span", { className: "text-[#9A968D]" }, cots.length ? "off-site" : "—")),
+        h("td", { className: "px-4 py-2.5 text-[#4B4740]" }, cots.map((x) => x.name).join(", ") || "—"),
+        h("td", { className: "px-4 py-2.5 text-[#4B4740] whitespace-nowrap" }, c.phone ? formatPhoneDisplay(c.phone) : "—"),
+        h("td", { className: "px-4 py-2.5 text-[#4B4740]" }, c.email || c.email2 || h("span", { className: "text-[#9A968D]" }, "—")),
+        h("td", { className: "px-4 py-2.5 whitespace-nowrap text-[#4B4740]" }, waiting && h("span", { className: "text-[#C1652F] font-bold", title: "Email waiting for a reply" }, "● "), when(lastContact(c))),
+        h("td", { className: "px-4 py-2.5 whitespace-nowrap" }, openN > 0 && h("span", { className: "text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-[#FBEEDA] text-[#9A6B1F]" }, `${openN} WO`)));
+    }))));
+  return h("div", null,
+    openCustomer ? h(CustomerPage, { key: openCustomer.id, customer: openCustomer, db, persist, saveCustomer, saveWorkOrder, saveQuote, saveInvoice, saveCorrespondence, saveCottage, onBack: () => setOpenId(null), onEdit: (c) => setModal({ mode: "edit", data: c }), onDelete: () => confirm.ask(openCustomer.id) }) : h(React.Fragment, null,
+      h("div", { className: "flex items-end justify-between mb-4 gap-3 flex-wrap" },
+        h("div", null, h("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Customers"), h("p", { className: "text-sm text-[#75716A]" }, "Owners and their contact details, emails, work and bills.")),
+        h("div", { className: "flex items-center gap-2 flex-wrap" }, h("input", { className: inputCls + " w-full sm:w-64", placeholder: "Search name, site, phone, email…", value: filter, onChange: (e) => setFilter(e.target.value) }), h("button", { type: "button", onClick: () => setBulkOpen(true), className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap" }, "Bulk Add"), ...tidyButtons, h("button", { type: "button", onClick: () => setModal({ mode: "new" }), className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-medium hover:bg-[#135C30] transition shadow-sm whitespace-nowrap" }, "+ New Customer"))),
+      db.customers.length > 0 && h("div", { className: "flex gap-2 flex-wrap mb-3" }, chip(null, `All (${db.customers.length})`), chip("reply", `Needs a reply (${counts.reply})`), chip("open", `Open work orders (${counts.open})`), chip("noemail", `No email on file (${counts.noemail})`), areas.map((a) => chip(a, a))),
+      db.customers.length === 0 ? h(EmptyState, { text: "No customers yet.", action: h("button", { onClick: () => setModal({ mode: "new" }), className: "text-[#C1652F] text-sm font-medium underline" }, "Add a customer") }) : shownRows.length === 0 ? h(EmptyState, { text: filter ? "No customers match your search." : "No customers here." }) : table),
+    coupleOpen && React.createElement(CoupleNamesModal, { db, persist, saveCustomer, onClose: () => setCoupleOpen(false) }), tidyOpen && React.createElement(CustomerNameTidyModal, { db, persist, saveCustomer, onClose: () => setTidyOpen(false) }), phoneTidyOpen && React.createElement(PhoneTidyModal, { db, persist, saveCustomer, onClose: () => setPhoneTidyOpen(false) }), modal && /* @__PURE__ */ React.createElement(Modal, { title: modal.mode === "new" ? "New Customer" : "Edit Customer", onClose: () => setModal(null), wide: true }, /* @__PURE__ */ React.createElement(CustomerForm, { initial: modal.data, sites: db.sites, cottages: db.cottages, customers: db.customers, onSave: save, onCancel: () => setModal(null), onTransferInstead: canTransfer && saveSite && saveCottage ? (t) => {
     setModal(null);
     setTransferFor(t);
   } : null })), transferFor && (() => {
@@ -5643,25 +5866,7 @@ function CustomersView({ db, persist, saveCustomer, deleteCustomer, saveWorkOrde
     const cottage = db.cottages.find((c) => c.siteId === transferFor.siteId);
     if (!site || !cottage) return null;
     return React.createElement(TransferOwnershipModal, { cottage, site, oldCustomers: db.customers.filter((c) => customerSiteIds(c).includes(site.id)), initialCustomerId: transferFor.toCustomerId, db, persist, saveSite, saveCottage, onClose: () => setTransferFor(null) });
-  })(), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), detailId && /* @__PURE__ */ React.createElement(
-    CustomerDetailModal,
-    {
-      customer: db.customers.find((c) => c.id === detailId),
-      db,
-      persist,
-      saveWorkOrder,
-      saveQuote,
-      saveInvoice,
-      saveCorrespondence,
-      saveCottage,
-      variant: "drawer",
-      onClose: () => setDetailId(null),
-      onEdit: (c) => {
-        setDetailId(null);
-        setModal({ mode: "edit", data: c });
-      }
-    }
-  ), confirm.target && /* @__PURE__ */ React.createElement(
+  })(), bulkOpen && /* @__PURE__ */ React.createElement(Modal, { title: "Bulk Add Customers", onClose: () => setBulkOpen(false), wide: true }, /* @__PURE__ */ React.createElement(BulkAddCustomersForm, { sites: db.sites, onSave: bulkAdd, onCancel: () => setBulkOpen(false) })), null, confirm.target && /* @__PURE__ */ React.createElement(
     ConfirmDeleteModal,
     {
       label: (_b = (_a = db.customers.find((c) => c.id === confirm.target)) == null ? void 0 : _a.name) != null ? _b : "this customer",
@@ -5776,7 +5981,7 @@ function useClaudeReplyDraft(context, message, setMessage) {
 function ClaudeDraftControls({ drafting, draftError, draft, canUndo, undo }) {
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: draft, disabled: drafting, title: "Claude writes a draft from the email thread and this customer's records. Type rough notes first to steer it.", className: "text-xs font-semibold text-[#377249] hover:underline disabled:opacity-50" }, drafting ? "\u2728 Drafting\u2026" : "\u2728 Draft reply"), canUndo && !drafting && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: undo, className: "text-xs text-[#75716A] hover:underline" }, "Undo draft"), canUndo && !drafting && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] italic" }, "Check it over before sending"), draftError && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#a8532a]" }, draftError));
 }
-function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onClearReply, cannedReplies, lastInboundEmail }) {
+function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onClearReply, cannedReplies, lastInboundEmail, noScroll }) {
   // Put whoever most recently emailed in first — when a customer has more
   // than one address on file, a reply should default to the one the
   // message actually came from, not just their "primary" email.
@@ -5794,7 +5999,7 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onCle
     if (!replyTo) return;
     setTo(replyTo.fromEmail || emailOptions[0] || "");
     setSubject(replyTo.subject && /^re:/i.test(replyTo.subject) ? replyTo.subject : `Re: ${replyTo.subject || "your message"}`);
-    if (boxRef.current) boxRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (boxRef.current && !noScroll) boxRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [replyTo]);
   useEffect(() => {
     if (subject || message) saveEmailDraft(draftKey, { subject, message });
@@ -5838,7 +6043,7 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onCle
     if (!reply) return;
     setMessage((m) => m.trim() ? `${m}\n\n${reply.body}` : reply.body);
   };
-  return /* @__PURE__ */ React.createElement("div", { ref: boxRef, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3 mb-4" }, replyTo && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 text-xs text-[#9A6B1F] bg-[#FBEEDA] rounded-md px-2 py-1 mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Replying to ", replyTo.fromEmail), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onClearReply && onClearReply(), className: "hover:underline" }, "Cancel")), (subject || message) && /* @__PURE__ */ React.createElement("span", { className: "inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#FBEEDA] text-[#9A6B1F] mb-2" }, "\u{1F4DD} Draft saved"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs text-[#75716A] mb-2" }, "To:", /* @__PURE__ */ React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => /* @__PURE__ */ React.createElement("option", { key: e, value: e }, e))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto" }, "From: service@qicampark.com")), /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", placeholder: "Subject", value: subject, onChange: (e) => setSubject(e.target.value) }), /* @__PURE__ */ React.createElement(ClaudeDraftControls, claudeDraft), cannedReplies && cannedReplies.length > 0 && /* @__PURE__ */ React.createElement("select", { value: "", onChange: (e) => insertCanned(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-2 py-1 mb-2" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Insert canned reply\u2026"), cannedReplies.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.id, value: r.id }, r.title))), /* @__PURE__ */ React.createElement("textarea", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", rows: 8, placeholder: "Write a message\u2026", value: message, onChange: (e) => setMessage(e.target.value) }), /* @__PURE__ */ React.createElement(AttachFileControl, { attachment, pickFile, clearAttachment }), errorMsg && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, errorMsg), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: send, disabled: sending || !message.trim() || (attachment == null ? void 0 : attachment.uploading) || (attachment == null ? void 0 : attachment.error), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, sending ? "Sending\u2026" : "Send")));
+  return /* @__PURE__ */ React.createElement("div", { ref: boxRef, className: "rounded-lg border border-[#E2DED5] bg-[#FFFDFA] p-3 mb-4" }, replyTo && /* @__PURE__ */ React.createElement("div", { className: "flex items-center justify-between gap-2 text-xs text-[#9A6B1F] bg-[#FBEEDA] rounded-md px-2 py-1 mb-2" }, /* @__PURE__ */ React.createElement("span", null, "Replying to ", replyTo.fromEmail), onClearReply && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: () => onClearReply(), className: "hover:underline" }, "Cancel")), message.trim() && /* @__PURE__ */ React.createElement("span", { className: "inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#FBEEDA] text-[#9A6B1F] mb-2" }, "\u{1F4DD} Draft saved"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 text-xs text-[#75716A] mb-2" }, "To:", /* @__PURE__ */ React.createElement("select", { value: to, onChange: (e) => setTo(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-2 py-1" }, emailOptions.map((e) => /* @__PURE__ */ React.createElement("option", { key: e, value: e }, e))), /* @__PURE__ */ React.createElement("span", { className: "ml-auto" }, "From: service@qicampark.com")), /* @__PURE__ */ React.createElement("input", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", placeholder: "Subject", value: subject, onChange: (e) => setSubject(e.target.value) }), /* @__PURE__ */ React.createElement(ClaudeDraftControls, claudeDraft), cannedReplies && cannedReplies.length > 0 && /* @__PURE__ */ React.createElement("select", { value: "", onChange: (e) => insertCanned(e.target.value), className: "text-xs border border-[#E2DED5] rounded-md px-2 py-1 mb-2" }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Insert canned reply\u2026"), cannedReplies.map((r) => /* @__PURE__ */ React.createElement("option", { key: r.id, value: r.id }, r.title))), /* @__PURE__ */ React.createElement("textarea", { className: "w-full text-sm rounded-md border border-[#E2DED5] px-2.5 py-1.5 mb-2", rows: 8, placeholder: "Write a message\u2026", value: message, onChange: (e) => setMessage(e.target.value) }), /* @__PURE__ */ React.createElement(AttachFileControl, { attachment, pickFile, clearAttachment }), errorMsg && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] mb-2" }, errorMsg), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement("button", { onClick: send, disabled: sending || !message.trim() || (attachment == null ? void 0 : attachment.uploading) || (attachment == null ? void 0 : attachment.error), className: "px-3 py-1.5 rounded-md text-xs font-semibold bg-[#377249] text-white disabled:opacity-50" }, sending ? "Sending\u2026" : "Send")));
 }
 // What the reply is about, shown above the reply box so it can be read
 // while writing (the pop-up covers the screen behind it, and on a phone
