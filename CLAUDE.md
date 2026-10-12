@@ -40,6 +40,9 @@ Alex is the owner and the person you're working with; Tim
     `cd ~/QIC-Service-Managment && git pull origin main && firebase deploy --only ...`
     (folder assumed to be in the home folder - if Alex says otherwise,
     update this note).
+- Every command Alex needs to run goes in its own copy-paste code block
+  (one per machine, one per step) - never inline in a sentence. Alex asked
+  for this always.
 - Explain things in plain language; Alex isn't a developer. Keep replies
   short and lead with what changed for them.
 - A refresh keeps people where they were: the computer app's tab and menu
