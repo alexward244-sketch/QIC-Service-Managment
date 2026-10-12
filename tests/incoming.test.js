@@ -131,3 +131,21 @@ test("a phone call logged here shows up in Incoming and the customer's history",
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
+
+test("the menu has Incoming and no longer Service Requests; the dashboard's sign-ups card opens Incoming", async () => {
+  await seed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  const menu = await page.evaluate(() => ({
+    today: SERVICE_NAV_GROUPS[0].items,
+    tabs: TABS.filter((t) => t.group === "service").map((t) => t.key)
+  }));
+  assert.ok(menu.today.includes("incoming"));
+  assert.ok(menu.tabs.includes("incoming"));
+  assert.ok(!menu.today.includes("generalservice"));
+  assert.ok(!menu.tabs.includes("generalservice"));
+  await mountWithDb(page, `(api) => React.createElement(CurrentUserContext.Provider, { value: "${EMAIL}" }, React.createElement(DashboardView, { db: api.db, persist: api.persist, onGoToTab: (t) => { window.__went = t; }, onSearchJump() {}, allowedTabKeys: null, pendingSignups: api.pendingSignups, removePendingSignup() {}, saveWorkOrder() {}, saveCorrespondence() {} }))`, READY);
+  await page.getByText("Sign-Ups Needing Review").first().click();
+  assert.equal(await page.evaluate(() => window.__went), "incoming");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});

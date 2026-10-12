@@ -8275,8 +8275,11 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
     { type: "generalservice", tab: "generalservice", label: "General Service Requests", count: generalServiceSignups }
   ];
   const activeReviewTypes = REVIEW_TYPES.filter((r) => r.count > 0);
+  // Website sign-ups are all reviewed in Incoming now.
   const goToReview = () => {
-    if (activeReviewTypes.length === 1) {
+    if (activeReviewTypes.length > 0 && (!allowedTabKeys || allowedTabKeys.has("incoming"))) {
+      onGoToTab("incoming");
+    } else if (activeReviewTypes.length === 1) {
       onGoToTab(activeReviewTypes[0].tab);
     } else if (activeReviewTypes.length > 1) {
       setReviewChooserOpen(true);
@@ -20361,7 +20364,8 @@ const TABS = [
   { key: "sites", label: "Sites", group: "service" },
   { key: "customers", label: "Customers", group: "service" },
   { key: "cottages", label: "Cottages", group: "service" },
-  { key: "generalservice", label: "Service Requests", group: "service" },
+  // Service Requests ("generalservice") is hidden: its queue moved to Incoming.
+  // GeneralServiceView is kept for now in case it's wanted back.
   { key: "correspondence", label: "Correspondence", group: "service" },
   { key: "map", label: "Site Map", group: "service" },
   { key: "winterizing", label: "Winterizing", group: "service" },
@@ -20388,7 +20392,7 @@ const TABS = [
   { key: "cottages", label: "Cottages", group: "accounting" }
 ];
 const SERVICE_NAV_GROUPS = [
-  { label: "Today", items: ["dashboard", "workorders", "correspondence", "generalservice", "servicereports", "calendar"] },
+  { label: "Today", items: ["dashboard", "incoming", "workorders", "correspondence", "servicereports", "calendar"] },
   { label: "Money", items: ["quotes", "invoices"] },
   { label: "The Park", items: ["sites", "customers", "cottages", "map"] },
   { label: "Seasonal", items: ["propane", "trees", "winterizing", "hydro", "parts"] }
@@ -20410,7 +20414,7 @@ const ACCOUNTING_NAV_GROUPS = [
   { label: "The Park", items: ["sites", "customers", "cottages"] }
 ];
 const GROUPED_NAV_BY_MODE = { service: SERVICE_NAV_GROUPS, admin: ADMIN_NAV_GROUPS, sales: SALES_NAV_GROUPS, accounting: ACCOUNTING_NAV_GROUPS };
-const NAV_BADGE_KIND = { correspondence: "green", generalservice: "warn", invoices: "warn", hydroreview: "warn", systemhealth: "warn" };
+const NAV_BADGE_KIND = { incoming: "warn", correspondence: "green", invoices: "warn", hydroreview: "warn", systemhealth: "warn" };
 const NAV_ICON_SHAPES = {
   dashboard: [
     React.createElement("rect", { key: "a", x: 3, y: 3, width: 7, height: 9 }),
@@ -20425,6 +20429,10 @@ const NAV_ICON_SHAPES = {
   correspondence: [
     React.createElement("rect", { key: "a", x: 3, y: 5, width: 18, height: 14 }),
     React.createElement("path", { key: "b", d: "m3 7 9 6 9-6" })
+  ],
+  incoming: [
+    React.createElement("path", { key: "a", d: "M22 12h-6l-2 3h-4l-2-3H2" }),
+    React.createElement("path", { key: "b", d: "M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" })
   ],
   generalservice: [
     React.createElement("path", { key: "a", d: "M8 2h8l4 6-8 14L4 8z" }),
@@ -23638,7 +23646,6 @@ function AppContent() {
     workorders: openCount,
     incoming: incomingItems(db, pendingSignups).length,
     correspondence: (db.correspondence || []).filter((c) => c.direction !== "out" && CorrespondenceIsNew(c)).length,
-    generalservice: (pendingSignups || []).filter((p) => p.type === "generalservice").length,
     invoices: (db.invoices || []).filter((i) => !i.paidInFullDate).length,
     sites: (db.sites || []).length,
     propane: (db.propaneRequests || []).filter((r) => !r.completed && !r.expiredTank).length,

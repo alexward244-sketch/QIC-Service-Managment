@@ -199,7 +199,11 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   winterizing) and calls/walk-ins logged there (correspondence `source`
   "phone"/"walkin"). Grouped: Needs a work order / Propane·Trees·Winterizing
   / About an existing job / Just needs an answer, one main button each.
-  Sign-ups use the same review forms as their own screens.
+  Sign-ups use the same review forms as their own screens. It's in the
+  menu's "Today" group (`SERVICE_NAV_GROUPS`, not just `TABS`), and the
+  Dashboard's "Sign-Ups Needing Review" card opens it.
+- The Service Requests tab is hidden (taken out of `TABS` and the menu);
+  `GeneralServiceView` is still in the code until Alex says to delete it.
 - A website form confirmed for a customer (from anywhere) is saved in their
   correspondence as `correspondence/webform_<sign-up id>` (handled, linked to
   what it made) so a reply to it reads in order. Web forms and logged calls
