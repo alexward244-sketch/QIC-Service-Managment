@@ -4397,6 +4397,7 @@ function CottageSerialQuickAdd({ cottage, cottages, onSave }) {
 // Claude (readCottageNameplate) into serial #, model, maker, year and the
 // factory appliances, shown here for checking before anything is saved.
 const NAMEPLATE_MAX_SIDE = 2400;
+const NAMEPLATE_MAX_PDF = 7 * 1024 * 1024;
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -4424,6 +4425,7 @@ function NameplateScanModal({ cottage, db, persist, saveCottage, onClose }) {
   const [step, setStep] = useState("pick");
   const [error, setError] = useState("");
   const [photo, setPhoto] = useState(null);
+  const [pdfName, setPdfName] = useState("");
   const [fields, setFields] = useState(null);
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState([]);
@@ -4434,15 +4436,23 @@ function NameplateScanModal({ cottage, db, persist, saveCottage, onClose }) {
       setError("Reading a nameplate needs a connection — try again once you have signal.");
       return;
     }
+    // A PDF from the cottage's file (spec sheet, scanned plate, bill of
+    // sale) is sent as it is; a photo is shrunk first.
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+    if (isPdf && file.size > NAMEPLATE_MAX_PDF) {
+      setError("That PDF is over 7 MB \u2014 save just the pages with the cottage's details (spec sheet or nameplate) and try that.");
+      return;
+    }
     setError("");
     setStep("reading");
     try {
-      const blob = await resizeImageFile(file, NAMEPLATE_MAX_SIDE);
-      setPhoto(blob);
-      const res = await functions_.httpsCallable("readCottageNameplate")({ image: await blobToBase64(blob) });
+      const blob = isPdf ? file : await resizeImageFile(file, NAMEPLATE_MAX_SIDE);
+      setPhoto(isPdf ? null : blob);
+      setPdfName(isPdf ? file.name || "PDF" : "");
+      const res = await functions_.httpsCallable("readCottageNameplate", { timeout: 25e4 })(isPdf ? { pdf: await blobToBase64(blob) } : { image: await blobToBase64(blob) });
       const plate = res.data && res.data.plate || {};
       if (!plate.isNameplate) {
-        setError(plate.notes || "Couldn't find a readable nameplate in that photo. Try again closer up, without glare.");
+        setError(plate.notes || (isPdf ? "Couldn't find the cottage's details (serial, model, appliances) in that PDF." : "Couldn't find a readable nameplate in that photo. Try again closer up, without glare."));
         setStep("pick");
         return;
       }
@@ -4462,9 +4472,12 @@ function NameplateScanModal({ cottage, db, persist, saveCottage, onClose }) {
     setSaving(true);
     const current = (db.cottages || []).find((c) => c.id === cottage.id) || cottage;
     let nameplatePhoto = current.nameplatePhoto || null;
+    // A PDF isn't uploaded - it's already in the cottage's files; just note
+    // that the details came from it.
+    const nameplateDoc = pdfName ? { name: pdfName, by: actor || "", ts: (/* @__PURE__ */ new Date()).toISOString() } : current.nameplateDoc || null;
     // The photo is a nice-to-have record: if it won't upload (poor signal),
     // the readings are still saved.
-    try {
+    if (photo) try {
       const path = `cottage-photos/${cottage.id}/nameplate-${Date.now()}.jpg`;
       const ref = storage_.ref().child(path);
       const upload = (async () => {
@@ -4488,8 +4501,8 @@ function NameplateScanModal({ cottage, db, persist, saveCottage, onClose }) {
       }
     });
     const keep = (k) => fields[k].trim() || current[k] || "";
-    const next = { ...current, serialNumber: keep("serialNumber"), modelNumber: keep("modelNumber"), year: keep("year"), manufacturer: keep("manufacturer"), tradeName: keep("tradeName"), appliances, nameplatePhoto };
-    persist({ ...db, activityLog: addLog(db, actor, `Read the nameplate for ${current.name}${next.serialNumber ? ` (serial # ${next.serialNumber})` : ""}${picked.length ? ` — ${picked.length} appliance${picked.length === 1 ? "" : "s"}` : ""}`) });
+    const next = { ...current, serialNumber: keep("serialNumber"), modelNumber: keep("modelNumber"), year: keep("year"), manufacturer: keep("manufacturer"), tradeName: keep("tradeName"), appliances, nameplatePhoto, nameplateDoc };
+    persist({ ...db, activityLog: addLog(db, actor, `${pdfName ? `Read ${pdfName} for` : "Read the nameplate for"} ${current.name}${next.serialNumber ? ` (serial # ${next.serialNumber})` : ""}${picked.length ? ` — ${picked.length} appliance${picked.length === 1 ? "" : "s"}` : ""}`) });
     await saveCottage(next);
     setSaving(false);
     onClose();
@@ -4500,7 +4513,7 @@ function NameplateScanModal({ cottage, db, persist, saveCottage, onClose }) {
     const changes = before && fields[k].trim() && fields[k].trim() !== before;
     return /* @__PURE__ */ React.createElement(Field, { key: k, label }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: fields[k], onChange: (e) => setField(k, e.target.value) }), changes && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#9A6B1F] mt-1" }, "Replaces ", before));
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: `Scan nameplate — ${cottage.name}`, onClose, wide: step === "review" }, step !== "review" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Take or choose a photo of the cottage's specification nameplate (\"Do not remove\" — usually inside a cupboard or by the panel). Get the whole plate in, straight on, without glare."), /* @__PURE__ */ React.createElement("input", { ref: inputRef, type: "file", accept: "image/*", className: "hidden", "aria-label": "Nameplate photo", onChange: (e) => read(e.target.files && e.target.files[0]) }), step === "reading" ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium" }, "Reading the nameplate… (this takes a few seconds)") : /* @__PURE__ */ React.createElement("button", { onClick: () => inputRef.current && inputRef.current.click(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Take / choose photo"), error && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a] mt-3" }, error)), step === "review" && fields && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Check these against the plate, fix anything that's off, then save. Blank boxes leave what's there now."), notes && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A6B1F] bg-[#FBEEDA] rounded px-3 py-2 mb-3" }, notes), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, fieldRow("serialNumber", "Serial Number"), fieldRow("modelNumber", "Model Number"), fieldRow("year", "Year"), fieldRow("manufacturer", "Manufacturer"), fieldRow("tradeName", "Trade Name")), serialTwin && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-1 mb-3" }, "That serial number is already on ", serialTwin.name, " — double check before saving."), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mt-2 mb-2" }, "Factory appliances"), rows.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-3" }, "None listed on the plate.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-3" }, rows.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.key, className: `rounded-lg border px-3 py-2 ${r.include ? "border-[#377249]/40 bg-[#FFFDFA]" : "border-[#E2DED5] bg-[#F1EEE9]"}` }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm font-medium text-[#1E1A13] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: r.include, onChange: (e) => setRow(r.key, { include: e.target.checked }), "aria-label": `Save ${r.label || r.type}` }), r.label || r.type, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#75716A]" }, r.same ? "— already listed" : r.existing ? `— already listed as ${r.existing}; tick to replace with the plate's` : r.existingId ? `— fills in the ${r.type} already listed` : "— adds it to the cottage")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" }, /* @__PURE__ */ React.createElement("select", { className: smallInput, value: r.type, onChange: (e) => setRow(r.key, { type: e.target.value }), "aria-label": `Type for ${r.label}` }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.make, placeholder: "Make", onChange: (e) => setRow(r.key, { make: e.target.value }), "aria-label": `Make for ${r.label}` }), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.model, placeholder: "Model", onChange: (e) => setRow(r.key, { model: e.target.value }), "aria-label": `Model for ${r.label}` }), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.fuel, placeholder: "Fuel", onChange: (e) => setRow(r.key, { fuel: e.target.value }), "aria-label": `Fuel for ${r.label}` }))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => { setStep("pick"); setFields(null); }, className: "text-sm text-[#377249] hover:underline" }, "Use another photo"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: save, disabled: saving, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : "Save to cottage")))));
+  return /* @__PURE__ */ React.createElement(Modal, { title: `Scan nameplate — ${cottage.name}`, onClose, wide: step === "review" }, step !== "review" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "Take or choose a photo of the cottage's specification nameplate (\"Do not remove\" — usually inside a cupboard or by the panel). Get the whole plate in, straight on, without glare. Or choose a PDF from the cottage's file \u2014 a scanned plate, spec sheet or bill of sale."), /* @__PURE__ */ React.createElement("input", { ref: inputRef, type: "file", accept: "image/*,application/pdf,.pdf", className: "hidden", "aria-label": "Nameplate photo", onChange: (e) => read(e.target.files && e.target.files[0]) }), step === "reading" ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#377249] font-medium" }, pdfName ? "Reading the PDF\u2026 (this can take up to a minute)" : "Reading the nameplate… (this takes a few seconds)") : /* @__PURE__ */ React.createElement("button", { onClick: () => inputRef.current && inputRef.current.click(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Take / choose photo or PDF"), error && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#a8532a] mt-3" }, error)), step === "review" && fields && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, pdfName ? `Read from ${pdfName}. Check these against it, fix anything that's off, then save. Blank boxes leave what's there now.` : "Check these against the plate, fix anything that's off, then save. Blank boxes leave what's there now."), notes && /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A6B1F] bg-[#FBEEDA] rounded px-3 py-2 mb-3" }, notes), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, fieldRow("serialNumber", "Serial Number"), fieldRow("modelNumber", "Model Number"), fieldRow("year", "Year"), fieldRow("manufacturer", "Manufacturer"), fieldRow("tradeName", "Trade Name")), serialTwin && /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a] -mt-1 mb-3" }, "That serial number is already on ", serialTwin.name, " — double check before saving."), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-semibold mt-2 mb-2" }, "Factory appliances"), rows.length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#9A968D] italic mb-3" }, "None listed on the plate.") : /* @__PURE__ */ React.createElement("div", { className: "space-y-2 mb-3" }, rows.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.key, className: `rounded-lg border px-3 py-2 ${r.include ? "border-[#377249]/40 bg-[#FFFDFA]" : "border-[#E2DED5] bg-[#F1EEE9]"}` }, /* @__PURE__ */ React.createElement("label", { className: "flex items-center gap-2 text-sm font-medium text-[#1E1A13] mb-1.5" }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: r.include, onChange: (e) => setRow(r.key, { include: e.target.checked }), "aria-label": `Save ${r.label || r.type}` }), r.label || r.type, /* @__PURE__ */ React.createElement("span", { className: "text-xs font-normal text-[#75716A]" }, r.same ? "— already listed" : r.existing ? `— already listed as ${r.existing}; tick to replace with the plate's` : r.existingId ? `— fills in the ${r.type} already listed` : "— adds it to the cottage")), /* @__PURE__ */ React.createElement("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" }, /* @__PURE__ */ React.createElement("select", { className: smallInput, value: r.type, onChange: (e) => setRow(r.key, { type: e.target.value }), "aria-label": `Type for ${r.label}` }, APPLIANCE_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.make, placeholder: "Make", onChange: (e) => setRow(r.key, { make: e.target.value }), "aria-label": `Make for ${r.label}` }), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.model, placeholder: "Model", onChange: (e) => setRow(r.key, { model: e.target.value }), "aria-label": `Model for ${r.label}` }), /* @__PURE__ */ React.createElement("input", { className: smallInput, value: r.fuel, placeholder: "Fuel", onChange: (e) => setRow(r.key, { fuel: e.target.value }), "aria-label": `Fuel for ${r.label}` }))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-between items-center gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { onClick: () => { setStep("pick"); setFields(null); }, className: "text-sm text-[#377249] hover:underline" }, "Use another photo"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: save, disabled: saving, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, saving ? "Saving…" : "Save to cottage")))));
 }
 function CottagesView({ db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly, canTransfer, filterPrefill }) {
   var _a, _b;
@@ -5083,6 +5096,7 @@ function cottageHistory(db, cottage) {
   (db.sunspaceOrders || []).filter((o) => o.cottageId === cottage.id).forEach((o) => out.push({ key: "s-" + o.id, date: o.orderedDate || String(o.createdAt || "").slice(0, 10), open: o.status !== "Work Complete", text: `Sunspace: ${sunspaceItemsLabel(o)}`, sub: o.status }));
   cottageTransferHistory(db, cottage).forEach((t) => out.push({ key: "x-" + t.id, date: t.date, text: `Ownership: ${t.fromCustomerName} → ${t.toCustomerName}` }));
   if (cottage.nameplatePhoto && cottage.nameplatePhoto.ts) out.push({ key: "np", date: cottage.nameplatePhoto.ts.slice(0, 10), text: "Nameplate scanned" });
+  if (cottage.nameplateDoc && cottage.nameplateDoc.ts) out.push({ key: "npdoc", date: cottage.nameplateDoc.ts.slice(0, 10), text: `Details read from ${cottage.nameplateDoc.name || "a PDF"}` });
   return out.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 }
 function CottageDetailModal({ cottage, db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence, readOnly, canTransfer, canScanNameplate, nested, onClose, onEdit, onDelete, variant }) {

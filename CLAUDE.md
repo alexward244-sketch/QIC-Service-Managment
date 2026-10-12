@@ -277,7 +277,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   maker and the factory appliances. An appliance already filled in isn't
   overwritten unless ticked (it may have been replaced since the factory).
   The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
-  at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
+  at `cottage-photos/{cottageId}/` (`nameplatePhoto`). It also takes a PDF
+  from the cottage's file (scanned plate, spec sheet, bill of sale; under
+  7 MB), sent to Claude as a document; the PDF isn't uploaded - the cottage
+  notes it in `nameplateDoc` ("Details read from …" in its history).
 - Cottages tab: list on the left, the cottage's page on the right (wide
   screens; a pop-up on narrow ones). Top boxes are just total cottages and
   "with serial #" - Alex didn't want more. The page shows serial/model/
