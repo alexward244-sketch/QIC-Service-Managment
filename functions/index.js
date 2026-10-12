@@ -2434,14 +2434,17 @@ function longDate(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-CA", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
 }
-async function sendWinterKeyList(today) {
+// `resend`: sent by hand from the Plan board after the plan changed - it
+// goes out even if today's was already sent (or the daily email is off),
+// marked as an update.
+async function sendWinterKeyList(today, { resend = false } = {}) {
   const mainSnap = await ROLES_DOC.get();
   const settings = (mainSnap.exists && mainSnap.data().settings) || {};
-  if (settings.winterKeyEmailOff) return { today, skipped: "turned off" };
+  if (settings.winterKeyEmailOff && !resend) return { today, skipped: "turned off" };
   const closed = new Set((settings.winterBlockedDays || []).filter((b) => b && b.closed).map((b) => b.date));
   const year = Number(today.slice(0, 4));
   [year, year + 1].forEach((y) => closed.add(thanksgivingISO(y)));
-  if (closed.has(today)) return { today, skipped: "closed today" };
+  if (closed.has(today) && !resend) return { today, skipped: "closed today" };
   // The days this email covers: the next weekdays up to and including the next open one.
   const days = [];
   let d = today;
@@ -2457,7 +2460,7 @@ async function sendWinterKeyList(today) {
     db.collection("sites").get(),
     db.collection("customers").get()
   ]);
-  if (sentSnap.exists) return { today, skipped: "already sent" };
+  if (sentSnap.exists && !resend) return { today, skipped: "already sent" };
   const byId = (snap) => new Map(snap.docs.map((d) => [d.id, d.data()]));
   const cottages = byId(cottSnap), sites = byId(sitesSnap), customers = byId(custSnap);
   const rows = winterSnap.docs.map((d) => d.data())
@@ -2471,7 +2474,7 @@ async function sendWinterKeyList(today) {
       return { r, day: r.plannedDate != null ? r.plannedDate : r.requestedDate, cottage, site, customer, masterKey: !!(howTo && howTo.masterKey), onList: !!(howTo && (howTo.code || howTo.note || howTo.masterKey)) };
     })
     .filter((x) => !x.masterKey);
-  if (!rows.length) return { today, days, count: 0 };
+  if (!rows.length && !resend) return { today, days, count: 0 };
   const section = (x) => toStr(x.site && x.site.section).trim() || "No section";
   rows.sort((a, b) => a.day.localeCompare(b.day) || section(a).localeCompare(section(b)) || toStr(a.site && a.site.number).localeCompare(toStr(b.site && b.site.number), undefined, { numeric: true }));
   const withWork = days.filter((x) => rows.some((r) => r.day === x));
@@ -2488,13 +2491,17 @@ async function sendWinterKeyList(today) {
     const flags = [x.r.options && x.r.options.keyAtReception ? "customer said the key is at reception" : "", x.onList ? "" : "not on the master list - check"].filter(Boolean);
     lines.push(`- ${x.site ? `Site ${toStr(x.site.number)}` : "No site"}${x.cottage ? ` · ${toStr(x.cottage.name)}` : ""} · ${who}${flags.length ? ` (${flags.join("; ")})` : ""}`);
   });
-  const when = withWork.map(longDate).join(" and ");
-  const subject = `Winterizing keys needed for ${when}`;
-  const message = `Hi,\n\nThese ${rows.length} cottage${rows.length === 1 ? " is" : "s are"} being winterized on ${when} and our master key doesn't work for ${rows.length === 1 ? "it" : "them"}. Please collect the keys before then.\n\n${lines.join("\n")}\n\nSent by the QIC Service app.`;
+  const when = (withWork.length ? withWork : days.slice(-1)).map(longDate).join(" and ");
+  const update = resend && sentSnap.exists;
+  const subject = `${update ? "UPDATED - " : ""}Winterizing keys needed for ${when}`;
+  const intro = update ? `The winterizing plan for ${when} has changed - this list replaces the one sent earlier today.\n\n` : "";
+  const message = rows.length
+    ? `Hi,\n\n${intro}These ${rows.length} cottage${rows.length === 1 ? " is" : "s are"} being winterized on ${when} and our master key doesn't work for ${rows.length === 1 ? "it" : "them"}. Please collect the keys before then.\n\n${lines.join("\n")}\n\nSent by the QIC Service app.`
+    : `Hi,\n\n${intro}No keys are needed for ${when} - our master key works for every cottage planned.\n\nSent by the QIC Service app.`;
   const to = toStr(settings.winterKeyEmailTo).trim() || WINTER_KEYS_TO;
   await sendSummaryEmail(to, subject, message);
-  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString() });
-  return { today, days, count: rows.length };
+  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString(), ...(update ? { resentAt: new Date().toISOString(), resends: admin.firestore.FieldValue.increment(1) } : {}) }, { merge: true });
+  return { today, days, count: rows.length, when, to, update };
 }
 
 exports.winterKeyList = onSchedule(
@@ -2508,6 +2515,25 @@ exports.winterKeyList = onSchedule(
       console.error("Winterizing keys email failed:", err);
       await reportServerProblem("winterKeyList", `The winterizing keys email to reception couldn't be sent: ${err.message || err}`);
       throw err;
+    }
+  }
+);
+
+// "Resend now" on the Plan board, after the plan for the next day changed.
+exports.resendWinterKeyList = onCall(
+  { secrets: [EMAILJS_PRIVATE_KEY], timeoutSeconds: 120 },
+  async (request) => {
+    const role = request.auth && request.auth.token && request.auth.token.role;
+    if (role !== "admin" && role !== "manager") {
+      throw new HttpsError("permission-denied", "Only an Admin or Service Manager can resend the keys email.");
+    }
+    try {
+      const result = await sendWinterKeyList(todayEasternISO(), { resend: true });
+      return { ok: true, count: result.count, when: result.when, to: result.to };
+    } catch (err) {
+      console.error("Winterizing keys resend failed:", err);
+      await reportServerProblem("winterKeyList", `The winterizing keys email couldn't be resent: ${err.message || err}`, { email: false });
+      throw new HttpsError("unavailable", "The email couldn't be sent - try again in a minute.");
     }
   }
 );

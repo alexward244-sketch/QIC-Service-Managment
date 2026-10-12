@@ -14720,6 +14720,28 @@ function winterNextWorkday(iso, season) {
 // a day (25 unless changed), and days blocked off for other work (e.g.
 // Pebble Beach and By the Woods, whose winterizing is in their fee and who
 // don't sign up), each with a label.
+// Sends the keys email again now (marked UPDATED when today's already went
+// out), for when the next day's plan changed after the 9am email.
+function WinterKeysResendButton() {
+  const [state, setState] = useState(null);
+  const send = async () => {
+    if (!window.confirm("Send reception the keys list for the next winterizing day again, as it is planned now?")) return;
+    setState({ busy: true });
+    try {
+      const res = await functions_.httpsCallable("resendWinterKeyList")({});
+      const d = res.data || {};
+      setState({ text: d.count ? `Sent \u2014 ${d.count} cottage${d.count === 1 ? "" : "s"} for ${d.when}` : `Sent \u2014 no keys needed for ${d.when}` });
+    } catch (e) {
+      setState({ error: true, text: (e && e.message) || "Couldn't send it \u2014 try again." });
+    }
+  };
+  return React.createElement(
+    "span",
+    { className: "flex items-center gap-1.5 text-xs" },
+    React.createElement("button", { type: "button", onClick: send, disabled: !!(state && state.busy), "data-winter-keys-resend": true, className: "px-2 py-1 rounded-md border border-[#E2DED5] bg-white text-[#377249] font-semibold hover:bg-[#F1EEE9] disabled:opacity-50" }, state && state.busy ? "Sending\u2026" : "Resend keys email now"),
+    state && state.text && React.createElement("span", { className: state.error ? "text-[#a8532a]" : "text-[#28633C]" }, state.text)
+  );
+}
 // Thanksgiving Monday is always a closed day (blocked, and no keys email
 // that morning); other blocked days can be marked closed too.
 function winterSeason(db) {
@@ -15133,6 +15155,7 @@ function WinterizingPlanBoard({ db, all, today, weekStart, setWeekStart, notSign
       React.createElement("span", { className: "text-xs text-[#9A968D]" }, "Weekdays only"),
       React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "New sign-ups go on the next day with room (their requested day if possible), marked New" }, React.createElement("input", { type: "checkbox", checked: !!(db.settings || {}).winterAutoPlaceNew, onChange: (e) => onSaveSeason({ winterAutoPlaceNew: e.target.checked }), className: "accent-[#377249]" }), "Put new sign-ups on the schedule"),
       React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "Each weekday morning (Friday for Monday), reception gets the next day's cottages where our master key doesn't work, so the keys can be collected" }, React.createElement("input", { type: "checkbox", checked: !(db.settings || {}).winterKeyEmailOff, onChange: (e) => onSaveSeason({ winterKeyEmailOff: !e.target.checked }), className: "accent-[#377249]", "aria-label": "Email reception the keys needed" }), "Email reserve@ the keys needed the day before"),
+      React.createElement(WinterKeysResendButton, null),
       onPrintSectionMap && React.createElement("label", { className: "flex items-center gap-1.5 text-xs text-[#4B4740]", title: "Print one section's map with every site circled by how it's winterized (e.g. for Pebble Beach and By the Woods days)" }, "\uD83D\uDDFA Section map", React.createElement("select", { "data-section-map": true, value: "", onChange: (e) => e.target.value && onPrintSectionMap(WINTER_MAPS.find((m) => m.key === e.target.value)), className: "border border-[#E2DED5] rounded-md px-1.5 py-1 bg-white text-xs" }, React.createElement("option", { value: "" }, "Print\u2026"), WINTER_MAPS.map((m) => React.createElement("option", { key: m.key, value: m.key }, m.name)))),
       React.createElement("button", { type: "button", onClick: onAutoPlan, className: "ml-auto px-4 py-1.5 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]" }, "Auto-plan\u2026")
     ),

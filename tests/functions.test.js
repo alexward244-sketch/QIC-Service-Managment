@@ -516,6 +516,33 @@ test("winterizing keys: the open day before (Friday for Monday, Thanksgiving and
   assert.equal(emails.length, 4, "turned off");
 });
 
+test("winterizing keys: Resend now sends the list as planned now, marked UPDATED once today's went out", async () => {
+  assert.deepEqual(await call(fns.resendWinterKeyList, {}, "office"), { error: "permission-denied" });
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // Every weekday of the next two weeks, so whichever is "next" has one.
+  const days = [];
+  for (let i = 1; days.length < 10; i++) {
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + i);
+    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) days.push(d.toISOString().slice(0, 10));
+  }
+  await db.doc("sites/s1").set({ number: "0010", section: "Front of Park" });
+  await db.doc("cottages/k1").set({ name: "Willow", siteId: "s1" });
+  await Promise.all(days.map((d, i) => db.doc(`winterizingRequests/r${i}`).set({ cottageId: "k1", plannedDate: d })));
+  await db.doc("campground/data").set({ settings: { winterKeyEmailOff: true } }, { merge: true });
+  const first = await call(fns.resendWinterKeyList, {}, "manager");
+  assert.equal(first.ok, true);
+  assert.equal(first.count, 1);
+  assert.equal(emails.length, 1, "sent even with the daily email off - it was asked for");
+  assert.doesNotMatch(emails[0].subject, /UPDATED/);
+  await call(fns.resendWinterKeyList, {}, "admin");
+  assert.equal(emails.length, 2);
+  assert.match(emails[1].subject, /^UPDATED - Winterizing keys needed for /);
+  assert.match(emails[1].message, /replaces the one sent earlier today/);
+  const sent = (await db.doc(`winterKeyEmails/${today}`).get()).data();
+  assert.equal(sent.resends, 1);
+});
+
 test("nameplate reader: staff only, sends the photo to Claude and tidies what comes back", async () => {
   assert.deepEqual(await call(fns.readCottageNameplate, { image: "abcd" }, ""), { error: "permission-denied" });
   assert.deepEqual(await call(fns.readCottageNameplate, { image: "not base64!" }), { error: "invalid-argument" });

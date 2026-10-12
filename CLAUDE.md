@@ -164,7 +164,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
   (`winterKeyEmails/{date sent}`); off with `settings.winterKeyEmailOff`
-  (checkbox on the Plan board).
+  (checkbox on the Plan board). "Resend keys email now" next to it
+  (`resendWinterKeyList`, Admin / Service Manager) sends the list as planned
+  now, even if today's already went or the daily email is off - marked
+  "UPDATED" when it replaces one sent that day.
 - Closed days: Thanksgiving Monday automatically, plus blocked days ticked
   "We're closed" (`winterBlockedDays[].closed`). Nothing is planned on them,
   no keys email goes out that morning, and the open day before covers
