@@ -329,3 +329,8 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 
 - Auto-deploy Cloud Functions from GitHub Actions on merge (needs a Firebase
   deploy key as a GitHub secret) — Alex wants this eventually.
+- "Add park cottages…" for the Service Manager: unsold QIC Inventory units
+  come from `cottageOrders`, which only Admin / Sales Manager can read, so a
+  Service Manager's list misses them. Plan: let them look up just the unsold
+  delivered display models' sites (rules change + deploy), not the rest of
+  the sales records. Alex said to remind him another time (Oct 2026).
