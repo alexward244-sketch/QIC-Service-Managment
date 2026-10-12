@@ -2325,7 +2325,7 @@ const NAMEPLATE_SCHEMA = {
     notes: { type: "string" }
   }
 };
-const NAMEPLATE_SYSTEM_PROMPT = `You read photos of the specification nameplate on a park model trailer (cottage) at a campground, so staff don't have to type it in.
+const NAMEPLATE_SYSTEM_PROMPT = `You read photos of the specification nameplate on a park model trailer (cottage) at a campground, so staff don't have to type it in. Sometimes you're given a PDF from the cottage's file instead - a scan of the plate, the manufacturer's spec sheet, a bill of sale or warranty papers. Read the same details from whichever pages have them (a serial number may be labelled "Serial No.", "S/N" or "VIN"). If the PDF covers more than one unit, say so in notes and leave the serial blank.
 
 Copy values exactly as printed - same letters, digits, dots and dashes. If a value is missing, unreadable or you're unsure of a character, return "" for it (and say which in notes) rather than guessing; a wrong serial number is worse than a blank one.
 
@@ -2334,16 +2334,19 @@ Copy values exactly as printed - same letters, digits, dots and dashes. If a val
 - modelNumber and serialNumber: from the MODEL NO. and SERIAL NO. fields. The boxed "ISSUE NO. / NO. DE SERIE" number printed sideways on the plate is the plate's issue number, not the serial - never use it as the serial.
 - year: the date (year) of manufacture, 4 digits.
 - appliances: one entry per factory-installed appliance line that has a make. Skip lines marked N/A or left blank. type: the closest of the allowed types (water heater -> "Hot Water Tank", refrigerator -> "Refrigerator", microwave oven -> "Microwave", air conditioner -> "AC Unit"). label: the line's name as printed in English. make: normal capitalisation, but keep short brands as printed (G.E. -> "GE"). model: exactly as printed. fuel: "Gas" or "Electric" (or "" if not given).
-- isNameplate: false if the photo isn't such a plate or is too blurry to read; then leave the rest blank.
+- isNameplate: false if the photo or PDF isn't such a plate or a document with this cottage's details, or is too blurry to read; then leave the rest blank.
 - notes: one short plain sentence for staff about anything uncertain, or "".`;
 
 exports.readCottageNameplate = onCall(
-  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 120, memory: "512MiB" },
+  { secrets: [ANTHROPIC_API_KEY], timeoutSeconds: 300, memory: "512MiB" },
   async (request) => {
     requireStaff(request, "read a nameplate");
-    const image = toStr((request.data || {}).image);
-    if (!image || image.length > 7 * 1024 * 1024 || !/^[A-Za-z0-9+/=]+$/.test(image)) {
-      throw new HttpsError("invalid-argument", "Send one photo (JPEG) of the nameplate.");
+    // A photo (JPEG, shrunk by the app) or a PDF from the cottage's file.
+    const pdf = toStr((request.data || {}).pdf);
+    const image = pdf ? "" : toStr((request.data || {}).image);
+    const data = pdf || image;
+    if (!data || data.length > (pdf ? 9.5 : 7) * 1024 * 1024 || !/^[A-Za-z0-9+/=]+$/.test(data) || (pdf && !pdf.startsWith("JVBERi0"))) {
+      throw new HttpsError("invalid-argument", pdf ? "Send one PDF (under about 7 MB)." : "Send one photo (JPEG) of the nameplate.");
     }
     await checkAiRateLimit(request.auth.uid, "nameplate", 60);
     try {
@@ -2357,11 +2360,11 @@ exports.readCottageNameplate = onCall(
         messages: [{
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } },
-            { type: "text", text: "Read this nameplate." }
+            pdf ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } } : { type: "image", source: { type: "base64", media_type: "image/jpeg", data: image } },
+            { type: "text", text: pdf ? "Read this cottage's details from this PDF." : "Read this nameplate." }
           ]
         }]
-      }, { timeout: 100000 });
+      }, { timeout: 240000 });
       if (response.stop_reason !== "end_turn") throw new Error(`stopped early: ${response.stop_reason}`);
       const textBlock = (response.content || []).filter((b) => b.type === "text").pop();
       const out = JSON.parse(textBlock ? textBlock.text : "");

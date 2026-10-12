@@ -562,4 +562,12 @@ test("nameplate reader: staff only, sends the photo to Claude and tidies what co
   assert.deepEqual(res.plate.appliances.map((a) => a.type), ["Furnace", "Other"], "unknown types become Other; blank lines are dropped");
   claude.script.push(new Error("boom"));
   assert.deepEqual(await call(fns.readCottageNameplate, { image: "aGVsbG8=" }), { error: "unavailable" });
+  // A PDF from the cottage's file goes to Claude as a document.
+  const pdf = Buffer.from("%PDF-1.4 spec sheet").toString("base64");
+  claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ isNameplate: true, manufacturer: "Northlander", tradeName: "", modelNumber: "M1", serialNumber: "S1", year: "2016", appliances: [], notes: "" }) }] });
+  const fromPdf = await call(fns.readCottageNameplate, { pdf });
+  const pdfReq = claude.calls[claude.calls.length - 1];
+  assert.deepEqual(pdfReq.messages[0].content[0], { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } });
+  assert.equal(fromPdf.plate.serialNumber, "S1");
+  assert.deepEqual(await call(fns.readCottageNameplate, { pdf: "aGVsbG8=" }), { error: "invalid-argument" }, "not a PDF");
 });
