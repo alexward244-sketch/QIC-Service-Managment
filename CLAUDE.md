@@ -296,6 +296,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
   accounting but not shown on the invoice form or anything customers see.
+- A part's Description (Parts) is its usual customer-facing wording: adding
+  the part to an invoice or quote copies it onto the line as `details`
+  (shown under the part name on the form, print and email), editable there
+  without changing the part ("Use the part's usual wording" puts it back).
 - Shop supplies (default 5%) is a share of parts + labour + the service
   call (lines with `withServiceCall`). Older lines and the old
   shop-supplies fields stay parts + labour, so invoices already sent keep

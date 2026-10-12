@@ -1373,6 +1373,7 @@ function buildInvoicePrefillFromSource(source, sourceType, db) {
       return {
         id: uid(),
         description: part ? part.name : "Part",
+        details: part ? part.description || "" : "",
         quantity: Number(pu.quantity) || 1,
         unitPrice: part ? Number(part.price) || 0 : 0,
         account: part ? part.salesAccount || "" : "",
@@ -7278,8 +7279,29 @@ function isPropaneWorkOrder(wo, propaneRequests) {
 function shopSuppliesInvoiceLine(percent) {
   return { id: uid(), kind: "shopSupplies", description: "Shop supplies", percent: percent != null ? percent : 5, withServiceCall: true, quantity: 1, unitPrice: 0, account: "" };
 }
+// A part's line starts with the part's saved description under its name
+// (`details`), the same wording every time; it can be changed on this
+// invoice or quote without touching the part.
 function partInvoiceLine(part, quantity) {
-  return { id: uid(), description: part.name, quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+  return { id: uid(), description: part.name, details: part.description || "", quantity: quantity || 1, unitPrice: Number(part.price) || 0, account: part.salesAccount || "", partId: part.id };
+}
+// Under a line's description on printed/emailed quotes and invoices.
+function lineDetailsHtml(li) {
+  const d = (li && li.details || "").trim();
+  return d ? `<div style="font-size:12px;color:#75716A;white-space:pre-line;margin-top:2px;">${escapeHtml(d)}</div>` : "";
+}
+// The editable text under a part's line in the invoice and quote forms.
+function InvoiceLineDetails({ li, parts, updateLine }) {
+  if (!li.partId && !li.details) return null;
+  const part = li.partId ? (parts || []).find((p) => p.id === li.partId) : null;
+  const original = part && part.description || "";
+  if (!li.details && !original) return null;
+  return React.createElement(
+    "div",
+    { className: "basis-full pl-1 -mt-1" },
+    React.createElement("textarea", { className: inputCls + " text-xs", rows: 2, value: li.details || "", onChange: (e) => updateLine(li.id, "details", e.target.value), placeholder: "Description shown to the customer", "aria-label": "Description shown to the customer" }),
+    original && (li.details || "") !== original && React.createElement("button", { type: "button", onClick: () => updateLine(li.id, "details", original), className: "text-[11px] text-[#377249] hover:underline font-medium" }, "Use the part's usual wording")
+  );
 }
 // The lines an invoice opens with in the form: an older invoice's labour
 // and service call fields become lines, with a blank line to type into last.
@@ -7338,6 +7360,7 @@ function InvoiceLineAmounts({ li, partsAndLabour, serviceCall, updateLine }) {
 function cleanInvoiceLine(li, partsAndLabour, serviceCall) {
   const base = { id: li.id, description: li.description.trim(), quantity: Number(li.quantity) || 0, unitPrice: Number(li.unitPrice) || 0, account: (li.account || "").trim() };
   if (li.partId) base.partId = li.partId;
+  if ((li.details || "").trim()) base.details = li.details.trim();
   if (li.kind) Object.assign(base, { kind: li.kind, rateType: li.rateType || "" });
   if (li.kind === "shopSupplies" && li.percent != null && li.percent !== "") Object.assign(base, { percent: Number(li.percent) || 0, ...(li.withServiceCall ? { withServiceCall: true } : {}), quantity: 1, unitPrice: shopSuppliesLineAmount(li, partsAndLabour, serviceCall) });
   return base;
@@ -7572,7 +7595,7 @@ function InvoiceForm({ initial, sites, cottages, customers, parts, workOrders, i
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
+  ), React.createElement(InvoiceLineDetails, { li, parts, updateLine })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-5 pt-4 border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("span", { className: "block text-[11px] uppercase tracking-wider text-[#75716A] mb-2 font-semibold" }, "Deposit"), /* @__PURE__ */ React.createElement("div", { className: "grid sm:grid-cols-2 gap-x-4" }, /* @__PURE__ */ React.createElement(Field, { label: "Deposit Amount" }, /* @__PURE__ */ React.createElement("input", {
     type: "number",
     min: "0",
     step: "0.01",
@@ -7655,7 +7678,7 @@ function InvoiceDetailDrawer({ invoice, db, taxRate, onClose, onEdit, onPrint, o
       lineItems.map((li) => /* @__PURE__ */ React.createElement(
         "div",
         { key: li.id, className: "flex items-center justify-between text-sm py-1 border-b border-[#EEEBE5] last:border-0" },
-        /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, li.description || "—", " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\xD7", li.quantity)),
+        /* @__PURE__ */ React.createElement("span", { className: "text-[#1E1A13]" }, li.description || "—", " ", /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#75716A]" }, "\xD7", li.quantity), li.details && React.createElement("span", { className: "block text-xs text-[#75716A] whitespace-pre-line" }, li.details)),
         /* @__PURE__ */ React.createElement("span", { className: "text-[#4B4740]" }, formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0)))
       ))
     ),
@@ -8894,7 +8917,7 @@ function QuoteForm({ initial, sites, cottages, customers, parts, quotes, taxRate
       "aria-label": "Remove line"
     },
     "\u2715"
-  )))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
+  ), React.createElement(InvoiceLineDetails, { li, parts, updateLine })))), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-2 mt-3 flex-wrap" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: addBlankLine, className: "text-xs text-[#377249] hover:underline font-medium" }, "+ Add line"))), /* @__PURE__ */ React.createElement("div", { className: "mt-4 flex justify-end" }, /* @__PURE__ */ React.createElement("table", { className: "text-sm" }, /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Parts / line items"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(lineItemsSubtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Labour"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(laborCost))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Shop supplies"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(shopSupplies))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Service call"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(serviceCallAmt))), /* @__PURE__ */ React.createElement("tr", { className: "border-t border-[#EEEBE5]" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 pt-1.5 text-[#75716A]" }, "Subtotal"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 pt-1.5 text-right text-[#1E1A13]" }, formatPrice(subtotal))), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-0.5 text-[#75716A]" }, "Tax (", taxRate, "%)"), /* @__PURE__ */ React.createElement("td", { className: "py-0.5 text-right text-[#1E1A13]" }, formatPrice(tax))), /* @__PURE__ */ React.createElement("tr", { className: "font-semibold" }, /* @__PURE__ */ React.createElement("td", { className: "pr-4 py-1 text-[#1E1A13]" }, "Total"), /* @__PURE__ */ React.createElement("td", { className: "py-1 text-right text-[#1E1A13]" }, formatPrice(total)))))), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end gap-2 mt-4" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onCancel, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"), /* @__PURE__ */ React.createElement("button", { type: "button", onClick: submit, className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Save Quote")));
 }
 
 function escapeHtml(str) {
@@ -8978,7 +9001,7 @@ function buildQuoteHtml(quote, db, taxRate) {
   const { lineItemsSubtotal, laborCost, shopSupplies, serviceCall, subtotal, tax, total } = computeQuoteTotals(quote, taxRate);
   const rows = quote.lineItems.map(
     (li) => `<tr>
-        <td>${escapeHtml(li.description)}</td>
+        <td>${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="text-align:right;">${escapeHtml(String(li.quantity))}</td>
         <td style="text-align:right;">${formatPrice(li.unitPrice)}</td>
         <td style="text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
@@ -9048,7 +9071,7 @@ function buildQuoteEmailText(quote, db, taxRate) {
     .map(
       (li) => `
       <tr>
-        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;">${escapeHtml(li.description)}</td>
+        <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;">${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#75716A;font-size:14px;text-align:center;">${escapeHtml(String(li.quantity))}</td>
         <td style="padding:8px 0;border-bottom:1px solid #EEEBE5;color:#1E1A13;font-size:14px;text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
       </tr>`
@@ -9329,8 +9352,8 @@ function buildInvoiceHtml(invoice, db, taxRate, infoSheet) {
   const laborHours = Number(invoice.laborHours) || 0;
   const laborRate = Number(invoice.laborRate) || 0;
   const rows = (invoice.lineItems || []).map(
-    (li) => infoSheet ? `<tr><td>${escapeHtml(li.description)}</td></tr>` : `<tr>
-        <td>${escapeHtml(li.description)}</td>
+    (li) => infoSheet ? `<tr><td>${escapeHtml(li.description)}${lineDetailsHtml(li)}</td></tr>` : `<tr>
+        <td>${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="text-align:right;">${escapeHtml(String(li.quantity))}</td>
         <td style="text-align:right;">${formatPrice(li.unitPrice)}</td>
         <td style="text-align:right;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
@@ -9402,7 +9425,7 @@ function buildInvoiceEmailText(invoice, db, taxRate) {
   const balance = total - (Number(invoice.depositAmount) || 0);
   const lineRows = (invoice.lineItems || []).map(
     (li) => `<tr>
-        <td style="padding:5px 0;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(li.description)}</td>
+        <td style="padding:5px 0;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(li.description)}${lineDetailsHtml(li)}</td>
         <td style="padding:5px 0;text-align:right;color:#4B4740;border-bottom:1px solid #F1EEE9;">${escapeHtml(String(li.quantity))}</td>
         <td style="padding:5px 0;text-align:right;color:#4B4740;border-bottom:1px solid #F1EEE9;">${formatPrice(li.unitPrice)}</td>
         <td style="padding:5px 0;text-align:right;color:#1E1A13;border-bottom:1px solid #F1EEE9;">${formatPrice((Number(li.quantity) || 0) * (Number(li.unitPrice) || 0))}</td>
