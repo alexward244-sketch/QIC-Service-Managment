@@ -202,6 +202,11 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Sign-ups use the same review forms as their own screens. It's in the
   menu's "Today" group (`SERVICE_NAV_GROUPS`, not just `TABS`), and the
   Dashboard's "Sign-Ups Needing Review" card opens it.
+- Website service requests are read by Claude on arrival
+  (`generalServiceRequest` runs `triageCorrespondence`, saved as the
+  sign-up's `triage`): the draft work order's title and priority come from
+  it, and the appliance is guessed from the words (`guessAppliance`). If
+  Claude can't be reached the request is saved without it.
 - The Service Requests tab is hidden (taken out of `TABS` and the menu);
   `GeneralServiceView` is still in the code until Alex says to delete it.
 - A website form confirmed for a customer (from anywhere) is saved in their

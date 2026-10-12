@@ -41,6 +41,22 @@ test("a sign-up with no site number isn't lost silently: Admins are emailed once
   assert.match(emails[0].message, /Sam Lee, sam@x\.com/);
 });
 
+test("Claude reads a website service request for the draft work order; without Claude it's still saved", async () => {
+  claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ flag: null, needsReply: true, category: "service", summary: "Furnace clicking on start-up", siteNumber: "1051", requestedDate: null, priority: "High" }) }] });
+  await callWebhook(fns.generalServiceRequest, { firstName: "Linda", lastName: "Smith", email: "l@x.com", siteNumber: "1051", description: "The furnace clicks every time it starts." });
+  const [p] = await all("pendingSignups");
+  assert.equal(p.triage.summary, "Furnace clicking on start-up");
+  assert.equal(p.triage.priority, "High");
+  assert.match(claude.calls[0].messages[0].content, /The furnace clicks every time it starts/);
+  await clearData();
+  claude.script.push(new Error("Claude is down"));
+  const res = await callWebhook(fns.generalServiceRequest, { firstName: "Sam", email: "s@x.com", siteNumber: "20", description: "Door sticks" });
+  assert.equal(res.statusCode, 200);
+  const [q] = await all("pendingSignups");
+  assert.equal(q.submittedDescription, "Door sticks");
+  assert.equal(q.triage, undefined);
+});
+
 test("incoming email: forwards keep their content, staff mail comes in, our own replies are skipped", async () => {
   const send = (fromEmail, subject, body) => callWebhook(fns.serviceCorrespondence, { fromEmail, subject, body });
   await send("jane@gmail.com", "Fwd: Deck quote", "See below\n\n---------- Forwarded message ---------\nFrom: Bob <bob@builders.ca>\nDate: Mon\nSubject: Deck quote\n\nThe deck needs 3 new joists.");

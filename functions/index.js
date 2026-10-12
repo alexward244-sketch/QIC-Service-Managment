@@ -692,7 +692,7 @@ exports.winterizingSignup = onRequest(
 );
 
 exports.generalServiceRequest = onRequest(
-  { secrets: [WEBHOOK_SECRET, EMAILJS_PRIVATE_KEY], cors: false },
+  { secrets: [WEBHOOK_SECRET, EMAILJS_PRIVATE_KEY, ANTHROPIC_API_KEY], cors: false, timeoutSeconds: 120 },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("Method not allowed");
@@ -732,6 +732,14 @@ exports.generalServiceRequest = onRequest(
       await reportServerProblem("generalServiceRequest", `A service request arrived without a site number and wasn't saved: ${[entry.submittedName, entry.submittedEmail, entry.submittedPhone].filter(Boolean).join(", ") || "no contact details"}.`);
       res.status(400).json({ ok: false, error: "siteNumber is required" });
       return;
+    }
+
+    // Claude reads it like an email: a short title, the priority, and what
+    // kind of job it is, for the draft work order. Staff check it before
+    // anything is made; if Claude can't be reached it's saved without.
+    if (entry.submittedDescription) {
+      const { triage } = await triageCorrespondence("Website service request", entry.submittedDescription);
+      if (triage) entry.triage = triage;
     }
 
     try {
