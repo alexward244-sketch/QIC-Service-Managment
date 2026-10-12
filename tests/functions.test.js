@@ -64,11 +64,12 @@ test("morning summary: pending jobs only on their reminder days and start date, 
   await db.doc("workOrders/b").set({ id: "b", title: "Skirting", status: "Pending", startDate: plus(9), pendingSince: plus(-20), date: plus(-20) });
   await db.doc("workOrders/c").set({ id: "c", title: "Roof", status: "Pending", startDate: plus(14), pendingSince: plus(-1), date: plus(-1) });
   await db.doc("workOrders/d").set({ id: "d", title: "Shed", status: "Pending", startDate: today, pendingSince: plus(-40), date: plus(-40) });
+  await db.doc("workOrders/e").set({ id: "e", title: "Porch", status: "Pending", startDate: plus(1), pendingSince: plus(-40), date: plus(-40) });
   const res = await call(fns.generateMorningSummary, {}, "admin");
   assert.equal(res.ok, true);
   const summary = (await db.doc(`dailySummaries/${res.date}`).get()).data();
-  assert.deepEqual(summary.facts.pendingJobsComingUp.map((w) => w.title), ["Shed", "Deck rebuild", "Roof"], "start day, a week before, two weeks before - not the one with no reminder today");
-  assert.equal(summary.facts.pendingJobsComingUp[1].daysUntilStart, 7);
+  assert.deepEqual(summary.facts.pendingJobsComingUp.map((w) => w.title), ["Shed", "Porch", "Deck rebuild", "Roof"], "start day, the day before, a week before, two weeks before - not the one with no reminder today");
+  assert.equal(summary.facts.pendingJobsComingUp[2].daysUntilStart, 7);
   assert.equal(summary.facts.openWorkOrders, 0);
   assert.equal(summary.facts.overdueWorkOrders, 0);
 });

@@ -540,12 +540,13 @@ const WO_STATUS_STYLES = {
 };
 // Pending: a job booked well ahead, with a start date. It stays out of the
 // open / urgent / overdue counts and the crew's lists until someone moves
-// it to In Progress. Reminders come a month, two weeks, a week and two days
-// before the start date (only the ones still ahead when it was set), in the
+// it to In Progress. Reminders come a month, two weeks, a week, two days
+// and the day before the start date (only the ones still ahead when it was
+// set; weekends count - we're open), in the
 // morning summary on those days and as a pop-up in the app for Admins and
 // Service Managers - each person answers their own - and every day once the
 // start date has come. Changing the start date starts the reminders over.
-const PENDING_REMINDER_DAYS = [30, 14, 7, 2];
+const PENDING_REMINDER_DAYS = [30, 14, 7, 2, 1];
 function addDaysISO(iso, n) {
   const d = /* @__PURE__ */ new Date(`${iso}T12:00:00`);
   d.setDate(d.getDate() + n);
@@ -559,8 +560,8 @@ function pendingReminderDates(w) {
   return PENDING_REMINDER_DAYS.map((n) => addDaysISO(w.startDate, -n)).filter((d) => !w.pendingSince || d >= w.pendingSince);
 }
 // The reminder due today for a pending job, as a key (null if none): the
-// latest reminder day reached - so one that fell on a weekend still shows
-// on Monday - or today, once the start date has come.
+// latest reminder day reached - so one missed (nobody opened the app that
+// day) still shows next time - or today, once the start date has come.
 function pendingReminderDue(w, today) {
   if (!w || w.status !== "Pending" || !w.startDate) return null;
   if (w.startDate <= today) return `${w.startDate}@${today}`;

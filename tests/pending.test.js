@@ -25,7 +25,7 @@ async function page_(email) {
   return page;
 }
 
-test("the reminder logic: set days only, weekend reminders carry to the next open, daily from the start date", async () => {
+test("the reminder logic: set days only (weekends too), a missed one shows next time, daily from the start date", async () => {
   await seed();
   const page = await page_("alex@x.com");
   const r = await page.evaluate(() => {
@@ -41,12 +41,12 @@ test("the reminder logic: set days only, weekend reminders carry to the next ope
       statuses: STATUS
     };
   });
-  assert.deepEqual(r.dates, ["2026-10-21", "2026-11-06", "2026-11-13", "2026-11-18"]);
+  assert.deepEqual(r.dates, ["2026-10-21", "2026-11-06", "2026-11-13", "2026-11-18", "2026-11-19"]);
   assert.equal(r.before, null);
   assert.equal(r.onDay, "2026-11-20@2026-10-21");
   assert.equal(r.between, "2026-11-20@2026-11-06");
   assert.equal(r.started, "2026-11-20@2026-11-22");
-  assert.deepEqual(r.tooLate, ["2026-11-13", "2026-11-18"], "set late, the month and two-week reminders are skipped");
+  assert.deepEqual(r.tooLate, ["2026-11-13", "2026-11-18", "2026-11-19"], "set late, the month and two-week reminders are skipped");
   assert.deepEqual(r.counted, [false, true, false]);
   assert.deepEqual(r.statuses, ["Open", "In Progress", "Pending", "Completed"]);
   await page.close();
@@ -103,7 +103,7 @@ test("a work order set to Pending needs a start date", async () => {
   assert.deepEqual(await page.evaluate(() => window.__hints), ["a start date"]);
   await page.getByLabel("Start date").fill("2026-12-01");
 
-  await page.getByText(/Reminders: 11-01, 11-17, 11-24, 11-29/).waitFor();
+  await page.getByText(/Reminders: 11-01, 11-17, 11-24, 11-29, 11-30/).waitFor();
   await page.getByRole("button", { name: /Save/ }).last().click();
   const saved = await waitFor(() => page.evaluate(() => window.__saved[0]), "the save");
   assert.equal(saved.status, "Pending");

@@ -1940,7 +1940,7 @@ function summaryInSeason(today, season) {
   return s.start <= s.end ? md >= s.start && md <= s.end : md >= s.start || md <= s.end;
 }
 
-const PENDING_REMINDER_DAYS = [30, 14, 7, 2];
+const PENDING_REMINDER_DAYS = [30, 14, 7, 2, 1];
 function pendingReminderDays(w) {
   return PENDING_REMINDER_DAYS.map((n) => {
     const d = new Date(`${w.startDate}T12:00:00Z`);
@@ -1984,8 +1984,8 @@ async function gatherMorningFacts(today) {
   const completedYesterday = allWos.filter((w) => w.status === "Completed" && w.completedDate === yesterday);
   const invoices = invoicesSnap.docs.map((d) => d.data());
   // Pending jobs (booked ahead) aren't open work yet; they're mentioned only
-  // on their reminder days (a month, two weeks, a week and two days before
-  // the start date - the ones still ahead when it was set) and on the start
+  // on their reminder days (a month, two weeks, a week, two days and one day
+  // before the start date - the ones still ahead when it was set) and on the start
   // date itself. Same days as pendingReminderDates in index.html.
   const wos = allWos.filter((w) => w.status !== "Completed" && w.status !== "Pending");
   const pendingComingUp = allWos.filter((w) => w.status === "Pending" && w.startDate && (w.startDate === today || pendingReminderDays(w).includes(today)))
