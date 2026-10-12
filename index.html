@@ -1119,7 +1119,7 @@ function signupAsCorrespondence(entry, customerId, links) {
     fromName: entry.submittedName || "",
     subject: `${SIGNUP_FORM_LABELS[entry.type] || "Website form"} (website form)`,
     body: lines.filter(Boolean).join("\n\n"),
-    receivedAt: entry.receivedAt || (/* @__PURE__ */ new Date()).toISOString(),
+    receivedAt: entry.receivedAt || entry.submittedAt || entry.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
     status: "handled",
     handledAt: (/* @__PURE__ */ new Date()).toISOString(),
     needsReply: false,
@@ -1705,6 +1705,7 @@ function useDb() {
   const [pendingSignups, setPendingSignups] = useState([]);
   const pendingSignupsRef = useRef([]);
   pendingSignupsRef.current = pendingSignups;
+  const dbNowRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
   const [saveError, setSaveError] = useState(null);
@@ -2047,6 +2048,7 @@ function useDb() {
     });
   }, [mainData, salesLists]);
   const db = mainData ? { ...mainData, propaneRequests: propaneList || [], treeRequests: treeList || [], winterizingRequests: winterizingList || [], workOrders: workOrdersList || [], customers: customersList || [], quotes: quotesList || [], invoices: invoicesList || [], correspondence: correspondenceList || [], sites: (sitesList || []).slice().sort((a, b) => (a.number || "").localeCompare(b.number || "", void 0, { numeric: true })), cottages: cottagesList || [], hydroReadings: mergeHydroReadings(hydroList, mainData.hydroReadings), parts: mergeParts(partsList, mainData.parts), ...composeSales(mainData, salesLists) } : null;
+  dbNowRef.current = db;
   // Sales lists for the db object: collection records (live ones) plus any
   // not-yet-moved legacy copies, and the shared trash with each sales stub
   // given its deleted record back so Trash can show and restore it. Users
@@ -2165,7 +2167,13 @@ function useDb() {
     // The form itself goes in the customer's correspondence too.
     const entry = pendingSignupsRef.current.find((p) => p.id === pendingId);
     const links = ref === WORK_ORDERS_REF ? { workOrderId: doc.id } : ref === PROPANE_REQUESTS_REF ? { propaneRequestId: doc.id } : ref === WINTERIZING_REQUESTS_REF ? { winterizingRequestId: doc.id } : {};
-    const formMessage = entry && doc.customerId ? signupAsCorrespondence(entry, doc.customerId, links) : null;
+    // Whose it is: the customer picked, else the one owner of its cottage
+    // (or site).
+    const now_ = dbNowRef.current;
+    const cottage_ = doc.cottageId && now_ ? (now_.cottages || []).find((c) => c.id === doc.cottageId) : null;
+    const owners = doc.customerId || !now_ ? [] : cottage_ ? cottageOwners(now_, cottage_) : doc.siteId ? (now_.customers || []).filter((c) => customerSiteIds(c).includes(doc.siteId)) : [];
+    const customerId = doc.customerId || (owners.length === 1 ? owners[0].id : null);
+    const formMessage = entry && customerId ? signupAsCorrespondence(entry, customerId, links) : null;
     const attempt = () => {
       const batch = db_.batch();
       batch.set(ref.doc(doc.id), firestoreSafe(ref === WORK_ORDERS_REF ? withWorkOrderNumber(doc) : doc));
@@ -19735,7 +19743,7 @@ function incomingItems(db, pendingSignups) {
       entry: p,
       kind: p.type === "generalservice" ? "service" : p.type,
       group: p.type === "generalservice" ? "work" : "runs",
-      at: p.receivedAt || "",
+      at: p.receivedAt || p.submittedAt || p.createdAt || "",
       customer: m.customer || null,
       site: m.site || null,
       name: p.submittedName || "(no name given)",
@@ -19834,7 +19842,7 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
     const cottage = base.cottageId ? (db.cottages || []).find((x) => x.id === base.cottageId) : null;
     const appliance = guessAppliance(cottage, `${c.subject || ""} ${c.body || ""}`);
     return {
-      title: c.triage && c.triage.summary || (it.vm ? voicemailLabel(it.vm) : c.subject) || "Correspondence follow-up",
+      title: c.triage && c.triage.summary || (it.vm ? voicemailLabel(it.vm) : (c.subject || "").replace(/^(Phone call|Walk-in):\s*/, "")) || "Correspondence follow-up",
       description: displayEmailBody(c.body || "").slice(0, 2e3),
       ...base,
       priority: base.priority || "Medium",
@@ -19958,7 +19966,10 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
       { className: "p-6" },
       h("div", { className: "rounded-lg border border-[#B9D7C1] bg-[#EEF7F0] px-4 py-3 text-sm text-[#28633C] mb-4", "data-incoming-done": true }, h("b", null, "✓ ", d.message), " — ", d.it.name, ".", d.wo && h("button", { type: "button", onClick: () => setModal({ viewWO: d.wo }), className: "ml-2 font-semibold underline" }, "Open it")),
       customer && d.it.email && d.reply && saveCorrespondence ? h(React.Fragment, null, h("p", { className: "text-sm text-[#4B4740] mb-2" }, "Let ", customer.name, " know? (optional)"), h(CorrespondenceComposeBox, { key: d.it.key, customer, replyTo: d.it.email.fromEmail ? d.it.email : null, noScroll: true, initialMessage: d.reply, cannedReplies: db.cannedReplies, lastInboundEmail: d.it.email.fromEmail, saveCorrespondence })) : d.signupReply ? h("div", null, link("Email " + (d.signupReply.submittedName || d.signupReply.submittedEmail) + " back", () => setModal({ signupReply: d.signupReply }))) : null,
-      all.length > 0 && h("div", { className: "mt-4" }, link(`Next: ${all[0].name} →`, () => select(all[0])))
+      (() => {
+        const next = all.find((x) => x.key !== d.it.key);
+        return next ? h("div", { className: "mt-4" }, link(`Next: ${next.name} \u2192`, () => select(next))) : null;
+      })()
     );
   } else if (selected) {
     const it = selected;

@@ -28,7 +28,7 @@ const seed = () => resetData({
   "pendingSignups/p2": { type: "propane", submittedName: "Ann Lee", submittedEmail: "ann@x.com", submittedSiteNumber: "20", requestedDate: "2026-10-20", receivedAt: "2026-10-09T10:00:00Z" }
 });
 const view = `(api) => React.createElement(CurrentUserContext.Provider, { value: "${EMAIL}" }, React.createElement(IncomingView, { db: api.db, persist: api.persist, pendingSignups: api.pendingSignups, confirmPendingSignup: api.confirmPendingSignup, removePendingSignup: api.removePendingSignup, saveCorrespondence: api.saveCorrespondence, saveCustomer: api.saveCustomer, saveWorkOrder: api.saveWorkOrder, savePropaneRequest: api.savePropaneRequest, saveTreeRequest: api.saveTreeRequest, saveWinterizingRequest: api.saveWinterizingRequest, onGoToTab: () => {} }))`;
-const READY = "(api) => api.db.customers.length === 2 && api.db.correspondence.length >= 4 && api.pendingSignups.length >= 1";
+const READY = "(api) => api.db.customers.length === 2 && api.db.cottages.length >= 1 && api.db.correspondence.length >= 4 && api.pendingSignups.length >= 1";
 
 async function open(page) {
   await page.clock.setFixedTime(new Date("2026-10-09T15:00:00Z"));
@@ -146,6 +146,20 @@ test("the menu has Incoming and no longer Service Requests; the dashboard's sign
   await mountWithDb(page, `(api) => React.createElement(CurrentUserContext.Provider, { value: "${EMAIL}" }, React.createElement(DashboardView, { db: api.db, persist: api.persist, onGoToTab: (t) => { window.__went = t; }, onSearchJump() {}, allowedTabKeys: null, pendingSignups: api.pendingSignups, removePendingSignup() {}, saveWorkOrder() {}, saveCorrespondence() {} }))`, READY);
   await page.getByText("Sign-Ups Needing Review").first().click();
   assert.equal(await page.evaluate(() => window.__went), "incoming");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("a form confirmed with only the cottage picked still goes in the owner's correspondence", async () => {
+  await seed();
+  const page = await openApp(browser, "emulator", { role: "admin", email: EMAIL });
+  await mountWithDb(page, "() => null", READY + " && api.db.cottages.length >= 1 && api.pendingSignups.length >= 2");
+  await page.evaluate(() => window.__api.confirmPendingSignup(PROPANE_REQUESTS_REF, { id: "r1", cottageId: "k1", customerId: null, requestedDate: "2026-10-20", run: "10am", notes: "", completed: false }, "p2"));
+  const msg = await waitFor(() => readDoc("correspondence/webform_p2"), "the form to be saved as a message");
+  assert.equal(msg.customerId, "c1");
+  assert.equal(msg.propaneRequestId, "r1");
+  assert.equal(msg.receivedAt, "2026-10-09T10:00:00Z");
+  assert.match(msg.body, /Requested date: 2026-10-20/);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
