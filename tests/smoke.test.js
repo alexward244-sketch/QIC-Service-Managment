@@ -891,11 +891,14 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
   await page.getByLabel("Max per day").fill("1");
   const today = await page.evaluate(() => todayISO());
   const col = page.locator(`[data-plan-column="${today}"]`);
-  assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
+  // Today may be a weekend or a closed day (Thanksgiving Monday).
+  const kind = await page.evaluate(() => !winterIsWeekday(todayISO()) ? "weekend" : winterSeason({ settings: {} }).blocked[todayISO()] != null ? "blocked" : "weekday");
+  if (kind === "weekday") assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
   // Dropping Cedar on a full day offers the next day with room (on a
   // weekend, it says it's a weekend instead - and there's no "anyway").
   await page.locator('[data-plan-card="r2"]').dragTo(col);
-  if (await page.evaluate(() => winterIsWeekday(todayISO()))) await page.getByText("That day is full").waitFor();
+  if (kind === "weekday") await page.getByText("That day is full").waitFor();
+  else if (kind === "blocked") await page.getByText("That day is blocked").waitFor();
   else {
     await page.getByText("That's a weekend").waitFor();
     assert.equal(await page.getByRole("button", { name: /anyway/ }).count(), 0);
@@ -907,7 +910,7 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
     await blockBtn.click();
     await page.getByPlaceholder("e.g. Pebble Beach & By the Woods").fill("Pebble Beach");
     await page.getByRole("button", { name: "Block day" }).last().click();
-    await page.locator("[data-blocked-day]").first().getByText(/Pebble Beach/).waitFor();
+    await page.locator("[data-blocked-day]", { hasText: "Pebble Beach" }).first().waitFor();
   }
   // Print a day's forms in one click.
   await page.evaluate(() => {
