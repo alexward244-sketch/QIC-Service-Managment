@@ -547,9 +547,9 @@ test("nameplate reader: staff only, sends the photo to Claude and tidies what co
   assert.deepEqual(await call(fns.readCottageNameplate, { image: "abcd" }, ""), { error: "permission-denied" });
   assert.deepEqual(await call(fns.readCottageNameplate, { image: "not base64!" }), { error: "invalid-argument" });
   claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({
-    isNameplate: true, manufacturer: "Northlander Industries", tradeName: "Cottager Escape", modelNumber: "SW.16-4513-3Y", serialNumber: " 2165117532 ", year: "2016",
+    isNameplate: true, manufacturer: "Northlander Industries", tradeName: "Cottager Escape", modelNumber: "SW.16-4513-3Y", serialNumber: " 2165117532 ", serialNumber2: "", size: " 39' x 12' ", year: "2016",
     appliances: [
-      { type: "Furnace", label: "Furnace", make: "Suburban", model: "P-40", fuel: "Gas" },
+      { type: "Furnace", label: "Furnace", make: "Suburban", model: "P-40", serialNumber: " 190707005 ", fuel: "Gas" },
       { type: "Toaster", label: "Toaster", make: "GE", model: "T1", fuel: "Electric" },
       { type: "Other", label: "Generator", make: "", model: "", fuel: "" }
     ],
@@ -559,6 +559,8 @@ test("nameplate reader: staff only, sends the photo to Claude and tidies what co
   const req = claude.calls[claude.calls.length - 1];
   assert.equal(req.messages[0].content[0].source.data, "aGVsbG8=");
   assert.equal(res.plate.serialNumber, "2165117532");
+  assert.equal(res.plate.size, "39' x 12'");
+  assert.equal(res.plate.appliances[0].serialNumber, "190707005");
   assert.deepEqual(res.plate.appliances.map((a) => a.type), ["Furnace", "Other"], "unknown types become Other; blank lines are dropped");
   claude.script.push(new Error("boom"));
   assert.deepEqual(await call(fns.readCottageNameplate, { image: "aGVsbG8=" }), { error: "unavailable" });

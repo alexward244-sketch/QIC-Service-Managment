@@ -2299,25 +2299,28 @@ const NAMEPLATE_APPLIANCE_TYPES = ["Furnace", "Hot Water Tank", "Range", "Refrig
 const NAMEPLATE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["isNameplate", "manufacturer", "tradeName", "modelNumber", "serialNumber", "year", "appliances", "notes"],
+  required: ["isNameplate", "manufacturer", "tradeName", "modelNumber", "serialNumber", "serialNumber2", "size", "year", "appliances", "notes"],
   properties: {
     isNameplate: { type: "boolean" },
     manufacturer: { type: "string" },
     tradeName: { type: "string" },
     modelNumber: { type: "string" },
     serialNumber: { type: "string" },
+    serialNumber2: { type: "string" },
+    size: { type: "string" },
     year: { type: "string" },
     appliances: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["type", "label", "make", "model", "fuel"],
+        required: ["type", "label", "make", "model", "serialNumber", "fuel"],
         properties: {
           type: { type: "string", enum: NAMEPLATE_APPLIANCE_TYPES },
           label: { type: "string" },
           make: { type: "string" },
           model: { type: "string" },
+          serialNumber: { type: "string" },
           fuel: { type: "string" }
         }
       }
@@ -2332,8 +2335,11 @@ Copy values exactly as printed - same letters, digits, dots and dashes. If a val
 - manufacturer: the company name without any leading licence/plant number (e.g. "533438 NORTHLANDER INDUSTRIES" -> "Northlander Industries", in normal capitalisation).
 - tradeName: the trade name / "marque de commerce", normal capitalisation.
 - modelNumber and serialNumber: from the MODEL NO. and SERIAL NO. fields. The boxed "ISSUE NO. / NO. DE SERIE" number printed sideways on the plate is the plate's issue number, not the serial - never use it as the serial.
-- year: the date (year) of manufacture, 4 digits.
-- appliances: one entry per factory-installed appliance line that has a make. Skip lines marked N/A or left blank. type: the closest of the allowed types (water heater -> "Hot Water Tank", refrigerator -> "Refrigerator", microwave oven -> "Microwave", air conditioner -> "AC Unit"). label: the line's name as printed in English. make: normal capitalisation, but keep short brands as printed (G.E. -> "GE"). model: exactly as printed. fuel: "Gas" or "Electric" (or "" if not given).
+- serialNumber2: a double-wide (two boxes or sections joined side by side into one cottage) has a serial number for each section - put the first in serialNumber and the second here. Look for two serials on one line (split by "/", "&" or "and"), serials marked A and B, or two plates or pages. "" for a single unit. Don't treat a double-wide's second serial as "more than one unit".
+- size: the unit's outside dimensions as printed, e.g. "39' x 12'" (length x width). "" if not given.
+- year: the date (year) of manufacture or production, 4 digits (a misspelled month like "AMY 30, 2019" is still 2019).
+- Northlander's "APPLIANCES" sheet: PRODUCT is the tradeName, PLAN # is the modelNumber, SERIAL # is the unit's serial, SIZE is the size, and each appliance row has its make after the name (e.g. "RANGE: G.E."), then MODEL and SERIAL #. Handwritten marks (like "#35") aren't part of any field.
+- appliances: one entry per factory-installed appliance line that has a make. Skip lines marked N/A or left blank. type: the closest of the allowed types (water heater -> "Hot Water Tank", refrigerator or fridge -> "Refrigerator", microwave oven or microwave/rangehood -> "Microwave", air conditioner or central AC -> "AC Unit", anything else such as a gas alarm or dishwasher -> "Other"). label: the line's name as printed in English. make: normal capitalisation, but keep short brands as printed (G.E. -> "GE"). model: exactly as printed. serialNumber: the appliance's own serial number exactly as printed, or "" if none is given - never the unit's serial. fuel: "Gas" or "Electric" (or "" if not given).
 - isNameplate: false if the photo or PDF isn't such a plate or a document with this cottage's details, or is too blurry to read; then leave the rest blank.
 - notes: one short plain sentence for staff about anything uncertain, or "".`;
 
@@ -2376,12 +2382,15 @@ exports.readCottageNameplate = onCall(
           tradeName: clean(out.tradeName),
           modelNumber: clean(out.modelNumber),
           serialNumber: clean(out.serialNumber),
+          serialNumber2: clean(out.serialNumber2),
+          size: clean(out.size, 40),
           year: /^\d{4}$/.test(clean(out.year)) ? clean(out.year) : "",
           appliances: (Array.isArray(out.appliances) ? out.appliances : []).slice(0, 12).map((a) => ({
             type: NAMEPLATE_APPLIANCE_TYPES.includes(a.type) ? a.type : "Other",
             label: clean(a.label),
             make: clean(a.make),
             model: clean(a.model),
+            serialNumber: clean(a.serialNumber),
             fuel: clean(a.fuel, 20)
           })).filter((a) => a.make || a.model),
           notes: clean(out.notes, 300)

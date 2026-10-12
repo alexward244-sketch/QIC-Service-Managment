@@ -121,11 +121,11 @@ test("Scan nameplate: Claude's reading is checked, then fills in the cottage and
       window.__nameplateCalls.push({ name, size: data.image.length });
       return { data: { plate: { isNameplate: true, manufacturer: "Northlander Industries", tradeName: "Cottager Escape", modelNumber: "SW.16-4513-3Y", serialNumber: "2165117532", year: "2016", notes: "",
         appliances: [
-          { type: "Furnace", label: "Furnace", make: "Suburban", model: "P-40", fuel: "Gas" },
-          { type: "Hot Water Tank", label: "Water Heater", make: "Suburban", model: "SW16V", fuel: "Gas" },
-          { type: "Range", label: "Range", make: "GE", model: "JCGB660SEJ1SS", fuel: "Gas" },
-          { type: "Refrigerator", label: "Refrigerator", make: "GE", model: "GTE18GSHHRSS", fuel: "Electric" }
-        ] } } };
+          { type: "Furnace", label: "Furnace", make: "Suburban", model: "P-40", fuel: "Gas", serialNumber: "190707005" },
+          { type: "Hot Water Tank", label: "Water Heater", make: "Suburban", model: "SW16V", fuel: "Gas", serialNumber: "191300168" },
+          { type: "Range", label: "Range", make: "GE", model: "JCGB660SEJ1SS", fuel: "Gas", serialNumber: "HM537648P" },
+          { type: "Refrigerator", label: "Refrigerator", make: "GE", model: "GTE18GSHHRSS", fuel: "Electric", serialNumber: "" }
+        ], serialNumber2: "2165117533", size: "39' x 12'" } } };
     };
   });
   await page.getByRole("button", { name: /Loon/ }).first().click();
@@ -149,6 +149,11 @@ test("Scan nameplate: Claude's reading is checked, then fills in the cottage and
   assert.equal(byType["Hot Water Tank"].fuel, "Gas");
   assert.equal(byType.Refrigerator.model, "GTE18GSHHRSS1", "staff corrections are saved");
   assert.equal(k1.appliances.length, 4);
+  assert.equal(byType.Range.serialNumber, "HM537648P", "appliance serials are saved");
+  assert.equal(byType["Hot Water Tank"].serialNumber, "191300168");
+  assert.equal(byType.Furnace.serialNumber || "", "", "an appliance left alone keeps its own serial");
+  assert.equal(k1.serialNumber2, "2165117533", "a double-wide's second serial");
+  assert.equal(k1.unitSize, "39' x 12'");
   assert.equal(k1.nameplatePhoto, null, "test pages have no file storage; the readings save anyway");
   await page.getByText("Northlander Industries \u00b7 Cottager Escape").waitFor();
   assert.deepEqual(page.pageErrors, []);

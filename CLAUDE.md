@@ -281,6 +281,11 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   from the cottage's file (scanned plate, spec sheet, bill of sale; under
   7 MB), sent to Claude as a document; the PDF isn't uploaded - the cottage
   notes it in `nameplateDoc` ("Details read from …" in its history).
+  It reads each appliance's serial # too (Northlander's "APPLIANCES" sheet:
+  PRODUCT = trade name, PLAN # = model, SIZE = unit size), the unit size
+  (`unitSize`, e.g. 39' x 12') and a double-wide's second serial
+  (`serialNumber2` - two boxes joined into one cottage have one per
+  section; both count for the duplicate-serial warning).
 - Cottages tab: list on the left, the cottage's page on the right (wide
   screens; a pop-up on narrow ones). Top boxes are just total cottages and
   "with serial #" - Alex didn't want more. The page shows serial/model/
