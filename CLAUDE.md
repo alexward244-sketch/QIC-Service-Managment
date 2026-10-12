@@ -193,6 +193,18 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   outside tap; Master X = our master key works. Unknown bits (e.g.
   "cz1010") show as written - don't guess at them.
 
+**Incoming**
+- The Incoming tab (`IncomingView`) lists every request waiting on us: new
+  incoming emails/voicemails (not FYIs), website sign-ups (service, propane,
+  winterizing) and calls/walk-ins logged there (correspondence `source`
+  "phone"/"walkin"). Grouped: Needs a work order / Propane·Trees·Winterizing
+  / About an existing job / Just needs an answer, one main button each.
+  Sign-ups use the same review forms as their own screens.
+- A website form confirmed for a customer (from anywhere) is saved in their
+  correspondence as `correspondence/webform_<sign-up id>` (handled, linked to
+  what it made) so a reply to it reads in order. Web forms and logged calls
+  never touch Zoho (`notFromZoho`).
+
 **Parts**
 - Each part is its own document in the `parts` collection (not in
   campground/data). `persist()` writes only parts a screen changed, stock

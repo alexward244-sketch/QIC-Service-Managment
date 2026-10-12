@@ -342,7 +342,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Roles: "admin" (everything) or "office" (Work Orders + Customers full, a few tabs read-only, rest hidden).
 // Safety net: until someone is explicitly marked admin, everyone gets admin access so no one is ever locked out.
-const OFFICE_TAB_KEYS = new Set(["dashboard", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "trees", "generalservice", "correspondence", "hydro", "customers"]);
+const OFFICE_TAB_KEYS = new Set(["dashboard", "incoming", "workorders", "calendar", "map", "sites", "cottages", "winterizing", "propane", "trees", "generalservice", "correspondence", "hydro", "customers"]);
 const MANAGER_TAB_KEYS = new Set([...OFFICE_TAB_KEYS, "parts", "quotes", "invoices", "servicereports"]);
 const SALES_TAB_KEYS = new Set(["salesdashboard", "salesreport", "cottageorders", "inventory", "consignments", "sunspace", "deals", "salestransactions"]);
 function getUserRole(db, email) {
@@ -1095,6 +1095,37 @@ function voicemailLabel(vm) {
 // from it that weren't linked to anyone (e.g. our reply to a web-form
 // service request, sent before the request was matched) join that
 // customer's thread too.
+// A website form (service request, propane, winterizing) kept in the
+// customer's correspondence as the first message, so a reply to it reads in
+// order. Saved when the sign-up is confirmed for a customer (id
+// webform_<sign-up id>, so it's only ever there once).
+const SIGNUP_FORM_LABELS = { generalservice: "Service request", propane: "Propane refill request", winterizing: "Winterizing sign-up" };
+function signupAsCorrespondence(entry, customerId, links) {
+  const lines = [];
+  if (entry.submittedDescription) lines.push(entry.submittedDescription);
+  if (entry.submittedCategory) lines.push(`Type: ${entry.submittedCategory}`);
+  if (entry.submittedUrgency) lines.push(`Urgency: ${entry.submittedUrgency}`);
+  if (entry.requestedDate && entry.type !== "generalservice") lines.push(`Requested date: ${entry.requestedDate}`);
+  const opts = WINTERIZING_OPTIONS.filter((o) => entry.options && entry.options[o.key]).map((o) => o.label);
+  if (opts.length) lines.push(`Also: ${opts.join(", ")}`);
+  if (entry.notes) lines.push(entry.notes);
+  lines.push([entry.submittedSiteNumber ? `Site: ${entry.submittedSiteNumber}` : "", entry.submittedPhone ? `Phone: ${entry.submittedPhone}` : ""].filter(Boolean).join(" \xB7 "));
+  return {
+    id: "webform_" + entry.id,
+    customerId,
+    direction: "in",
+    source: "webform",
+    fromEmail: entry.submittedEmail || "",
+    fromName: entry.submittedName || "",
+    subject: `${SIGNUP_FORM_LABELS[entry.type] || "Website form"} (website form)`,
+    body: lines.filter(Boolean).join("\n\n"),
+    receivedAt: entry.receivedAt || (/* @__PURE__ */ new Date()).toISOString(),
+    status: "handled",
+    handledAt: (/* @__PURE__ */ new Date()).toISOString(),
+    needsReply: false,
+    ...links || {}
+  };
+}
 function linkEarlierEmails(customerId, email, items) {
   const target = (email || "").trim();
   if (!customerId || !target || isParkEmail(target)) return Promise.resolve(0);
@@ -1672,6 +1703,8 @@ function useDb() {
   // null = not loaded yet; "denied" = this user's role can't read sales data.
   const [salesLists, setSalesLists] = useState(() => Object.fromEntries(SALES_KEYS.map((k) => [k, null])));
   const [pendingSignups, setPendingSignups] = useState([]);
+  const pendingSignupsRef = useRef([]);
+  pendingSignupsRef.current = pendingSignups;
   const [loading, setLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(null);
   const [saveError, setSaveError] = useState(null);
@@ -2129,10 +2162,15 @@ function useDb() {
     }
   }, []);
   const confirmPendingSignup = useCallback(async (ref, doc, pendingId) => {
+    // The form itself goes in the customer's correspondence too.
+    const entry = pendingSignupsRef.current.find((p) => p.id === pendingId);
+    const links = ref === WORK_ORDERS_REF ? { workOrderId: doc.id } : ref === PROPANE_REQUESTS_REF ? { propaneRequestId: doc.id } : ref === WINTERIZING_REQUESTS_REF ? { winterizingRequestId: doc.id } : {};
+    const formMessage = entry && doc.customerId ? signupAsCorrespondence(entry, doc.customerId, links) : null;
     const attempt = () => {
       const batch = db_.batch();
       batch.set(ref.doc(doc.id), firestoreSafe(ref === WORK_ORDERS_REF ? withWorkOrderNumber(doc) : doc));
       batch.delete(PENDING_SIGNUPS_REF.doc(pendingId));
+      if (formMessage) batch.set(CORRESPONDENCE_REF.doc(formMessage.id), firestoreSafe(formMessage), { merge: true });
       return batch.commit();
     };
     lastAttempt.current = attempt;
@@ -5544,7 +5582,7 @@ function customerHistory(db, customer, { canSeeHydro } = {}) {
   (db.correspondence || []).filter((c) => c.customerId === customer.id).forEach((c) => {
     const vm = correspondenceVoicemail(c);
     const out_ = c.direction === "out";
-    out.push({ key: "c-" + c.id, at: c.receivedAt || "", kind: "email", tag: vm ? "Voicemail" : out_ ? "Sent" : "Email", text: vm ? voicemailLabel(vm) : `${out_ ? "To" : "From"} ${out_ ? c.toEmail || "" : c.fromName || c.fromEmail || ""}${c.subject ? `: ${c.subject}` : ""}`, email: c, needsReply: customerNeedsReply(c), open: customerNeedsReply(c) });
+    out.push({ key: "c-" + c.id, at: c.receivedAt || "", kind: "email", tag: vm ? "Voicemail" : out_ ? "Sent" : c.source === "webform" ? "Web form" : c.source === "phone" ? "Phone call" : c.source === "walkin" ? "Walk-in" : "Email", text: vm ? voicemailLabel(vm) : `${out_ ? "To" : "From"} ${out_ ? c.toEmail || "" : c.fromName || c.fromEmail || ""}${c.subject ? `: ${c.subject}` : ""}`, email: c, needsReply: customerNeedsReply(c), open: customerNeedsReply(c) });
   });
   (db.workOrders || []).filter((w) => customerOwns(customer, w)).forEach((w) => {
     const done = w.status === "Completed";
@@ -5573,6 +5611,9 @@ function customerHistory(db, customer, { canSeeHydro } = {}) {
 const HISTORY_TAG_STYLE = {
   Email: "bg-[#FBEEDA] text-[#9A6B1F]",
   Voicemail: "bg-[#FBEEDA] text-[#9A6B1F]",
+  "Web form": "bg-[#E4EEF2] text-[#2E6E8E]",
+  "Phone call": "bg-[#F0EAF8] text-[#6B4F96]",
+  "Walk-in": "bg-[#F0EAF8] text-[#6B4F96]",
   Sent: "bg-[#F1EEE9] text-[#75716A]",
   "Work order": "bg-[#DDF1E1] text-[#28633C]",
   Service: "bg-[#DDF1E1] text-[#28633C]",
@@ -5981,7 +6022,7 @@ function useClaudeReplyDraft(context, message, setMessage) {
 function ClaudeDraftControls({ drafting, draftError, draft, canUndo, undo }) {
   return /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 flex-wrap mb-2" }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: draft, disabled: drafting, title: "Claude writes a draft from the email thread and this customer's records. Type rough notes first to steer it.", className: "text-xs font-semibold text-[#377249] hover:underline disabled:opacity-50" }, drafting ? "\u2728 Drafting\u2026" : "\u2728 Draft reply"), canUndo && !drafting && /* @__PURE__ */ React.createElement("button", { type: "button", onClick: undo, className: "text-xs text-[#75716A] hover:underline" }, "Undo draft"), canUndo && !drafting && /* @__PURE__ */ React.createElement("span", { className: "text-[11px] text-[#9A968D] italic" }, "Check it over before sending"), draftError && /* @__PURE__ */ React.createElement("span", { className: "text-xs text-[#a8532a]" }, draftError));
 }
-function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onClearReply, cannedReplies, lastInboundEmail, noScroll }) {
+function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onClearReply, cannedReplies, lastInboundEmail, noScroll, initialMessage }) {
   // Put whoever most recently emailed in first — when a customer has more
   // than one address on file, a reply should default to the one the
   // message actually came from, not just their "primary" email.
@@ -5989,7 +6030,7 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onCle
   const draftKey = `customer:${customer.id}`;
   const [to, setTo] = useState(emailOptions[0] || "");
   const [subject, setSubject] = useState(() => { var _a; return ((_a = loadEmailDraft(draftKey)) == null ? void 0 : _a.subject) || ""; });
-  const [message, setMessage] = useState(() => { var _a; return ((_a = loadEmailDraft(draftKey)) == null ? void 0 : _a.message) || ""; });
+  const [message, setMessage] = useState(() => { var _a; return ((_a = loadEmailDraft(draftKey)) == null ? void 0 : _a.message) || initialMessage || ""; });
   const [sending, setSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const { attachment, pickFile, clearAttachment } = useEmailAttachment();
@@ -6002,7 +6043,9 @@ function CorrespondenceComposeBox({ customer, saveCorrespondence, replyTo, onCle
     if (boxRef.current && !noScroll) boxRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [replyTo]);
   useEffect(() => {
-    if (subject || message) saveEmailDraft(draftKey, { subject, message });
+    // Suggested text nobody has touched isn't a draft worth keeping.
+    if (message && message !== initialMessage) saveEmailDraft(draftKey, { subject, message });
+    else if (subject && !message) saveEmailDraft(draftKey, { subject, message });
     else clearEmailDraft(draftKey);
   }, [draftKey, subject, message]);
   if (emailOptions.length === 0) {
@@ -16690,6 +16733,44 @@ function GeneralServiceMatchForm({ entry, db, onConfirm, onLinkWorkOrder, onLink
     noneLabel: "No customer linked"
   })), matchAssist.rememberEl, /* @__PURE__ */ React.createElement(Field, { label: "Work Order Title" }, /* @__PURE__ */ React.createElement("input", { className: inputCls, value: title, onChange: (e) => setTitle(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Priority" }, /* @__PURE__ */ React.createElement("select", { className: inputCls, value: priority, onChange: (e) => setPriority(e.target.value) }, PRIORITY.map((p) => /* @__PURE__ */ React.createElement("option", { key: p, value: p }, p)))), /* @__PURE__ */ React.createElement(Field, { label: "Description" }, /* @__PURE__ */ React.createElement("textarea", { className: inputCls, rows: 4, value: description, onChange: (e) => setDescription(e.target.value) })), footer("Create Work Order", confirm, !siteId && !cottageId));
 }
+// What linking a website service request to a job already on file does -
+// shared by Service Requests and Incoming.
+function signupReviewActions({ db, persist, actor, confirmPendingSignup }) {
+  const log = (text) => persist({ ...db, activityLog: addLog(db, actor, text) });
+  const now = () => (/* @__PURE__ */ new Date()).toISOString();
+  return {
+    linkWorkOrder(entry, wo) {
+      const noteText = [entry.submittedName ? `Service request from ${entry.submittedName}` : "Service request", entry.submittedDescription || "", entry.submittedPhone ? `Phone: ${entry.submittedPhone}` : "", entry.submittedEmail ? `Email: ${entry.submittedEmail}` : ""].filter(Boolean).join("\n");
+      const noteEntry = { id: uid(), text: noteText, author: actor, ts: now() };
+      log(`Linked a General Service Request submission to Work Order "${wo.title}"`);
+      confirmPendingSignup(WORK_ORDERS_REF, { ...wo, notes: [noteEntry, ...wo.notes || []], linkedFromGeneralServiceRequestAt: now() }, entry.id);
+    },
+    linkInvoice(entry, inv) {
+      const noteText = [entry.submittedName ? `Service request from ${entry.submittedName}:` : "Service request:", entry.submittedDescription || ""].filter(Boolean).join(" ");
+      log(`Linked a General Service Request submission to Invoice #${inv.invoiceNumber || ""}`);
+      confirmPendingSignup(INVOICES_REF, { ...inv, notes: [inv.notes, noteText].filter(Boolean).join("\n\n"), linkedFromGeneralServiceRequestAt: now() }, entry.id);
+    }
+  };
+}
+// An email reply to a website sign-up, kept in correspondence.
+async function sendSignupReply(db, saveCorrespondence, entry, { toEmail, subject, message, attachment }) {
+  const knownCustomer = matchCustomerByEmail(db.customers, toEmail);
+  await sendEmail({ toEmail, toName: entry.submittedName, subject, message, department: "service", source: "Service Request reply", attachmentBase64: attachment == null ? void 0 : attachment.base64, attachmentName: attachment == null ? void 0 : attachment.name });
+  await saveCorrespondence({
+    id: uid(),
+    customerId: knownCustomer ? knownCustomer.id : null,
+    pendingSignupId: entry.id,
+    direction: "out",
+    fromEmail: "service@qicampark.com",
+    toEmail,
+    subject: subject || "",
+    body: message,
+    receivedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    status: "handled",
+    handledAt: (/* @__PURE__ */ new Date()).toISOString(),
+    ...(attachment == null ? void 0 : attachment.url) ? { attachments: [{ url: attachment.url, name: attachment.name }] } : {}
+  });
+}
 function GeneralServiceView({ db, persist, saveWorkOrder, saveInvoice, saveCorrespondence, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, onBackToDashboard }) {
   const [reviewingEntry, setReviewingEntry] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
@@ -16742,20 +16823,11 @@ function GeneralServiceView({ db, persist, saveWorkOrder, saveInvoice, saveCorre
     setReviewingEntry(null);
   };
   const linkToWorkOrder = (wo) => {
-    const noteText = [reviewingEntry.submittedName ? `Service request from ${reviewingEntry.submittedName}` : "Service request", reviewingEntry.submittedDescription || "", reviewingEntry.submittedPhone ? `Phone: ${reviewingEntry.submittedPhone}` : "", reviewingEntry.submittedEmail ? `Email: ${reviewingEntry.submittedEmail}` : ""].filter(Boolean).join("\n");
-    const noteEntry = { id: uid(), text: noteText, author: actor, ts: (/* @__PURE__ */ new Date()).toISOString() };
-    const updatedWO = { ...wo, notes: [noteEntry, ...wo.notes || []], linkedFromGeneralServiceRequestAt: (/* @__PURE__ */ new Date()).toISOString() };
-    const activityLog = addLog(db, actor, `Linked a General Service Request submission to Work Order "${wo.title}"`);
-    persist({ ...db, activityLog });
-    confirmPendingSignup(WORK_ORDERS_REF, updatedWO, reviewingEntry.id);
+    signupReviewActions({ db, persist, actor, confirmPendingSignup, removePendingSignup }).linkWorkOrder(reviewingEntry, wo);
     setReviewingEntry(null);
   };
   const linkToInvoice = (inv) => {
-    const noteText = [reviewingEntry.submittedName ? `Service request from ${reviewingEntry.submittedName}:` : "Service request:", reviewingEntry.submittedDescription || ""].filter(Boolean).join(" ");
-    const updatedInvoice = { ...inv, notes: [inv.notes, noteText].filter(Boolean).join("\n\n"), linkedFromGeneralServiceRequestAt: (/* @__PURE__ */ new Date()).toISOString() };
-    const activityLog = addLog(db, actor, `Linked a General Service Request submission to Invoice #${inv.invoiceNumber || ""}`);
-    persist({ ...db, activityLog });
-    confirmPendingSignup(INVOICES_REF, updatedInvoice, reviewingEntry.id);
+    signupReviewActions({ db, persist, actor, confirmPendingSignup, removePendingSignup }).linkInvoice(reviewingEntry, inv);
     setReviewingEntry(null);
   };
   const discardEntry = (entry) => {
@@ -16832,24 +16904,7 @@ function GeneralServiceView({ db, persist, saveWorkOrder, saveInvoice, saveCorre
     draftContext: { pendingSignupId: replyingTo.id },
     references: [{ label: `Their request${replyingTo.submittedCategory ? ` \u2014 ${replyingTo.submittedCategory}` : ""}`, text: replyingTo.submittedDescription }],
     onClose: () => setReplyingTo(null),
-    onSend: async ({ toEmail, subject, message, attachment }) => {
-      const knownCustomer = matchCustomerByEmail(db.customers, toEmail);
-      await sendEmail({ toEmail, toName: replyingTo.submittedName, subject, message, department: "service", source: "Service Request reply", attachmentBase64: attachment == null ? void 0 : attachment.base64, attachmentName: attachment == null ? void 0 : attachment.name });
-      await saveCorrespondence({
-        id: uid(),
-        customerId: knownCustomer ? knownCustomer.id : null,
-        pendingSignupId: replyingTo.id,
-        direction: "out",
-        fromEmail: "service@qicampark.com",
-        toEmail,
-        subject: subject || "",
-        body: message,
-        receivedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        status: "handled",
-        handledAt: (/* @__PURE__ */ new Date()).toISOString(),
-        ...(attachment == null ? void 0 : attachment.url) ? { attachments: [{ url: attachment.url, name: attachment.name }] } : {}
-      });
-    }
+    onSend: (args) => sendSignupReply(db, saveCorrespondence, replyingTo, args)
   });
   return /* @__PURE__ */ React.createElement("div", null, header, queueEl, recentEl, reviewEl, viewingWOEl, viewingInvoiceEl, replyingToEl);
 }
@@ -19589,7 +19644,12 @@ function CorrespondenceRow({ item, customer, active, onClick, count, hasWorkOrde
 // Deleting an email in the app moves its copy in Zoho to Zoho's Trash, so
 // nobody answers it from there. Best effort: problems show up in System
 // Health.
+// Website forms and calls/walk-ins logged in the app never went through Zoho.
+function notFromZoho(item) {
+  return !!item && ["webform", "phone", "walkin"].includes(item.source);
+}
 function trashEmailInZoho(item) {
+  if (notFromZoho(item)) return Promise.resolve();
   const { direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt } = item;
   return functions_.httpsCallable("trashEmailInZoho")({ direction, zohoMessageId, zohoFrom, forwardedBy, fromEmail, toEmail, subject, receivedAt }).catch((e) => console.error("Couldn't move the email to Zoho's Trash:", e));
 }
@@ -19598,10 +19658,470 @@ function trashEmailInZoho(item) {
 // problems show up in System Health.
 const ZOHO_MARKED_READ = /* @__PURE__ */ new Set();
 function markEmailReadInZoho(item) {
-  if (!item || item.direction === "out" || ZOHO_MARKED_READ.has(item.id)) return;
+  if (!item || item.direction === "out" || notFromZoho(item) || ZOHO_MARKED_READ.has(item.id)) return;
   ZOHO_MARKED_READ.add(item.id);
   const { zohoMessageId, zohoFrom, forwardedBy, fromEmail, subject, receivedAt } = item;
   functions_.httpsCallable("markEmailReadInZoho")({ zohoMessageId, zohoFrom, forwardedBy, fromEmail, subject, receivedAt }).catch((e) => console.error("Couldn't mark the email read in Zoho:", e));
+}
+// Incoming: every request waiting on us in one list - emails, voicemails,
+// website forms (service, propane, winterizing) and calls/walk-ins logged
+// here - grouped by what it needs, each with what the app has prepared
+// and one main button. Sign-ups open the same review forms as their own
+// screens; emails get a work order drafted from the customer, site,
+// cottage, appliance and Claude's triage.
+const INCOMING_GROUPS = [
+  { key: "work", label: "Needs a work order" },
+  { key: "runs", label: "Propane \xB7 Trees \xB7 Winterizing" },
+  { key: "existing", label: "About an existing job" },
+  { key: "answer", label: "Just needs an answer" }
+];
+const INCOMING_SIGNUP_TITLES = { generalservice: "Service request", propane: "Propane refill", winterizing: "Winterizing sign-up" };
+// propane | tree | winterizing | service | other
+function incomingEmailKind(item) {
+  const t = item.triage && item.triage.category;
+  if (t) return t;
+  if (isPropaneEmail(item)) return "propane";
+  if (isTreeEmail(item)) return "tree";
+  if (/\bwinteri[sz]/i.test(`${item.subject || ""} ${item.body || ""}`)) return "winterizing";
+  return correspondenceVoicemail(item) ? "other" : "service";
+}
+function incomingOpenWorkOrders(db, customer) {
+  return customer ? (db.workOrders || []).filter((w) => w.status !== "Completed" && customerOwns(customer, w)).sort((a, b) => (b.date || "").localeCompare(a.date || "")) : [];
+}
+// The appliance an email is probably about, from the words in it.
+const INCOMING_APPLIANCE_WORDS = {
+  "AC Unit": /\b(a\/?c|air ?condition\w*)\b/i,
+  "Hot Water Tank": /\b(hot water|water heater|hwt|hot water tank)\b/i,
+  Furnace: /\b(furnace|no heat)\b/i,
+  Range: /\b(stove|range|oven)\b/i,
+  Fireplace: /\bfireplace\b/i,
+  Refrigerator: /\b(fridge|refrigerator)\b/i,
+  Microwave: /\bmicrowave\b/i,
+  Generator: /\bgenerator\b/i
+};
+function guessAppliance(cottage, text) {
+  const list = cottage && cottage.appliances || [];
+  const hits = list.filter((a) => INCOMING_APPLIANCE_WORDS[a.type] && INCOMING_APPLIANCE_WORDS[a.type].test(text || ""));
+  return hits.length === 1 ? hits[0] : null;
+}
+// Who an unlinked email is probably from: earlier emails with the same
+// address, a customer with that address, or the owner of a site it names.
+function incomingSuggestCustomer(db, item) {
+  if (correspondenceVoicemail(item)) return null;
+  const peer = correspondencePeer(item);
+  const earlier = peer ? (db.correspondence || []).find((c) => c.id !== item.id && c.customerId && correspondencePeer(c) === peer) : null;
+  const byEarlier = earlier ? (db.customers || []).find((c) => c.id === earlier.customerId) : null;
+  if (byEarlier) return { customer: byEarlier, reason: `Earlier emails with ${peer} belong to them` };
+  const byEmail = peer ? matchCustomerByEmail(db.customers, peer) : null;
+  if (byEmail) return { customer: byEmail, reason: `${peer} is on their record` };
+  const typed = (item.webForm && item.webForm.siteNumber) || (item.triage && item.triage.siteNumber);
+  const site = typed ? (db.sites || []).find((st) => sameSiteNumber(st.number, typed)) : null;
+  const owner = site ? getSiteOwner(db, site.id) : null;
+  return owner ? { customer: owner, reason: `The message mentions site ${site.number}` } : null;
+}
+function incomingItems(db, pendingSignups) {
+  const out = [];
+  const findCustomer = (id) => id ? (db.customers || []).find((c) => c.id === id) || null : null;
+  const findSite = (id) => id ? (db.sites || []).find((st) => st.id === id) || null : null;
+  (pendingSignups || []).forEach((p) => {
+    if (!FIELD_SIGNUP_TYPE_META[p.type]) return;
+    const m = computeSignupMatch(p, db);
+    out.push({
+      key: "s-" + p.id,
+      source: "signup",
+      entry: p,
+      kind: p.type === "generalservice" ? "service" : p.type,
+      group: p.type === "generalservice" ? "work" : "runs",
+      at: p.receivedAt || "",
+      customer: m.customer || null,
+      site: m.site || null,
+      name: p.submittedName || "(no name given)",
+      title: p.type === "generalservice" ? p.submittedCategory || INCOMING_SIGNUP_TITLES.generalservice : INCOMING_SIGNUP_TITLES[p.type],
+      text: [p.submittedDescription, p.requestedDate && p.type !== "generalservice" ? `Requested date: ${p.requestedDate}` : "", p.notes].filter(Boolean).join("\n\n")
+    });
+  });
+  (db.correspondence || []).forEach((c) => {
+    if (c.direction === "out" || !CorrespondenceIsNew(c) || CorrespondenceIsFYI(c)) return;
+    const vm = correspondenceVoicemail(c);
+    const customer = vm ? null : findCustomer(c.customerId);
+    const kind = incomingEmailKind(c);
+    const open = incomingOpenWorkOrders(db, customer);
+    const aboutJob = (kind === "service" || kind === "other") && open.length > 0 && (!!c.workOrderId || /^\s*re\s*:/i.test(c.subject || "") || kind === "other");
+    const prefill = correspondencePrefill(db, c, customer ? customer.id : null, "workorder");
+    out.push({
+      key: "c-" + c.id,
+      source: vm ? "voicemail" : c.source === "phone" || c.source === "walkin" ? c.source : "email",
+      email: c,
+      vm,
+      kind,
+      group: ["propane", "tree", "winterizing"].includes(kind) ? "runs" : aboutJob ? "existing" : kind === "service" ? "work" : "answer",
+      at: c.receivedAt || "",
+      customer,
+      site: findSite(prefill.siteId),
+      openJobs: open,
+      name: vm ? [vm.callerName, vm.callerNumber].filter(Boolean).join(" ") || "Unknown caller" : customer ? customer.name : c.fromName || c.fromEmail || "(unknown)",
+      title: c.triage && c.triage.summary || (vm ? "Voicemail" : c.subject) || "(no subject)",
+      text: displayEmailBody(c.body || "")
+    });
+  });
+  return out.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+}
+const INCOMING_SOURCE_LABEL = { email: "✉ Email", voicemail: "☎ Voicemail", phone: "☎ Phone call", walkin: "\u{1F6B6} Walk-in", signup: "\u{1F310} Web form" };
+const INCOMING_ICON = { email: "✉", voicemail: "☎", phone: "☎", walkin: "\u{1F6B6}", signup: "\u{1F310}" };
+function LogCallModal({ db, onSave, onClose }) {
+  const h = React.createElement;
+  const [customerId, setCustomerId] = useState("");
+  const [how, setHow] = useState("phone");
+  const [text, setText] = useState("");
+  const customer = (db.customers || []).find((c) => c.id === customerId);
+  const save = () => {
+    if (!customer || !text.trim()) return;
+    onSave({ customer, how, text: text.trim() });
+  };
+  return h(
+    Modal,
+    { title: "Log a call or walk-in", onClose },
+    h("div", { className: "flex gap-2 mb-3" }, ["phone", "walkin"].map((k) => h("button", { key: k, type: "button", onClick: () => setHow(k), className: `flex-1 px-3 py-2 rounded-md text-sm font-semibold border ${how === k ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740]"}` }, k === "phone" ? "☎ Phone call" : "\u{1F6B6} Walk-in"))),
+    h(Field, { label: "Who" }, h(SearchableSelect, { options: (db.customers || []).map((c) => ({ value: c.id, label: c.name, searchText: [c.name, c.name2, ...customerSiteIds(c).map((id) => ((db.sites || []).find((st) => st.id === id) || {}).number)].filter(Boolean).join(" ") })), value: customerId, onChange: setCustomerId, placeholder: "Search customers or site #…", noneLabel: "— Pick a customer —" })),
+    h(Field, { label: "What did they say?" }, h("textarea", { className: inputCls, rows: 4, value: text, onChange: (e) => setText(e.target.value), placeholder: "e.g. Water under the hot water tank, shut it off himself, wants someone today" })),
+    h("p", { className: "text-xs text-[#75716A] mb-3" }, "It goes in Incoming and in their history, like an email."),
+    h(
+      "div",
+      { className: "flex justify-end gap-2" },
+      h("button", { type: "button", onClick: onClose, className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Cancel"),
+      h("button", { type: "button", onClick: save, disabled: !customer || !text.trim(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, "Add to Incoming")
+    )
+  );
+}
+function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, onGoToTab }) {
+  const h = React.createElement;
+  const actor = useCurrentActor();
+  const [selectedKey, setSelectedKey] = useSessionState("qic-incoming-selected", null);
+  const [filter, setFilter] = useState("");
+  const [modal, setModal] = useState(null);
+  const [replying, setReplying] = useState(false);
+  const [linking, setLinking] = useState(false);
+  const [done, setDone] = useState(null);
+  const [logOpen, setLogOpen] = useState(false);
+  const all = incomingItems(db, pendingSignups);
+  const q = filter.trim().toLowerCase();
+  const items = q ? all.filter((it) => `${it.name} ${it.title} ${it.text} ${it.site ? it.site.number : ""}`.toLowerCase().includes(q)) : all;
+  const selected = all.find((it) => it.key === selectedKey) || null;
+  const now = () => (/* @__PURE__ */ new Date()).toISOString();
+  const log = (text) => persist({ ...db, activityLog: addLog(db, actor, text) });
+  const select = (it) => {
+    setSelectedKey(it.key);
+    setReplying(false);
+    setLinking(false);
+    setDone(null);
+    if (it.email) markEmailReadInZoho(it.email);
+  };
+  const markHandled = (item, extra) => saveCorrespondence({ ...item, status: "handled", handledAt: now(), followUpAt: null, ...extra || {} });
+  // Finished with one: show what happened, with a reply box to let them know.
+  const finish = (it, message, extra) => {
+    setModal(null);
+    setReplying(false);
+    setLinking(false);
+    setDone({ it, message, ...extra || {} });
+    setSelectedKey(null);
+  };
+  const woDraft = (it) => {
+    const c = it.email;
+    const base = correspondencePrefill(db, c, it.customer ? it.customer.id : null, "workorder");
+    const cottage = base.cottageId ? (db.cottages || []).find((x) => x.id === base.cottageId) : null;
+    const appliance = guessAppliance(cottage, `${c.subject || ""} ${c.body || ""}`);
+    return {
+      title: c.triage && c.triage.summary || (it.vm ? voicemailLabel(it.vm) : c.subject) || "Correspondence follow-up",
+      description: displayEmailBody(c.body || "").slice(0, 2e3),
+      ...base,
+      priority: base.priority || "Medium",
+      applianceId: appliance ? appliance.id : null
+    };
+  };
+  const createWorkOrder = (it, draft) => {
+    const wo = {
+      id: uid(),
+      workOrderNumber: nextWorkOrderNumber(db),
+      title: draft.title,
+      description: draft.description,
+      siteId: draft.siteId || null,
+      cottageId: draft.cottageId || null,
+      customerId: draft.customerId || null,
+      applianceId: draft.applianceId || null,
+      assignedTo: "",
+      status: "Open",
+      priority: draft.priority || "Medium",
+      workGroup: "",
+      date: todayISO(),
+      completedDate: null,
+      partsUsed: [],
+      laborHours: "",
+      laborRateType: "N/A"
+    };
+    saveWorkOrder(wo);
+    markHandled(it.email, { workOrderId: wo.id });
+    log(`Created work order ${wo.workOrderNumber} from Incoming (${it.name})`);
+    finish(it, `Work order ${wo.workOrderNumber} created`, { wo, reply: "Thanks for letting us know — we've booked someone to take a look and will let you know when it's done." });
+  };
+  // A work order made through the full form ("Change…" / "Make a work order").
+  const savedFromForm = (it) => (wo) => {
+    saveWorkOrder(wo);
+    markHandled(it.email, { workOrderId: wo.id });
+    log(`Created work order ${wo.workOrderNumber || ""} from Incoming (${it.name})`);
+    finish(it, `Work order ${wo.workOrderNumber || ""} created`, { wo, reply: "Thanks for letting us know — we've booked someone to take a look and will let you know when it's done." });
+  };
+  const linkTo = async (it, customer) => {
+    const c = it.email;
+    await saveCorrespondence({ ...c, customerId: customer.id, linkedAt: now() });
+    linkEarlierEmails(customer.id, correspondencePeer(c), (db.correspondence || []).filter((x) => x.id !== c.id));
+    if (c.fromEmail && !isParkEmail(c.fromEmail)) rememberCustomerEmail(customer, c.fromEmail);
+    setLinking(false);
+  };
+  const logCall = ({ customer, how, text }) => {
+    const first = text.split("\n")[0];
+    const rec = {
+      id: uid(),
+      customerId: customer.id,
+      direction: "in",
+      source: how,
+      fromName: customer.name,
+      fromEmail: "",
+      subject: `${how === "phone" ? "Phone call" : "Walk-in"}: ${first.length > 60 ? first.slice(0, 57) + "…" : first}`,
+      body: text,
+      receivedAt: now(),
+      status: "new",
+      loggedBy: actor
+    };
+    saveCorrespondence(rec);
+    log(`Logged a ${how === "phone" ? "phone call" : "walk-in"} from ${customer.name}`);
+    setLogOpen(false);
+    setSelectedKey("c-" + rec.id);
+    setDone(null);
+  };
+  // Sign-ups: the same review forms as the Service Requests / Propane /
+  // Winterizing screens.
+  const reviewSignup = (it) => {
+    const entry = it.entry;
+    const meta = FIELD_SIGNUP_TYPE_META[entry.type];
+    const actions = signupReviewActions({ db, persist, actor, confirmPendingSignup });
+    const placeOf = (rec) => {
+      const site = rec.siteId && (db.sites || []).find((st) => st.id === rec.siteId);
+      const cot = rec.cottageId && (db.cottages || []).find((x) => x.id === rec.cottageId);
+      return site ? `Site ${site.number}` : cot ? cot.name : "unassigned";
+    };
+    return h(meta.Form, {
+      entry,
+      db,
+      onConfirm: (built) => {
+        log(entry.type === "generalservice" ? `Created work order from General Service Request submission (${placeOf(built)})` : entry.type === "propane" ? "Confirmed propane request from online sign-up" : `Confirmed winterizing sign-up for ${placeOf(built)} from online submission`);
+        confirmPendingSignup(meta.ref, built, entry.id);
+        const who = built.customerId ? (db.customers || []).find((c) => c.id === built.customerId) : null;
+        finish(it, entry.type === "generalservice" ? "Work order created" : entry.type === "propane" ? "Added to the propane list" : "Added to winterizing", { customer: who, signupReply: entry.submittedEmail ? entry : null });
+      },
+      onLinkWorkOrder: (wo) => {
+        actions.linkWorkOrder(entry, wo);
+        finish(it, `Added to ${wo.workOrderNumber || wo.title}`);
+      },
+      onLinkInvoice: (inv) => {
+        actions.linkInvoice(entry, inv);
+        finish(it, `Added to invoice #${inv.invoiceNumber || ""}`);
+      },
+      onDiscard: () => {
+        if (!window.confirm("Discard this submission? This can't be undone.")) return;
+        log(`Discarded ${meta.label.toLowerCase()} submission from ${entry.submittedName || "unknown"}`);
+        removePendingSignup(entry.id);
+        finish(it, "Discarded");
+      },
+      onCancel: () => setModal(null)
+    });
+  };
+  const canWinterize = !!saveWinterizingRequest;
+  // ---- detail pane ----
+  const btnMain = (label, onClick, attrs) => h("button", { type: "button", onClick, className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]", ...attrs || {} }, label);
+  const link = (label, onClick) => h("button", { type: "button", onClick, className: "text-sm font-semibold text-[#377249] hover:underline" }, label);
+  const row = (k, v) => v ? h("div", { className: "flex gap-3 py-0.5" }, h("span", { className: "w-28 flex-shrink-0 text-[#75716A]" }, k), h("span", { className: "text-[#1E1A13] min-w-0" }, v)) : null;
+  const card = (title, rows, corner) => h("div", { className: "rounded-lg border border-[#E2DED5] bg-white px-4 py-3 text-sm" }, h("div", { className: "flex items-center justify-between gap-2 mb-1.5" }, h("span", { className: "font-bold text-[#1E1A13]" }, title), corner), rows);
+  const placeLine = (customer, siteId, cottageId) => {
+    const site = siteId && (db.sites || []).find((st) => st.id === siteId);
+    const cot = cottageId && (db.cottages || []).find((x) => x.id === cottageId);
+    return [customer && customer.name, site && `Site ${site.number}`, cot && cot.name].filter(Boolean).join(" \xB7 ");
+  };
+  let pane;
+  if (done) {
+    const d = done;
+    const customer = d.it.customer || d.customer || (d.wo && d.wo.customerId ? (db.customers || []).find((c) => c.id === d.wo.customerId) : null);
+    pane = h(
+      "div",
+      { className: "p-6" },
+      h("div", { className: "rounded-lg border border-[#B9D7C1] bg-[#EEF7F0] px-4 py-3 text-sm text-[#28633C] mb-4", "data-incoming-done": true }, h("b", null, "✓ ", d.message), " — ", d.it.name, ".", d.wo && h("button", { type: "button", onClick: () => setModal({ viewWO: d.wo }), className: "ml-2 font-semibold underline" }, "Open it")),
+      customer && d.it.email && d.reply && saveCorrespondence ? h(React.Fragment, null, h("p", { className: "text-sm text-[#4B4740] mb-2" }, "Let ", customer.name, " know? (optional)"), h(CorrespondenceComposeBox, { key: d.it.key, customer, replyTo: d.it.email.fromEmail ? d.it.email : null, noScroll: true, initialMessage: d.reply, cannedReplies: db.cannedReplies, lastInboundEmail: d.it.email.fromEmail, saveCorrespondence })) : d.signupReply ? h("div", null, link("Email " + (d.signupReply.submittedName || d.signupReply.submittedEmail) + " back", () => setModal({ signupReply: d.signupReply }))) : null,
+      all.length > 0 && h("div", { className: "mt-4" }, link(`Next: ${all[0].name} →`, () => select(all[0])))
+    );
+  } else if (selected) {
+    const it = selected;
+    const c = it.email;
+    const header = h(
+      React.Fragment,
+      null,
+      h("div", { className: "text-[11px] uppercase tracking-wider text-[#75716A] font-bold" }, INCOMING_SOURCE_LABEL[it.source], " \xB7 ", it.name, it.at ? ` \xB7 ${timeAgo(it.at)}` : ""),
+      h("h3", { className: "font-serif text-xl text-[#1E1A13] mt-1 mb-3" }, it.title)
+    );
+    const original = h("div", { className: "rounded-lg bg-[#F7F3EC] px-3.5 py-2.5 text-sm text-[#4B4740] whitespace-pre-line mb-3 max-h-64 overflow-y-auto" }, it.text || "(no message)", it.vm && it.vm.callerNumber && h("div", { className: "mt-2 font-semibold text-[#1E1A13]" }, "Call back: ", it.vm.callerNumber), c && c.source === "phone" && c.loggedBy && h("div", { className: "mt-1 text-xs text-[#9A968D]" }, "Logged by ", c.loggedBy));
+    let who = null;
+    let body = null;
+    let actionsEl = null;
+    const sideActions = [];
+    if (it.source === "signup") {
+      const e = it.entry;
+      const m = computeSignupMatch(e, db);
+      who = !m.customer || m.warning ? h("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-3.5 py-2.5 text-sm text-[#7A5418] mb-3" }, h("b", null, "Who is this? "), m.warning || `Site typed as “${e.submittedSiteNumber || "—"}” — no match. You'll pick them in the next step.`) : null;
+      body = card(e.type === "generalservice" ? "Work order, ready to review" : e.type === "propane" ? "Propane fill, ready to add" : "Winterizing, ready to add", h(React.Fragment, null, row("For", placeLine(m.customer, m.site && m.site.id, m.cottage && m.cottage.id) || "—"), e.type === "generalservice" && row("Priority", e.submittedUrgency || "Medium"), e.requestedDate && e.type !== "generalservice" && row("Asked for", e.requestedDate), row("Phone", e.submittedPhone), row("Email", e.submittedEmail)));
+      const mainLabel = e.type === "generalservice" ? "Create work order" : e.type === "propane" ? "Add to propane run" : "Add to winterizing";
+      actionsEl = e.type === "winterizing" && !canWinterize ? link("Open Winterizing", () => onGoToTab("winterizing")) : btnMain(mainLabel, () => setModal({ signup: it }), { "data-incoming-main": true });
+      if (e.submittedEmail) sideActions.push(link("Reply", () => setModal({ signupReply: e })));
+    } else {
+      const suggestion = !it.customer && !it.vm ? incomingSuggestCustomer(db, c) : null;
+      if (!it.customer && !it.vm) {
+        who = h("div", { className: "rounded-lg border border-[#E9D3B5] bg-[#FBEEDA] px-3.5 py-2.5 text-sm text-[#7A5418] mb-3" }, h("b", null, "Who is this? "), c.fromEmail || "", " isn't on a customer yet.", h("div", { className: "flex flex-wrap gap-3 mt-1.5" }, suggestion && h("button", { type: "button", onClick: () => linkTo(it, suggestion.customer), className: "font-semibold text-[#377249] hover:underline", title: suggestion.reason }, `It's ${suggestion.customer.name}`), h("button", { type: "button", onClick: () => setLinking(true), className: "font-semibold text-[#377249] hover:underline" }, "Search…")), linking && h("div", { className: "mt-2" }, h(CorrespondenceLinkPicker, { customers: db.customers, onPick: (cust) => linkTo(it, cust), onCancel: () => setLinking(false) })));
+      }
+      if (it.group === "work") {
+        const draft = woDraft(it);
+        const cottage = draft.cottageId && (db.cottages || []).find((x) => x.id === draft.cottageId);
+        const appliance = draft.applianceId && cottage && (cottage.appliances || []).find((a) => a.id === draft.applianceId);
+        body = card("Work order, ready to create", h(React.Fragment, null, row("Title", draft.title), row("For", placeLine(it.customer, draft.siteId, draft.cottageId) || "No site yet — use Change…"), appliance && row("Appliance", [appliance.type, applianceDetails(appliance)].filter(Boolean).join(" — ")), row("Priority", draft.priority)), saveWorkOrder && h("button", { type: "button", onClick: () => setModal({ wo: it, initial: draft }), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Change…"));
+        actionsEl = saveWorkOrder && btnMain("Create work order", () => createWorkOrder(it, draft), { "data-incoming-main": true });
+        if (it.customer) sideActions.push(link("Reply only", () => setReplying(true)));
+      } else if (it.group === "runs") {
+        const draft = correspondencePrefill(db, c, it.customer ? it.customer.id : null, it.kind === "winterizing" ? "workorder" : it.kind);
+        body = card(it.kind === "propane" ? "Propane fill, ready to add" : it.kind === "tree" ? "Tree entry, ready to add" : "Winterizing, ready to add", h(React.Fragment, null, row("For", placeLine(it.customer, draft.siteId, draft.cottageId) || "—"), draft.requestedDate && row("Asked for", draft.requestedDate), it.kind === "tree" && row("Priority", draft.priority), it.vm && it.vm.callerNumber && row("Also", `Call back: ${it.vm.callerNumber}`)));
+        if (it.kind === "propane" && savePropaneRequest) actionsEl = btnMain("Add to propane run", () => setModal({ propane: it, initial: { notes: c.body || "", ...draft } }), { "data-incoming-main": true });
+        else if (it.kind === "tree" && saveTreeRequest) actionsEl = btnMain("Add tree entry", () => setModal({ tree: it, initial: { description: c.body || "", ...draft } }), { "data-incoming-main": true });
+        else if (it.kind === "winterizing" && canWinterize) actionsEl = btnMain("Add to winterizing", () => setModal({ winter: it, initial: { cottageId: draft.cottageId || "", customerId: draft.customerId || "", notes: displayEmailBody(c.body || "").slice(0, 500) } }), { "data-incoming-main": true });
+        else actionsEl = link(`Open ${it.kind === "propane" ? "Propane" : it.kind === "tree" ? "Trees" : "Winterizing"}`, () => onGoToTab(it.kind === "propane" ? "propane" : it.kind === "tree" ? "trees" : "winterizing"));
+        if (saveWorkOrder) sideActions.push(link("Make it a work order instead", () => setModal({ wo: it, initial: woDraft(it) })));
+        if (it.customer) sideActions.push(link("Reply", () => setReplying(true)));
+      } else {
+        if (it.group === "existing") {
+          body = card("About an existing job", h(React.Fragment, null, it.openJobs.slice(0, 3).map((w) => h("div", { key: w.id, className: "flex items-center justify-between gap-2 py-0.5" }, h("span", { className: "min-w-0 truncate" }, w.workOrderNumber ? `${w.workOrderNumber} \xB7 ` : "", w.title, " \xB7 ", h("b", null, w.status), w.assignedTo ? `, ${w.assignedTo}` : ""), h("button", { type: "button", onClick: () => setModal({ viewWO: w }), className: "text-xs font-semibold text-[#377249] hover:underline flex-shrink-0" }, "Open")))));
+        } else if (it.vm) {
+          body = card("Call them back", h(React.Fragment, null, row("Number", it.vm.callerNumber || "—"), row("Name", it.vm.callerName || "—")));
+        }
+        actionsEl = it.customer ? btnMain("Reply", () => setReplying(true), { "data-incoming-main": true }) : null;
+        if (saveWorkOrder) sideActions.push(link("Make a work order", () => setModal({ wo: it, initial: woDraft(it) })));
+      }
+      sideActions.push(link("Done — nothing to do", () => {
+        markHandled(c);
+        finish(it, "Marked done");
+      }));
+    }
+    pane = h(
+      "div",
+      { className: "p-6" },
+      header,
+      who,
+      original,
+      body,
+      h("div", { className: "flex items-center gap-x-4 gap-y-2 flex-wrap mt-4" }, actionsEl, sideActions.map((a, i) => h(React.Fragment, { key: i }, a))),
+      replying && it.customer && c && h("div", { className: "mt-4" }, h(CorrespondenceComposeBox, { key: it.key, customer: it.customer, replyTo: c.fromEmail ? c : null, noScroll: true, cannedReplies: db.cannedReplies, lastInboundEmail: c.fromEmail, saveCorrespondence: (rec) => {
+        const r = saveCorrespondence(rec);
+        if (rec.direction === "out") {
+          markHandled(c);
+          finish(it, "Reply sent");
+        }
+        return r;
+      } }))
+    );
+  } else {
+    pane = h("div", { className: "flex items-center justify-center h-full text-sm text-[#9A968D] italic p-6" }, all.length ? "Pick a request on the left." : "Nothing waiting — all caught up.");
+  }
+  // ---- modals ----
+  let modalEl = null;
+  if (modal && modal.signup) {
+    const meta = FIELD_SIGNUP_TYPE_META[modal.signup.entry.type];
+    modalEl = h(Modal, { title: `Review ${meta.label} Sign-Up`, onClose: () => setModal(null), wide: true }, reviewSignup(modal.signup));
+  } else if (modal && modal.signupReply) {
+    const e = modal.signupReply;
+    modalEl = h(QuickEmailReplyModal, {
+      toOptions: [e.submittedEmail],
+      toName: e.submittedName || e.submittedEmail,
+      defaultSubject: e.submittedCategory ? `Re: ${e.submittedCategory}` : `Re: your ${(INCOMING_SIGNUP_TITLES[e.type] || "request").toLowerCase()}`,
+      draftKey: `pending:${e.id}`,
+      draftContext: { pendingSignupId: e.id },
+      references: [{ label: "Their request", text: [e.submittedDescription, e.notes].filter(Boolean).join("\n\n") }],
+      onClose: () => setModal(null),
+      onSend: (args) => sendSignupReply(db, saveCorrespondence, e, args)
+    });
+  } else if (modal && modal.wo) {
+    modalEl = h(QuickWorkOrderModal, { db, initial: modal.initial, saveWorkOrder: savedFromForm(modal.wo), onClose: () => setModal((m) => m && m.wo ? null : m) });
+  } else if (modal && modal.propane) {
+    modalEl = h(QuickPropaneRequestModal, { db, initial: modal.initial, onClose: () => setModal((m) => m && m.propane ? null : m), savePropaneRequest: (r) => {
+      savePropaneRequest(r);
+      markHandled(modal.propane.email);
+      finish(modal.propane, "Added to the propane list", { reply: "Thanks — you're on our propane list and we'll fill it on the next run." });
+    } });
+  } else if (modal && modal.tree) {
+    modalEl = h(QuickTreeRequestModal, { db, initial: modal.initial, onClose: () => setModal((m) => m && m.tree ? null : m), saveTreeRequest: (r) => {
+      saveTreeRequest(r);
+      markHandled(modal.tree.email);
+      finish(modal.tree, "Tree entry added", { reply: "Thanks for letting us know — we've added it to our tree list and will take a look." });
+    } });
+  } else if (modal && modal.winter) {
+    modalEl = h(Modal, { title: "New Winterizing Sign-Up", onClose: () => setModal(null), wide: true }, h(WinterizingRequestForm, { initial: modal.initial, db, onCancel: () => setModal(null), onSave: (r) => {
+      saveWinterizingRequest(r);
+      markHandled(modal.winter.email);
+      finish(modal.winter, "Added to winterizing", { reply: `Thanks — you're signed up for winterizing${r.requestedDate ? ` on ${r.requestedDate}` : ""}. We'll confirm the day closer to the time.` });
+    } }));
+  } else if (modal && modal.viewWO) {
+    modalEl = h(WorkOrderViewModal, { wo: (db.workOrders || []).find((w) => w.id === modal.viewWO.id) || modal.viewWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setModal(null), variant: "drawer" });
+  }
+  // ---- list ----
+  const showingDetail = !!(selected || done);
+  const listEl = h(
+    "div",
+    { className: "overflow-y-auto flex-1" },
+    items.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic px-4 py-6" }, q ? "Nothing matches that search." : "Nothing waiting — all caught up.") : INCOMING_GROUPS.map((g) => {
+      const list = items.filter((it) => it.group === g.key);
+      if (!list.length) return null;
+      return h(
+        "div",
+        { key: g.key, "data-incoming-group": g.key },
+        h("div", { className: "px-4 py-1.5 bg-[#F3EFE7] text-[10.5px] uppercase tracking-wider font-bold text-[#75716A] border-b border-[#E2DED5]" }, g.label, " \xB7 ", list.length),
+        list.map((it) => {
+          const active = selected && selected.key === it.key;
+          const site = it.site ? it.site.number : it.source === "signup" && it.entry.submittedSiteNumber ? it.entry.submittedSiteNumber : "";
+          const unmatched = it.source === "signup" ? !it.customer : !it.customer && !it.vm;
+          return h(
+            "button",
+            { key: it.key, type: "button", onClick: () => select(it), "data-incoming-row": it.key, className: `w-full text-left flex items-start gap-3 px-4 py-2.5 border-b border-[#EEEBE5] ${active ? "bg-[#DDF1E1] shadow-[inset_3px_0_0_#377249]" : "hover:bg-[#F7F3EC]"}` },
+            h("span", { className: "w-5 text-center flex-shrink-0 mt-0.5" }, INCOMING_ICON[it.source]),
+            h("span", { className: "min-w-0 flex-1" }, h("span", { className: "block text-sm font-semibold text-[#1E1A13] truncate" }, it.name, site ? ` \xB7 ${site}` : "", unmatched && h("span", { className: "ml-1.5 text-[11px] font-bold text-[#a8532a]" }, "who is this?")), h("span", { className: "block text-xs text-[#75716A] truncate" }, it.title)),
+            h("span", { className: "text-[11px] text-[#9A968D] flex-shrink-0 mt-0.5" }, it.at ? timeAgo(it.at) : "")
+          );
+        })
+      );
+    })
+  );
+  return h(
+    "div",
+    null,
+    h(
+      "div",
+      { className: "flex items-start justify-between gap-3 flex-wrap mb-5" },
+      h("div", null, h("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Incoming"), h("p", { className: "text-sm text-[#75716A]" }, "Every request waiting on us — emails, voicemails, website forms and calls — grouped by what it needs.")),
+      h("div", { className: "flex items-center gap-2" }, h("input", { className: inputCls + " w-48 sm:w-60", placeholder: "Search…", value: filter, onChange: (e) => setFilter(e.target.value) }), saveCorrespondence && h("button", { type: "button", onClick: () => setLogOpen(true), className: "px-3 py-2 rounded-md text-sm font-semibold border border-[#E2DED5] text-[#4B4740] bg-[#FFFDFA] hover:bg-[#F1EEE9] whitespace-nowrap" }, "☎ Log a call / walk-in"))
+    ),
+    h(
+      "div",
+      { className: "flex border border-[#E2DED5] rounded-xl bg-[#FFFDFA] overflow-hidden", style: { minHeight: "70vh" } },
+      h("div", { className: `${showingDetail ? "hidden sm:flex" : "flex"} w-full sm:w-[380px] flex-shrink-0 border-r border-[#E2DED5] flex-col`, style: { maxHeight: "80vh" } }, listEl),
+      h("div", { className: `${showingDetail ? "block" : "hidden"} sm:block flex-1 min-w-0 overflow-y-auto`, style: { maxHeight: "80vh" } }, showingDetail && h("button", { type: "button", onClick: () => {
+        setSelectedKey(null);
+        setDone(null);
+      }, className: "sm:hidden text-xs font-semibold text-[#377249] px-6 pt-4 hover:underline" }, "← Back to the list"), pane)
+    ),
+    modalEl,
+    logOpen && h(LogCallModal, { db, onSave: logCall, onClose: () => setLogOpen(false) })
+  );
 }
 function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice, onOpenEmailTrash }) {
   const actor = useCurrentActor();
@@ -19831,6 +20351,7 @@ function CorrespondenceInboxView({ db, persist, saveCorrespondence, deleteCorres
 }
 const TABS = [
   { key: "dashboard", label: "Dashboard", group: "service" },
+  { key: "incoming", label: "Incoming", group: "service" },
   { key: "quotes", label: "Quotes", group: "service" },
   { key: "workorders", label: "Work Orders", group: "service" },
   { key: "invoices", label: "Invoices", group: "service" },
@@ -23115,6 +23636,7 @@ function AppContent() {
   };
   const navBadges = {
     workorders: openCount,
+    incoming: incomingItems(db, pendingSignups).length,
     correspondence: (db.correspondence || []).filter((c) => c.direction !== "out" && CorrespondenceIsNew(c)).length,
     generalservice: (pendingSignups || []).filter((p) => p.type === "generalservice").length,
     invoices: (db.invoices || []).filter((i) => !i.paidInFullDate).length,
@@ -23285,7 +23807,7 @@ function AppContent() {
       className: `mb-4 px-3 py-1.5 rounded-md text-xs font-semibold border transition ${moneyVisible ? "bg-[#377249] text-white border-[#377249]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
     },
     moneyVisible ? "\uD83D\uDC41 Hide $ Values" : "\uD83D\uDC41 Show $ Values"
-  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite: isAdminOrManager ? saveSite : null, bulkWriteSites: isAdminOrManager ? bulkWriteSites : null, saveCottage: isAdminOrManager ? saveCottage : null }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, saveSite, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null, onOpenEmailTrash: isAdminOrManager ? () => setTrashOpen("emails") : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  ), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "incoming" && React.createElement(IncomingView, { db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest: isAdminOrManager ? saveWinterizingRequest : null, onGoToTab: selectTab }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite: isAdminOrManager ? saveSite : null, bulkWriteSites: isAdminOrManager ? bulkWriteSites : null, saveCottage: isAdminOrManager ? saveCottage : null }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, saveSite, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null, onOpenEmailTrash: isAdminOrManager ? () => setTrashOpen("emails") : null }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),
