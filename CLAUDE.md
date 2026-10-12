@@ -214,6 +214,19 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   what it made) so a reply to it reads in order. Web forms and logged calls
   never touch Zoho (`notFromZoho`).
 
+**Work orders**
+- Statuses: Open, In Progress, Pending, Completed. Pending is for jobs booked
+  well ahead and needs a `startDate`. Pending jobs stay out of the open /
+  urgent / overdue counts, the nav badge and the crew's lists (`woActive`)
+  until someone moves them to In Progress - never automatically.
+- Reminders: a month, two weeks, a week and two days before the start date
+  (only those still ahead when it was set, `pendingSince`), in the morning
+  summary on those days and the start date only (not daily), and as a pop-up
+  (`PendingJobsPrompt`) for Admins and Service Managers: each person answers
+  their own ("Not yet" is saved per person in `reminderSeen`), a weekend
+  reminder shows on the next open, and it's daily once the start date has
+  come. Changing the start date (pop-up or form) resets the reminders.
+
 **Parts**
 - Each part is its own document in the `parts` collection (not in
   campground/data). `persist()` writes only parts a screen changed, stock
