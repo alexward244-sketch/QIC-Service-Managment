@@ -15564,6 +15564,101 @@ function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinter
   }, [requests.map((r) => r.id + (r.plannedDate == null ? "?" : "")).join(","), readOnly, !!(db.settings || {}).winterAutoPlaceNew]);
   return [carryNotice, setCarryNotice];
 }
+// Winterizing report: how many were finished (by the day they were marked
+// done), by section of the park - for a day, a week (by day), or a season
+// (by week, plus totals). Counts only, no sites. The current season is what
+// isn't archived yet; past seasons (archived by "Reset for New Season") are
+// picked by the year they were done.
+function winterMonday(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return winterAddDays(iso, -((d.getDay() + 6) % 7));
+}
+function winterReportTable(db, list, period, date) {
+  const done = list.filter((r) => r.completed && r.completedDate);
+  const sectionOf = (r) => winterInfo(db, r).section;
+  const sections = sortWinterSections(Array.from(new Set(done.map(sectionOf))));
+  const row = (label, items) => {
+    const counts = sections.map((sec) => items.filter((r) => sectionOf(r) === sec).length);
+    return { label, counts, total: items.length };
+  };
+  const day = (iso) => String(iso).slice(0, 10);
+  let rows, title;
+  if (period === "day") {
+    const items = done.filter((r) => day(r.completedDate) === date);
+    title = winterShortDate(date, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    // One row per section for a single day reads better as a list.
+    return { title, sections: ["Section"], rows: sections.map((sec) => ({ label: sec, counts: [], total: items.filter((r) => sectionOf(r) === sec).length })).filter((r) => r.total), foot: { label: "Total", counts: [], total: items.length }, kind: "day" };
+  }
+  if (period === "week") {
+    const start = winterMonday(date);
+    const days = [0, 1, 2, 3, 4, 5, 6].map((i) => winterAddDays(start, i));
+    rows = days.map((d) => row(winterShortDate(d, { weekday: "short", month: "short", day: "numeric" }), done.filter((r) => day(r.completedDate) === d))).filter((r, i) => i < 5 || r.total);
+    title = `Week of ${winterShortDate(start, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}`;
+    return { title, sections, rows, foot: row("Week total", done.filter((r) => day(r.completedDate) >= days[0] && day(r.completedDate) <= days[6])), kind: "week" };
+  }
+  const weeks = Array.from(new Set(done.map((r) => winterMonday(day(r.completedDate))))).sort();
+  rows = weeks.map((w) => row(`Week of ${winterShortDate(w)}`, done.filter((r) => winterMonday(day(r.completedDate)) === w)));
+  return { title: "Season", sections, rows, foot: row("Season total", done), kind: "season", signedUp: list.length, park: done.filter((r) => r.parkOwned).length };
+}
+function winterReportHtml(t, heading) {
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const cell = "padding:5px 8px;border-bottom:1px solid #ddd;text-align:right";
+  const head = t.kind === "day" ? `<tr><th style="text-align:left;padding:5px 8px;border-bottom:2px solid #333">Section</th><th style="${cell};border-bottom:2px solid #333">Done</th></tr>` : `<tr><th style="text-align:left;padding:5px 8px;border-bottom:2px solid #333"></th>${t.sections.map((s) => `<th style="${cell};border-bottom:2px solid #333">${esc(s)}</th>`).join("")}<th style="${cell};border-bottom:2px solid #333">Total</th></tr>`;
+  const line = (r, bold) => `<tr style="${bold ? "font-weight:700" : ""}"><td style="padding:5px 8px;border-bottom:1px solid #ddd">${esc(r.label)}</td>${r.counts.map((n) => `<td style="${cell}">${n || ""}</td>`).join("")}<td style="${cell};font-weight:700">${r.total}</td></tr>`;
+  const extra = t.kind === "season" ? `<p style="font:13px Arial,sans-serif;margin-top:12px">${t.foot.total} of ${t.signedUp} signed up winterized${t.signedUp > t.foot.total ? ` · ${t.signedUp - t.foot.total} still to do` : ""}${t.park ? ` · includes ${t.park} park cottage${t.park === 1 ? "" : "s"}` : ""}</p>` : "";
+  return `<div class="wo"><div class="wo-head"><div><div class="label">Winterizing report</div><h1>${esc(heading)}</h1></div><div class="meta">${esc(t.title)}</div></div><table style="width:100%;border-collapse:collapse;font:13px Arial,sans-serif">${head}${t.rows.map((r) => line(r)).join("")}${line(t.foot, true)}</table>${extra}</div>`;
+}
+function WinterizingReport({ db }) {
+  const all = db.winterizingRequests || [];
+  const years = Array.from(new Set(all.filter((r) => r.archived && r.completed && r.completedDate).map((r) => String(r.completedDate).slice(0, 4)))).sort().reverse();
+  const [season, setSeason] = useState("current");
+  const [period, setPeriod] = useState("week");
+  const [date, setDate] = useState(todayISO());
+  const list = season === "current" ? all.filter((r) => !r.archived) : all.filter((r) => r.archived && String(r.completedDate || "").slice(0, 4) === season);
+  const t = winterReportTable(db, list, period, date);
+  const step = (dir) => setDate(winterAddDays(date, period === "week" ? 7 * dir : dir));
+  const heading = season === "current" ? "This season" : `${season} season`;
+  const print = () => {
+    const w = window.open("", "_blank");
+    if (!w) return alert("Please allow pop-ups for this site to print.");
+    w.document.open();
+    w.document.write(buildPrintDocument(winterReportHtml(t, heading)));
+    w.document.close();
+  };
+  const btn = (on) => `px-3 py-1.5 rounded-full text-sm font-semibold ${on ? "bg-[#377249] text-[#F9F5EC]" : "text-[#4B4740] hover:bg-[#F1EEE9]"}`;
+  const th = "px-3 py-2 text-right font-semibold";
+  return React.createElement(
+    "div",
+    { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-5", "data-winter-report": true },
+    React.createElement("div", { className: "flex items-center gap-2 flex-wrap mb-4" },
+      ...[["day", "Day"], ["week", "Week"], ["season", "Season"]].map(([k, label]) => React.createElement("button", { key: k, type: "button", "data-report-period": k, onClick: () => setPeriod(k), className: btn(period === k) }, label)),
+      period !== "season" && React.createElement("span", { className: "flex items-center gap-1 ml-2" },
+        React.createElement("button", { type: "button", onClick: () => step(-1), className: "px-2 py-1 rounded-md border border-[#E2DED5] text-sm", "aria-label": "Earlier" }, "‹"),
+        React.createElement("input", { type: "date", value: date, onChange: (e) => e.target.value && setDate(e.target.value), className: "border border-[#E2DED5] rounded-md px-2 py-1 text-sm", "aria-label": "Report date" }),
+        React.createElement("button", { type: "button", onClick: () => step(1), className: "px-2 py-1 rounded-md border border-[#E2DED5] text-sm", "aria-label": "Later" }, "›")),
+      years.length > 0 && React.createElement("select", { value: season, onChange: (e) => setSeason(e.target.value), className: "border border-[#E2DED5] rounded-md px-2 py-1 text-sm ml-2", "aria-label": "Season" }, React.createElement("option", { value: "current" }, "This season"), years.map((y) => React.createElement("option", { key: y, value: y }, `${y} season`))),
+      React.createElement("button", { type: "button", onClick: print, className: "ml-auto px-3 py-1.5 rounded-md border border-[#E2DED5] text-sm font-medium text-[#4B4740]" }, "🖨 Print")),
+    React.createElement("h3", { className: "font-serif text-lg text-[#1E1A13] mb-3" }, t.title),
+    t.foot.total === 0 && t.kind !== "season" ? React.createElement("p", { className: "text-sm text-[#75716A] italic" }, "None marked done in this " + (t.kind === "day" ? "day." : "week.")) : React.createElement("div", { className: "overflow-x-auto" }, React.createElement(
+      "table",
+      { className: "w-full text-sm", "data-report-table": t.kind },
+      React.createElement("thead", null, React.createElement("tr", { className: "bg-[#F1EEE9] text-[#75716A] text-xs" },
+        React.createElement("th", { className: "px-3 py-2 text-left font-semibold" }, t.kind === "day" ? "Section" : ""),
+        t.kind === "day" ? null : t.sections.map((sec) => React.createElement("th", { key: sec, className: th }, sec)),
+        React.createElement("th", { className: th }, t.kind === "day" ? "Done" : "Total"))),
+      React.createElement("tbody", null,
+        t.rows.map((r) => React.createElement("tr", { key: r.label, className: "border-b border-[#EEEBE5]" },
+          React.createElement("td", { className: "px-3 py-2" }, r.label),
+          r.counts.map((n, i) => React.createElement("td", { key: i, className: "px-3 py-2 text-right" }, n || React.createElement("span", { className: "text-[#C7C2B8]" }, "–"))),
+          React.createElement("td", { className: "px-3 py-2 text-right font-semibold" }, r.total))),
+        React.createElement("tr", { className: "bg-[#F9F5EC] font-semibold", "data-report-total": true },
+          React.createElement("td", { className: "px-3 py-2" }, t.foot.label),
+          t.foot.counts.map((n, i) => React.createElement("td", { key: i, className: "px-3 py-2 text-right" }, n)),
+          React.createElement("td", { className: "px-3 py-2 text-right" }, t.foot.total))))),
+    t.kind === "season" && React.createElement("p", { className: "text-sm text-[#4B4740] mt-3", "data-report-summary": true }, `${t.foot.total} of ${t.signedUp} signed up winterized`, t.signedUp > t.foot.total ? ` · ${t.signedUp - t.foot.total} still to do` : "", t.park ? ` · includes ${t.park} park cottage${t.park === 1 ? "" : "s"}` : "")
+  );
+}
 function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly, pendingSignups: pendingSignupsProp, removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite, bulkWriteSites, saveCottage }) {
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
@@ -15582,7 +15677,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const [view, setViewState] = useState(() => {
     try {
       const v = localStorage.getItem("qic-winter-view");
-      return ["overview", "plan", "notsigned"].includes(v) ? v : "overview";
+      return ["overview", "plan", "notsigned", "report"].includes(v) ? v : "overview";
     } catch (e) {
       return "overview";
     }
@@ -16045,7 +16140,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     return /* @__PURE__ */ React.createElement("div", null, header, notSignedUpBanner, incomingEl, body, modalEl, confirmEl, confirmCompleteEl, resetEl, reviewEl, remindersEl, batchEl);
   }
   const today = todayISO();
-  const views = [["overview", "Overview"], ["plan", "Plan"], ...readOnly ? [] : [["notsigned", `Not signed up \u00B7 ${notSignedUp.length}`]]];
+  const views = [["overview", "Overview"], ["plan", "Plan"], ...readOnly ? [] : [["notsigned", `Not signed up \u00B7 ${notSignedUp.length}`]], ["report", "Report"]];
   const activeView = views.some((v) => v[0] === view) ? view : "overview";
   const switcher = React.createElement(
     "div",
@@ -16093,7 +16188,7 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     setPanelId(id);
     const r = requests.find((x) => x.id === id);
     if (r && (r.newOnPlan || r.movedOnPlan) && !readOnly) markSeen([r]);
-  }, onSchedule: dropOnDay, readOnly, onShowNotSigned: () => setView("notsigned"), onSaveSeason: saveSeason, onAutoPlan: () => setAutoPlanOpen(true), onRainDay: setRainDay, onBlockDay: (d) => setBlockDay({ date: d, label: "" }), onUnblockDay: unblock, onPrintDay: (list, d) => downloadPrintableItems(list, (r) => buildWinterizingHtml(r, db), `winterizing-${d}`), onPrintDayMap: (list, d) => printWinterMaps(winterMapEntriesForDay(list, db), db, winterShortDate(d, { weekday: "long", month: "long", day: "numeric" })), onPrintSectionMap: (m) => printWinterMaps(winterMapEntriesForSection(m, db), db, `${m.name} \u2014 how each site is winterized`) })) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
+  }, onSchedule: dropOnDay, readOnly, onShowNotSigned: () => setView("notsigned"), onSaveSeason: saveSeason, onAutoPlan: () => setAutoPlanOpen(true), onRainDay: setRainDay, onBlockDay: (d) => setBlockDay({ date: d, label: "" }), onUnblockDay: unblock, onPrintDay: (list, d) => downloadPrintableItems(list, (r) => buildWinterizingHtml(r, db), `winterizing-${d}`), onPrintDayMap: (list, d) => printWinterMaps(winterMapEntriesForDay(list, db), db, winterShortDate(d, { weekday: "long", month: "long", day: "numeric" })), onPrintSectionMap: (m) => printWinterMaps(winterMapEntriesForSection(m, db), db, `${m.name} \u2014 how each site is winterized`) })) : activeView === "notsigned" ? React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, inline: true }) : activeView === "report" ? React.createElement(WinterizingReport, { db }) : React.createElement(WinterizingOverview, { db, all: requests, shown: filtered, today, notSignedUp, chip, setChip, onOpen: setPanelId, selectMode, selectedIds, onToggleSelect: toggleSelect, emailStatus, onEmail: sendCompletionEmail, readOnly, onShowNotSigned: () => setView("notsigned") });
   const dayLabel = (d) => winterShortDate(d, { weekday: "short", month: "short", day: "numeric" });
   const autoPlan = autoPlanOpen ? autoPlanWinter(requests, db, { today, byArea: autoByArea, replanAll: autoReplanAll }) : [];
   const autoDays = autoPlan.reduce((m, p) => ({ ...m, [p.date]: (m[p.date] || 0) + 1 }), {});

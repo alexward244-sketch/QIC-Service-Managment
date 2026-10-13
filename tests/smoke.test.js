@@ -765,6 +765,53 @@ test("winterized email: a friendly date, and the extras said as done (anode rod 
   await page.close();
 });
 
+test("winterizing report: how many were done each day of a week and each week of the season, by section, with totals", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__printed = [];
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } });
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0490", "Limestone South"], ["s4", "0412", "4 Season"]].map(([id, number, section]) => ({ id, number, section }));
+    const done = (id, site, date, extra) => ({ id, cottageId: "k" + site, completed: true, completedDate: date, options: {}, ...extra });
+    const db = { settings: {}, sites, customers: [], cottages: sites.map((x) => ({ id: "k" + x.id, name: "C" + x.number, siteId: x.id })), winterizingRequests: [
+      done("a", "s1", "2026-10-13"), done("b", "s2", "2026-10-13"), done("c", "s3", "2026-10-13"),
+      done("d", "s3", "2026-10-15"), done("e", "s4", "2026-10-20", { parkOwned: "rental" }),
+      { id: "f", cottageId: "ks1", options: {} },
+      done("old", "s1", "2025-10-14", { archived: true })
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(WinterizingReport, { db }));
+  });
+  const table = () => page.locator("[data-report-table] tr").evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent.trim())));
+  await page.getByLabel("Report date").fill("2026-10-14");
+  await page.locator('[data-report-table="week"]').waitFor();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Mon, Oct 12", "–", "–", "–", "0"],
+    ["Tue, Oct 13", "1", "–", "2", "3"],
+    ["Wed, Oct 14", "–", "–", "–", "0"],
+    ["Thu, Oct 15", "1", "–", "–", "1"],
+    ["Fri, Oct 16", "–", "–", "–", "0"],
+    ["Week total", "2", "0", "2", "4"]
+  ]);
+  await page.locator('[data-report-period="day"]').click();
+  await page.getByLabel("Report date").fill("2026-10-13");
+  assert.deepEqual(await table(), [["Section", "Done"], ["Limestone South", "1"], ["Front of Park", "2"], ["Total", "3"]]);
+  await page.locator('[data-report-period="season"]').click();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Week of Oct 12", "2", "–", "2", "4"],
+    ["Week of Oct 19", "–", "1", "–", "1"],
+    ["Season total", "2", "1", "2", "5"]
+  ]);
+  assert.match(await page.locator("[data-report-summary]").innerText(), /5 of 6 signed up winterized · 1 still to do · includes 1 park cottage/);
+  // Last year's (archived) season.
+  await page.getByLabel("Season").selectOption("2025");
+  assert.deepEqual((await table()).pop(), ["Season total", "1", "1"]);
+  await page.getByRole("button", { name: /Print/ }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Winterizing report[\s\S]*2025 season[\s\S]*Season total/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {

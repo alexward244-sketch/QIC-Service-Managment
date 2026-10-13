@@ -187,6 +187,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   a whole section (Pebble Beach / By the Woods days). Cut from the park's
   vector map PDF with `tools/winter-maps/` (see its README). Pins match
   site numbers without leading zeros (`winterMapKey`).
+- Winterizing → Report (`WinterizingReport`): how many cottages were marked
+  done (by `completedDate`) per day, per week (Mon-Fri) and for the season
+  (per week + season total), with a column per section and totals. Counts
+  only, no site list. Printable; past seasons picked by year.
 - Admin > Settings > Files > Storage (`StoragePane`) keeps files for any
   use: the park's large map PDF (`maps/park-map.pdf`) and the section maps
   (open / print / download). Add future files there.
