@@ -1047,14 +1047,18 @@ async function directIntakeOn() {
 }
 
 // The Correspondence entry Flow made for a Zoho inbox message, if any.
+// Zoho Flow checks the inbox on a timer, so its copy (stamped when Flow
+// delivered it) can be well after the email reached Zoho.
+const FLOW_LATE_MS = 2 * 60 * 60 * 1000;
 async function flowEntryFor(m) {
   const t = zohoSentTime(m);
   const lo = new Date(t - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
-  const hi = new Date(t + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
+  const hi = new Date(t + FLOW_LATE_MS).toISOString();
   const nearby = await db.collection("correspondence").where("receivedAt", ">=", lo).where("receivedAt", "<=", hi).get();
+  const theirs = emailsIn(m.fromAddress);
   return nearby.docs.find((d) => {
     const c = d.data();
-    return c.direction !== "out" && !c.zohoMessageId && isZohoCopyOf(m, c);
+    return c.direction !== "out" && !c.zohoMessageId && theirs.some((e) => zohoAddressesFor(c).includes(e)) && sameSubject(m.subject, c.subject || "");
   }) || null;
 }
 
@@ -1109,12 +1113,25 @@ async function syncZohoInbox(now = Date.now()) {
     counts.added++;
   }
   const prior = state.compare || {};
+  // Ones listed as missed before: Flow may just have been late - if its copy
+  // has turned up since, it's a match after all.
+  let lateMatches = 0;
+  const stillMissed = [];
+  if (!direct) {
+    for (const x of prior.missed || []) {
+      const flow = x.messageId && x.at ? await flowEntryFor({ messageId: x.messageId, fromAddress: x.from, subject: x.subject, receivedTime: String(Date.parse(x.at)) }) : null;
+      if (flow) {
+        await flow.ref.update({ zohoMessageId: x.messageId });
+        lateMatches++;
+      } else stillMissed.push(x);
+    }
+  }
   const compare = direct ? prior : {
     since: prior.since || new Date(now).toISOString(),
     checked: (prior.checked || 0) + counts.checked,
-    matched: (prior.matched || 0) + counts.matched,
-    missed: [...missed, ...(prior.missed || [])].slice(0, 30),
-    missedCount: (prior.missedCount || 0) + missed.length
+    matched: (prior.matched || 0) + counts.matched + lateMatches,
+    missed: [...missed, ...stillMissed].slice(0, 30),
+    missedCount: Math.max(0, (prior.missedCount || 0) + missed.length - lateMatches)
   };
   await ZOHO_INBOX_STATE.set({ lastReceivedAt: newest, checkedAt: new Date(now).toISOString(), direct, compare, ...(direct ? { addedTotal: (state.addedTotal || 0) + counts.added } : {}) }, { merge: true });
   return { direct, ...counts, missed: missed.length };

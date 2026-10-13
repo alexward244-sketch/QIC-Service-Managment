@@ -412,6 +412,13 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   const compare = (await db.doc("serverState/zohoInbox").get()).data().compare;
   assert.deepEqual([compare.checked, compare.matched, compare.missedCount, compare.missed.map((x) => x.from)], [3, 1, 1, ["bob@y.com"]], "Bob's is listed as missed by Flow; the form notice isn't; the newest waits");
 
+  // Flow is late with Bob's (it checks the inbox on a timer): it counts as a match after all.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "bob@y.com", subject: "Deck boards", body: "Two boards are soft." });
+  await fns.zohoInbox();
+  const after = (await db.doc("serverState/zohoInbox").get()).data().compare;
+  assert.deepEqual([after.checked, after.matched, after.missedCount, after.missed.length], [3, 2, 0, 0], "Bob's moves from missed to matched");
+  assert.equal((await all("correspondence")).find((c) => c.fromEmail === "bob@y.com").zohoMessageId, "m-bob");
+
   // Switched on: Flow's copies are ignored, the inbox is read directly.
   await db.doc("campground/data").set({ settings: { emailIntakeDirect: true } }, { merge: true });
   const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Hydro question", body: "When is my reading?" });
@@ -426,7 +433,7 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   assert.equal(cy[0].status, "new");
   assert.equal(cy[0].body, "When is my reading?");
   assert.equal(cy[0].receivedAt, new Date(Number(at(1))).toISOString(), "Zoho's own time");
-  assert.equal(corr.length, 2);
+  assert.equal(corr.length, 3);
 });
 
 test("an email moved to Zoho's Trash is removed from the app", async () => {

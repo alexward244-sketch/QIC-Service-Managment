@@ -100,7 +100,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   compares (ties Flow's entries to their Zoho message id, lists what Flow
   didn't bring in in `serverState/zohoInbox`) and adds nothing; once on, it
   saves `zoho_in_<messageId>` entries and the Flow webhook skips email. The
-  Email Intake ignore list applies to any sender.
+  Email Intake ignore list applies to any sender. Flow checks the inbox on a
+  timer, so its copy (stamped when delivered) can be late: the compare
+  matches Flow copies up to 2 hours after Zoho's time (`FLOW_LATE_MS`) and
+  re-checks the "missed" list every run.
 - The Zoho access token is shared through `serverState/zohoToken` (never
   readable by the app) - Zoho allows only 10 refreshes per 10 minutes.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
@@ -184,6 +187,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   a whole section (Pebble Beach / By the Woods days). Cut from the park's
   vector map PDF with `tools/winter-maps/` (see its README). Pins match
   site numbers without leading zeros (`winterMapKey`).
+- Winterizing → Report (`WinterizingReport`): how many cottages were marked
+  done (by `completedDate`) per day, per week (Mon-Fri) and for the season
+  (per week + season total), with a column per section and totals. Counts
+  only, no site list. Printable; past seasons picked by year.
 - Admin > Settings > Files > Storage (`StoragePane`) keeps files for any
   use: the park's large map PDF (`maps/park-map.pdf`) and the section maps
   (open / print / download). Add future files there.
