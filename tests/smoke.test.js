@@ -886,19 +886,21 @@ test("winterizing: once auto-plan has run, a new sign-up goes on the schedule by
 
 test("winterizing plan board: season settings, day counts, blocking a day and the auto-plan preview", async () => {
   const page = await openApp(browser, "stub");
+  // An ordinary open Wednesday, so the board's first day isn't a weekend or
+  // a closed day (it failed on Thanksgiving Monday 2026).
+  await page.clock.setFixedTime(new Date("2026-10-14T10:00:00"));
   await openWinterizing(page);
   await page.getByRole("tab", { name: "Plan" }).click();
   await page.getByLabel("Max per day").fill("1");
-  const today = await page.evaluate(() => todayISO());
-  const col = page.locator(`[data-plan-column="${today}"]`);
-  // Today may be a weekend or a closed day (Thanksgiving Monday).
-  const kind = await page.evaluate(() => !winterIsWeekday(todayISO()) ? "weekend" : winterSeason({ settings: {} }).blocked[todayISO()] != null ? "blocked" : "weekday");
-  if (kind === "weekday") assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
+  // Willow asked for today; on a closed day (Thanksgiving) the plan starts
+  // the next open day, so use the day Willow is actually on.
+  const day = await page.locator('[data-plan-card="r1"]').evaluate((el) => el.closest("[data-plan-column]").getAttribute("data-plan-column"));
+  const col = page.locator(`[data-plan-column="${day}"]`);
+  assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
   // Dropping Cedar on a full day offers the next day with room (on a
   // weekend, it says it's a weekend instead - and there's no "anyway").
   await page.locator('[data-plan-card="r2"]').dragTo(col);
-  if (kind === "weekday") await page.getByText("That day is full").waitFor();
-  else if (kind === "blocked") await page.getByText("That day is blocked").waitFor();
+  if (await page.evaluate((d) => winterIsWeekday(d), day)) await page.getByText("That day is full").waitFor();
   else {
     await page.getByText("That's a weekend").waitFor();
     assert.equal(await page.getByRole("button", { name: /anyway/ }).count(), 0);
@@ -1175,7 +1177,7 @@ test("customers: taking over or giving up a site on the form asks if it's a sale
     render();
   });
   // Bea's form: adding Robert's site.
-  await page.getByText("Bea Buyer").first().click();
+  await page.getByRole("button", { name: "Bea Buyer" }).first().click();
   await page.getByRole("button", { name: "Edit Customer" }).click();
   await page.getByPlaceholder("Search sites to add\u2026").fill("0042");
   await page.getByText("Site 0042", { exact: true }).last().click();
@@ -1190,7 +1192,8 @@ test("customers: taking over or giving up a site on the form asks if it's a sale
   assert.equal(site.transferHistory[0].toCustomerName, "Bea Buyer");
   assert.equal(await page.evaluate(() => window.__customers.length), 0, "the form's own save didn't happen");
   // Robert's form: removing his site says the same.
-  await page.getByText("Robert Smith").first().click();
+  await page.getByRole("button", { name: "\u2190 All customers" }).click();
+  await page.getByRole("button", { name: "Robert Smith" }).first().click();
   await page.getByRole("button", { name: "Edit Customer" }).click();
   await page.getByRole("button", { name: "Remove site" }).click();
   await page.locator("[data-sale-check]").getByText("Removing Site 0042.").waitFor();

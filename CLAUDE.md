@@ -167,7 +167,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
   (`winterKeyEmails/{date sent}`); off with `settings.winterKeyEmailOff`
-  (checkbox on the Plan board).
+  (checkbox on the Plan board). "Resend keys email now" next to it
+  (`resendWinterKeyList`, Admin / Service Manager) sends the list as planned
+  now, even if today's already went or the daily email is off - marked
+  "UPDATED" when it replaces one sent that day.
 - Closed days: Thanksgiving Monday automatically, plus blocked days ticked
   "We're closed" (`winterBlockedDays[].closed`). Nothing is planned on them,
   no keys email goes out that morning, and the open day before covers
@@ -195,6 +198,41 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   sunroom / D door; DT drain tap; OD on-demand hot water heater; (ot)
   outside tap; Master X = our master key works. Unknown bits (e.g.
   "cz1010") show as written - don't guess at them.
+
+**Incoming**
+- The Incoming tab (`IncomingView`) lists every request waiting on us: new
+  incoming emails/voicemails (not FYIs), website sign-ups (service, propane,
+  winterizing) and calls/walk-ins logged there (correspondence `source`
+  "phone"/"walkin"). Grouped: Needs a work order / Propane·Trees·Winterizing
+  / About an existing job / Just needs an answer, one main button each.
+  Sign-ups use the same review forms as their own screens. It's in the
+  menu's "Today" group (`SERVICE_NAV_GROUPS`, not just `TABS`), and the
+  Dashboard's "Sign-Ups Needing Review" card opens it.
+- Website service requests are read by Claude on arrival
+  (`generalServiceRequest` runs `triageCorrespondence`, saved as the
+  sign-up's `triage`): the draft work order's title and priority come from
+  it, and the appliance is guessed from the words (`guessAppliance`). If
+  Claude can't be reached the request is saved without it.
+- The Service Requests tab is hidden (taken out of `TABS` and the menu);
+  `GeneralServiceView` is still in the code until Alex says to delete it.
+- A website form confirmed for a customer (from anywhere) is saved in their
+  correspondence as `correspondence/webform_<sign-up id>` (handled, linked to
+  what it made) so a reply to it reads in order. Web forms and logged calls
+  never touch Zoho (`notFromZoho`).
+
+**Work orders**
+- Statuses: Open, In Progress, Pending, Completed. Pending is for jobs booked
+  well ahead and needs a `startDate`. Pending jobs stay out of the open /
+  urgent / overdue counts, the nav badge and the crew's lists (`woActive`)
+  until someone moves them to In Progress - never automatically.
+- Reminders: a month, two weeks, a week, two days and the day before the
+  start date - weekends included, the park is open - (only those still ahead
+  when it was set, `pendingSince`), in the morning
+  summary on those days and the start date only (not daily), and as a pop-up
+  (`PendingJobsPrompt`) for Admins and Service Managers: each person answers
+  their own ("Not yet" is saved per person in `reminderSeen`), one nobody
+  saw (app not opened that day) shows next time, and it's daily once the start date has
+  come. Changing the start date (pop-up or form) resets the reminders.
 
 **Parts**
 - Each part is its own document in the `parts` collection (not in
@@ -242,7 +280,15 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   maker and the factory appliances. An appliance already filled in isn't
   overwritten unless ticked (it may have been replaced since the factory).
   The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
-  at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
+  at `cottage-photos/{cottageId}/` (`nameplatePhoto`). It also takes a PDF
+  from the cottage's file (scanned plate, spec sheet, bill of sale; under
+  7 MB), sent to Claude as a document; the PDF isn't uploaded - the cottage
+  notes it in `nameplateDoc` ("Details read from …" in its history).
+  It reads each appliance's serial # too (Northlander's "APPLIANCES" sheet:
+  PRODUCT = trade name, PLAN # = model, SIZE = unit size), the unit size
+  (`unitSize`, e.g. 39' x 12') and a double-wide's second serial
+  (`serialNumber2` - two boxes joined into one cottage have one per
+  section; both count for the duplicate-serial warning).
 - Cottages tab: list on the left, the cottage's page on the right (wide
   screens; a pop-up on narrow ones). Top boxes are just total cottages and
   "with serial #" - Alex didn't want more. The page shows serial/model/
@@ -255,6 +301,19 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   (`logWorkOrderToAppliance` in `saveWorkOrder`); untagged ones still get
   the "Log to an Appliance?" prompt.
 
+**Customers tab**
+- First view is a table with filters (Needs a reply, Open work orders, No
+  email on file, each area). Clicking a customer opens their full page
+  (`CustomerPage`); "← All customers" goes back with the filter kept.
+- The page: contact, cottage cards, "Needs attention", `notes` (a free
+  text field on the customer - gate codes, pets, "call first"), and one
+  history (`customerHistory`) with All / Emails / Work / Bills & invoices.
+  Every line opens its item. An email still waiting (`customerNeedsReply`)
+  shows opened with the reply box under it; sending marks it handled.
+- Office sees invoices and hydro bills (view + print) but can't edit
+  invoices - same as before (firestore.rules). Other screens still use the
+  older `CustomerDetailModal` pop-up.
+
 **Forms**
 - Saves replace the whole Firestore document, so every edit form spreads
   the original record first (`...initial && initial.id ? initial : {}`)
@@ -265,6 +324,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
   accounting but not shown on the invoice form or anything customers see.
+- A part's Description (Parts) is its usual customer-facing wording: adding
+  the part to an invoice or quote copies it onto the line as `details`
+  (shown under the part name on the form, print and email), editable there
+  without changing the part ("Use the part's usual wording" puts it back).
 - Shop supplies (default 5%) is a share of parts + labour + the service
   call (lines with `withServiceCall`). Older lines and the old
   shop-supplies fields stay parts + labour, so invoices already sent keep
@@ -274,3 +337,8 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 
 - Auto-deploy Cloud Functions from GitHub Actions on merge (needs a Firebase
   deploy key as a GitHub secret) — Alex wants this eventually.
+- "Add park cottages…" for the Service Manager: unsold QIC Inventory units
+  come from `cottageOrders`, which only Admin / Sales Manager can read, so a
+  Service Manager's list misses them. Plan: let them look up just the unsold
+  delivered display models' sites (rules change + deploy), not the rest of
+  the sales records. Alex said to remind him another time (Oct 2026).
