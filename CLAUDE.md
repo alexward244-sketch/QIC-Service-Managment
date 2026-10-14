@@ -337,6 +337,21 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   shop-supplies fields stay parts + labour, so invoices already sent keep
   their totals.
 
+**Security**
+- App settings (`campground/data` `settings`) and sign-in codes
+  (`loginCodes`) are Admin only (firestore.rules). Money roles may also
+  change the winterizing plan's settings, everyone `coupleNamesReviewed`
+  (`settingsRoleMayChange`; add a key there and in the rules if a
+  non-Admin screen needs a new setting). A non-Admin's `persist()` keeps
+  the saved copy of the rest (`keepLockedSettings`), so a stale screen
+  can't undo an Admin's change.
+- Only money roles create invoices, except the two the app makes itself:
+  "Propane Fill" (workOrder) and "Anode Rod Replacement" (winterizing),
+  parts only, not sent (`isAutoInvoice`).
+- Cloud Functions use firebase-admin's modular imports (`getFirestore`,
+  `getAuth`, `FieldValue` from `firebase-admin/firestore`...); v14 dropped
+  `admin.firestore()`. Tests swap `getAuth()`'s methods in place.
+
 ## Ideas parked for later
 
 - Auto-deploy Cloud Functions from GitHub Actions on merge (needs a Firebase
@@ -346,3 +361,8 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Service Manager's list misses them. Plan: let them look up just the unsold
   delivered display models' sites (rules change + deploy), not the rest of
   the sales records. Alex said to remind him another time (Oct 2026).
+- Turn on GitHub's free security checks for the repo (Settings → Security:
+  Dependabot alerts / security updates and code scanning), so outdated or
+  risky server packages get flagged on their own. Alex does it in GitHub's
+  settings; walk him through it when he's ready (from the Oct 2026 security
+  check).

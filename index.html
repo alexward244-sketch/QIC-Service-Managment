@@ -303,6 +303,29 @@ function sendText({ phone, message }) {
   return sendEmail({ toEmail: address, toName: "", subject: "", message: message, department: "service", source: "Staff text notification" });
 }
 
+// Settings a non-Admin may change (firestore.rules settingsYouMayChange):
+// money roles also the winterizing plan's, everyone the couple-name check.
+const ANY_STAFF_SETTING_KEYS = ["coupleNamesReviewed"];
+const WINTER_PLAN_SETTING_KEYS = ["winterSeasonStart", "winterDailyLimit", "winterAutoPlaceNew", "winterKeyEmailOff", "winterBlockedDays", "winterizingReminderText", "winterizingSeasonStart"];
+function settingsRoleMayChange(role) {
+  if (role === "admin") return null;
+  return ["manager", "accounting"].includes(role) ? [...ANY_STAFF_SETTING_KEYS, ...WINTER_PLAN_SETTING_KEYS] : ANY_STAFF_SETTING_KEYS;
+}
+// A non-Admin's save keeps the saved copy of every setting they can't
+// change, so a screen holding an older copy can't undo an Admin's change
+// (and the save isn't refused).
+function keepLockedSettings(role, next, saved) {
+  const mayChange = settingsRoleMayChange(role);
+  if (!mayChange) return next || {};
+  const out = {};
+  const nextSettings = next || {};
+  const savedSettings = saved || {};
+  new Set([...Object.keys(nextSettings), ...Object.keys(savedSettings)]).forEach((k) => {
+    const from = mayChange.includes(k) ? nextSettings : savedSettings;
+    if (k in from) out[k] = from[k];
+  });
+  return out;
+}
 const emptyDb = () => ({
   sites: [],
   cottages: [],
@@ -1755,6 +1778,8 @@ function useDb() {
   // didn't touch.
   const seenRecordsRef = useRef(/* @__PURE__ */ new WeakSet());
   const docMainRef = useRef(null);
+  // campground/data as saved (without emptyDb's defaults filled in).
+  const savedDocRef = useRef(null);
   const salesAccessRef = useRef(false);
   const salesMigratingRef = useRef(false);
   useEffect(() => {
@@ -1767,6 +1792,7 @@ function useDb() {
         legacyPartsRef.current.forEach((p) => p && typeof p === "object" && seenPartsRef.current.add(p));
         SALES_KEYS.forEach((k) => (merged[k] || []).forEach((r) => r && typeof r === "object" && seenRecordsRef.current.add(r)));
         docMainRef.current = merged;
+        savedDocRef.current = data && typeof data === "object" ? data : {};
         setMainData(merged);
         setLoading(false);
         setConnectionError(null);
@@ -2151,6 +2177,12 @@ function useDb() {
       });
     }
     rest.trash = trashOut;
+    const saved = savedDocRef.current;
+    if (signedInClaimRole && signedInClaimRole !== "admin" && saved) {
+      rest.settings = keepLockedSettings(signedInClaimRole, rest.settings, saved.settings);
+      if ("loginCodes" in saved) rest.loginCodes = saved.loginCodes;
+      else delete rest.loginCodes;
+    }
     SALES_KEYS.forEach((k) => {
       if ((docMain[k] || []).length > 0) rest[k] = docMain[k];
     });
@@ -24269,6 +24301,14 @@ function CodeEntryScreen({ email, onVerify, onSignOut }) {
   );
 }
 const STAFF_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
+// The role on this account's sign-in token (what firestore.rules trusts),
+// once accountHasStaffRole has read it; persist() uses it to leave alone
+// the settings this role can't change.
+let signedInClaimRole = null;
+firebase.auth().onIdTokenChanged((u) => {
+  if (!u) signedInClaimRole = null;
+  else u.getIdTokenResult().then((r) => { signedInClaimRole = r.claims.role || null; }, () => {});
+});
 // Sign-in errors that mean an Admin ended this account's sessions ("Sign out
 // everywhere" / Remove) or disabled it - as opposed to just being offline.
 const SESSION_ENDED_CODES = ["auth/user-token-expired", "auth/user-disabled", "auth/user-not-found", "auth/invalid-user-token"];
@@ -24281,9 +24321,11 @@ const SESSION_ENDED_CODES = ["auth/user-token-expired", "auth/user-disabled", "a
 async function accountHasStaffRole(user, forceRefresh) {
   try {
     const result = await user.getIdTokenResult(forceRefresh);
+    signedInClaimRole = result.claims.role || null;
     if (STAFF_ROLES.includes(result.claims.role)) return true;
     if (forceRefresh) return false;
     const fresh = await user.getIdTokenResult(true);
+    signedInClaimRole = fresh.claims.role || null;
     return STAFF_ROLES.includes(fresh.claims.role);
   } catch (e) {
     if (e && SESSION_ENDED_CODES.includes(e.code)) {

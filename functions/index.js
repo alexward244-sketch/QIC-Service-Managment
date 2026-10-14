@@ -1,12 +1,15 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
-const admin = require("firebase-admin");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
 const crypto = require("crypto");
 const Anthropic = require("@anthropic-ai/sdk");
 
-admin.initializeApp();
-const db = admin.firestore();
+initializeApp();
+const db = getFirestore();
 
 const WEBHOOK_SECRET = defineSecret("WINTERIZING_WEBHOOK_SECRET");
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
@@ -46,7 +49,7 @@ const ZOHO_MAIL_ACCOUNT_ID = "50669000000002002";
 const ZOHO_MAIL_INBOX_FOLDER_ID = "50669000000002014";
 
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
-const ROLES_DOC = admin.firestore().doc("campground/data");
+const ROLES_DOC = getFirestore().doc("campground/data");
 
 // A staff member: signed in with a role an Admin has assigned. An account
 // that merely exists (e.g. one someone created for themselves) gets nothing.
@@ -72,7 +75,7 @@ function requireCallerIsAdmin(request) {
 // app's own existing safety net (getUserRole treats "no admin assigned yet"
 // as "everyone is admin") from the other direction.
 async function otherAdminCount(excludeUid) {
-  const { users } = await admin.auth().listUsers(1000);
+  const { users } = await getAuth().listUsers(1000);
   return users.filter((u) => u.uid !== excludeUid && u.customClaims && u.customClaims.role === "admin").length;
 }
 
@@ -86,7 +89,7 @@ exports.setUserRole = onCall(async (request) => {
     throw new HttpsError("invalid-argument", `Role must be one of: ${VALID_ROLES.join(", ")}`);
   }
 
-  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (!user) {
     throw new HttpsError(
       "not-found",
@@ -102,7 +105,7 @@ exports.setUserRole = onCall(async (request) => {
     }
   }
 
-  await admin.auth().setCustomUserClaims(user.uid, { role });
+  await getAuth().setCustomUserClaims(user.uid, { role });
   // Mirror into the shared document so the existing "Manage Access" list (and
   // any other UI reading db.userRoles) keeps working unchanged. This write
   // uses the Admin SDK, which bypasses firestore.rules entirely — it's the
@@ -111,7 +114,7 @@ exports.setUserRole = onCall(async (request) => {
   // paths on dots, so the old form wrote userRoles["name@example"]["com"]
   // instead of updating the email's entry. checkUserRoles cleans up the
   // entries that left behind.
-  await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), role);
+  await ROLES_DOC.update(new FieldPath("userRoles", email), role);
 
   return { ok: true, email, role };
 });
@@ -122,7 +125,7 @@ exports.removeUserRole = onCall(async (request) => {
   const email = ((request.data && request.data.email) || "").trim().toLowerCase();
   if (!email) throw new HttpsError("invalid-argument", "Missing email.");
 
-  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (user) {
     const wasAdmin = user.customClaims && user.customClaims.role === "admin";
     if (wasAdmin) {
@@ -131,13 +134,13 @@ exports.removeUserRole = onCall(async (request) => {
         throw new HttpsError("failed-precondition", `${email} is the last Admin — assign another Admin first.`);
       }
     }
-    await admin.auth().setCustomUserClaims(user.uid, { role: null });
+    await getAuth().setCustomUserClaims(user.uid, { role: null });
     // Removing someone should take effect now, not when their sign-in
     // happens to renew: this ends every signed-in session they have, on
     // every device (the app notices within a few minutes and signs out).
-    await admin.auth().revokeRefreshTokens(user.uid);
+    await getAuth().revokeRefreshTokens(user.uid);
   }
-  await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), admin.firestore.FieldValue.delete());
+  await ROLES_DOC.update(new FieldPath("userRoles", email), FieldValue.delete());
 
   return { ok: true };
 });
@@ -149,9 +152,9 @@ exports.signOutUserEverywhere = onCall(async (request) => {
   requireCallerIsAdmin(request);
   const email = ((request.data && request.data.email) || "").trim().toLowerCase();
   if (!email) throw new HttpsError("invalid-argument", "Missing email.");
-  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
-  await admin.auth().revokeRefreshTokens(user.uid);
+  await getAuth().revokeRefreshTokens(user.uid);
   return { ok: true, email };
 });
 
@@ -168,7 +171,7 @@ exports.checkUserRoles = onCall(async (request) => {
   const users = [];
   let pageToken;
   do {
-    const page = await admin.auth().listUsers(1000, pageToken);
+    const page = await getAuth().listUsers(1000, pageToken);
     users.push(...page.users);
     pageToken = page.pageToken;
   } while (pageToken);
@@ -182,7 +185,7 @@ exports.checkUserRoles = onCall(async (request) => {
   const mangledKeys = Object.keys(rawRoles).filter((k) => typeof rawRoles[k] !== "string");
   if (mangledKeys.length > 0) {
     const args = [];
-    mangledKeys.forEach((k) => args.push(new admin.firestore.FieldPath("userRoles", k), admin.firestore.FieldValue.delete()));
+    mangledKeys.forEach((k) => args.push(new FieldPath("userRoles", k), FieldValue.delete()));
     await ROLES_DOC.update(...args);
   }
   const appRoles = {};
@@ -1007,7 +1010,7 @@ async function trashZohoCopy(c) {
     throw new Error(`Zoho wouldn't move it to Trash (${moved.status}): ${toStr(moved.body).slice(0, 200)}`);
   }
   // Already gone from the app: the Trash check needn't look at it.
-  await ZOHO_SENT_STATE.set({ trashSeen: admin.firestore.FieldValue.arrayUnion(toStr(best.messageId)) }, { merge: true });
+  await ZOHO_SENT_STATE.set({ trashSeen: FieldValue.arrayUnion(toStr(best.messageId)) }, { merge: true });
   return { moved: 1 };
 }
 
@@ -1254,7 +1257,7 @@ async function syncZohoTrash(accessToken) {
       const c = { id: snap.id, ...snap.data() };
       await target.delete();
       // Kept in the app's Trash, like an email deleted in the app.
-      await ROLES_DOC.set({ trash: admin.firestore.FieldValue.arrayUnion({
+      await ROLES_DOC.set({ trash: FieldValue.arrayUnion({
         id: `zoho_trash_${m.messageId}`,
         type: "correspondence",
         data: c,
@@ -1380,7 +1383,7 @@ async function getZohoAccessToken() {
 // URL) matching what the client SDK's getDownloadURL() returns, so inbound
 // and outgoing attachments render identically in the correspondence thread.
 async function uploadAttachmentToStorage(buffer, originalName, contentType) {
-  const bucket = admin.storage().bucket();
+  const bucket = getStorage().bucket();
   const safeName = (originalName || "attachment").replace(/\s+/g, "_");
   const path = `correspondence-attachments/${Date.now()}-${safeName}`;
   const token = crypto.randomUUID();
@@ -1715,7 +1718,7 @@ exports.generateWorkOrderSummary = onRequest(
     }
     let caller;
     try {
-      caller = await admin.auth().verifyIdToken(idToken);
+      caller = await getAuth().verifyIdToken(idToken);
     } catch (err) {
       res.status(401).json({ ok: false, error: "Invalid auth token" });
       return;
@@ -2529,7 +2532,7 @@ async function sendWinterKeyList(today, { resend = false } = {}) {
     : `Hi,\n\n${intro}No keys are needed for ${when} - our master key works for every cottage planned.\n\nSent by the QIC Service app.`;
   const to = toStr(settings.winterKeyEmailTo).trim() || WINTER_KEYS_TO;
   await sendSummaryEmail(to, subject, message);
-  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString(), ...(update ? { resentAt: new Date().toISOString(), resends: admin.firestore.FieldValue.increment(1) } : {}) }, { merge: true });
+  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString(), ...(update ? { resentAt: new Date().toISOString(), resends: FieldValue.increment(1) } : {}) }, { merge: true });
   return { today, days, count: rows.length, when, to, update };
 }
 
