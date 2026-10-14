@@ -43,6 +43,7 @@ class HttpsError extends Error {
 const origLoad = Module._load;
 Module._load = function (request, ...rest) {
   if (request === "firebase-functions/v2/https") return { onCall: (o, f) => f || o, onRequest: (o, f) => f || o, HttpsError };
+  if (request === "firebase-functions/v2/firestore") return { onDocumentWrittenWithAuthContext: (o, f) => f || o };
   if (request === "firebase-functions/v2/scheduler") return { onSchedule: (o, f) => f || o };
   if (request === "firebase-functions/params") return { defineSecret: (name) => ({ value: () => SECRETS[name] || "test-secret" }) };
   if (request === "@anthropic-ai/sdk") return FakeAnthropic;
@@ -102,6 +103,7 @@ const db = getFirestore();
 // this same object, so its methods are swapped in place).
 const auth = { users: {}, calls: [] };
 Object.assign(getAuth(), {
+  getUser: async (uid) => { const u = Object.values(auth.users).find((x) => x.uid === uid); if (!u) throw new Error("not found"); return u; },
   getUserByEmail: async (email) => { if (!auth.users[email]) throw new Error("not found"); return auth.users[email]; },
   setCustomUserClaims: async (uid, claims) => { auth.calls.push(["claims", uid, claims]); },
   revokeRefreshTokens: async (uid) => { auth.calls.push(["revoke", uid]); },

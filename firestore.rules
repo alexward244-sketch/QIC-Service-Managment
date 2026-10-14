@@ -200,6 +200,13 @@ service cloud.firestore {
         && request.resource.data.sentAt is string && request.resource.data.sentAt.size() <= 40;
       allow read, update, delete: if false;
     }
+    // The permanent activity history (Admin > Activity History), written
+    // only by the audit Cloud Functions as records change. Admins read it;
+    // nobody, Admin included, can change or delete an entry.
+    match /auditLog/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
     match /hydroReadings/{id} {
       allow read, create: if isSignedIn();
       allow update, delete: if role() in ['admin', 'accounting'];

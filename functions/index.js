@@ -1,5 +1,6 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentWrittenWithAuthContext } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
@@ -115,6 +116,7 @@ exports.setUserRole = onCall(async (request) => {
   // instead of updating the email's entry. checkUserRoles cleans up the
   // entries that left behind.
   await ROLES_DOC.update(new FieldPath("userRoles", email), role);
+  await auditAccess(request, `Gave ${email} the ${role} role`);
 
   return { ok: true, email, role };
 });
@@ -141,6 +143,7 @@ exports.removeUserRole = onCall(async (request) => {
     await getAuth().revokeRefreshTokens(user.uid);
   }
   await ROLES_DOC.update(new FieldPath("userRoles", email), FieldValue.delete());
+  await auditAccess(request, `Removed ${email}'s access`);
 
   return { ok: true };
 });
@@ -155,6 +158,7 @@ exports.signOutUserEverywhere = onCall(async (request) => {
   const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
   await getAuth().revokeRefreshTokens(user.uid);
+  await auditAccess(request, `Signed ${email} out everywhere`);
   return { ok: true, email };
 });
 
@@ -2853,3 +2857,151 @@ exports.askThePark = onCall(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Permanent activity history (Admin > Activity History)
+// ---------------------------------------------------------------------------
+// Every change to the main records, written to `auditLog` by the server as
+// it happens: who (from their sign-in, not anything the app says), when,
+// what, and which fields went from what to what. Nobody can edit or delete
+// these entries from the app (firestore.rules: Admins read, nobody writes),
+// and there's no 200-entry cap like the in-app activity list. Deploy the
+// whole group with: firebase deploy --only functions:audit
+//
+// Every change is kept for these; for the busy ones only deletes are.
+const AUDIT_FULL = ["customers", "invoices", "quotes", "workOrders", "sites", "cottages", "hydroReadings", "parts", "deals", "cottageOrders", "consignmentListings", "salesAppointments"];
+const AUDIT_DELETES_ONLY = ["correspondence", "propaneRequests", "treeRequests", "winterizingRequests", "pendingSignups"];
+// Bookkeeping fields that change on every save and say nothing new.
+const AUDIT_SKIP_FIELDS = new Set(["updatedAt", "updatedBy", "lastModified", "lastModifiedAt", "lastModifiedBy", "_stockDelta"]);
+// Never copy these values into the history.
+const AUDIT_SECRET_FIELD = /^(loginCodes|pin|pinHash|password|token|accessToken|refreshToken)$/i;
+const AUDIT_MAX_CHANGES = 40;
+
+function auditValue(field, v) {
+  if (AUDIT_SECRET_FIELD.test(field)) return "(hidden)";
+  if (v === undefined || v === null || v === "") return "";
+  if (typeof v === "string") return v.length > 300 ? v.slice(0, 300) + "…" : v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v && typeof v.toDate === "function") return v.toDate().toISOString();
+  const s = JSON.stringify(v);
+  return s.length > 300 ? s.slice(0, 300) + "…" : s;
+}
+
+// Field-by-field differences between two versions of a record.
+function auditChanges(before, after) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  const changes = [];
+  for (const k of [...keys].sort()) {
+    if (AUDIT_SKIP_FIELDS.has(k)) continue;
+    const a = (before || {})[k];
+    const b = (after || {})[k];
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    changes.push({ field: k, from: auditValue(k, a), to: auditValue(k, b) });
+  }
+  return changes;
+}
+
+// A short name for the record, so the history reads "INV-26-0010 Propane Fill".
+function auditLabel(collection, d) {
+  d = d || {};
+  const site = d.siteNumber ? `Site ${d.siteNumber}` : "";
+  const parts = {
+    invoices: [d.invoiceNumber, d.title, d.customerName],
+    workOrders: [d.workOrderNumber, d.title],
+    sites: [site],
+    hydroReadings: [site, d.readingText || (d.reading != null ? String(d.reading) : ""), d.readingDate || d.date],
+    parts: [d.name, d.sku]
+  }[collection] || [d.name || d.title || d.customerName || d.subject || d.serialNumber || site];
+  return parts.filter(Boolean).join(" · ").slice(0, 200);
+}
+
+// Who made the change, from Firestore's own record of the sign-in.
+const auditEmailCache = new Map();
+async function auditEmailFor(uid) {
+  if (!auditEmailCache.has(uid)) {
+    const u = await getAuth().getUser(uid).catch(() => null);
+    auditEmailCache.set(uid, (u && u.email) || `user ${uid}`);
+  }
+  return auditEmailCache.get(uid);
+}
+async function auditWho(event) {
+  if (event.authType === "app_user" && event.authId) return { by: await auditEmailFor(event.authId), byUid: event.authId };
+  if (event.authType === "service_account" || event.authType === "api_key" || event.authType === "system") return { by: "System (automatic)", byUid: null };
+  return { by: "Unknown", byUid: null };
+}
+
+// Manage Access changes, recorded by the function that makes them (the
+// role list itself is written by the server, so the trigger can't say who).
+async function auditAccess(request, note) {
+  try {
+    const uid = (request.auth && request.auth.uid) || null;
+    const by = (request.auth && request.auth.token && request.auth.token.email) || (uid ? await auditEmailFor(uid) : "Unknown");
+    await writeAudit([{ ts: new Date().toISOString(), by, byUid: uid, collection: "access", docId: "", action: "note", label: "", note }]);
+  } catch (err) {
+    console.error("audit failed: access", err);
+  }
+}
+
+async function writeAudit(entries) {
+  if (!entries.length) return;
+  const batch = getFirestore().batch();
+  for (const e of entries) batch.set(getFirestore().collection("auditLog").doc(), e);
+  await batch.commit();
+}
+
+async function auditRecordChange(event, collection) {
+  const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() : null;
+  const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() : null;
+  const action = !before ? "created" : !after ? "deleted" : "changed";
+  if (action !== "deleted" && AUDIT_DELETES_ONLY.includes(collection)) return;
+  const changes = action === "changed" ? auditChanges(before, after) : [];
+  if (action === "changed" && !changes.length) return;
+  const entry = {
+    ts: event.time || new Date().toISOString(),
+    ...(await auditWho(event)),
+    collection,
+    docId: event.params.docId,
+    action,
+    label: auditLabel(collection, after || before)
+  };
+  if (changes.length) {
+    entry.changes = changes.slice(0, AUDIT_MAX_CHANGES);
+    if (changes.length > AUDIT_MAX_CHANGES) entry.moreChanges = changes.length - AUDIT_MAX_CHANGES;
+  }
+  // A deleted record is kept here as it was, even after the Trash empties.
+  if (action === "deleted") {
+    const copy = JSON.stringify(before, (k, v) => (AUDIT_SECRET_FIELD.test(k) ? "(hidden)" : v));
+    entry.deletedCopy = copy.length > 200000 ? copy.slice(0, 200000) : copy;
+  }
+  await writeAudit([entry]);
+}
+
+// The shared campground/data document: settings changes, sign-in code
+// changes (never the codes), and the app's own activity notes ("Restored
+// … from trash"), re-stamped with who really was signed in.
+async function auditSharedDoc(event) {
+  const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() : {};
+  const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() : {};
+  const who = await auditWho(event);
+  const ts = event.time || new Date().toISOString();
+  const base = { ts, ...who, collection: "campground", docId: "data" };
+  const entries = [];
+  const settingChanges = auditChanges(before.settings || {}, after.settings || {});
+  if (settingChanges.length) entries.push({ ...base, action: "changed", label: "Settings", changes: settingChanges.slice(0, AUDIT_MAX_CHANGES) });
+  if (JSON.stringify(before.loginCodes || {}) !== JSON.stringify(after.loginCodes || {})) {
+    entries.push({ ...base, action: "changed", label: "Sign-in codes", note: "Sign-in codes changed (codes aren't recorded)" });
+  }
+  const seen = new Set((before.activityLog || []).map((e) => e && e.id));
+  for (const e of (after.activityLog || []).slice(0, 50)) {
+    if (!e || !e.id || seen.has(e.id) || !e.summary) continue;
+    entries.push({ ...base, action: "note", label: "", note: String(e.summary).slice(0, 500), actor: e.actor || "" });
+  }
+  await writeAudit(entries);
+}
+
+const auditTrigger = (collection) => onDocumentWrittenWithAuthContext({ document: `${collection}/{docId}` }, (event) =>
+  auditRecordChange(event, collection).catch((err) => console.error("audit failed:", collection, err)));
+exports.audit = Object.fromEntries([
+  ...[...AUDIT_FULL, ...AUDIT_DELETES_ONLY].map((c) => [c, auditTrigger(c)]),
+  ["campgroundData", onDocumentWrittenWithAuthContext({ document: "campground/data" }, (event) => auditSharedDoc(event).catch((err) => console.error("audit failed: campground/data", err)))]
+]);
