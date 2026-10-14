@@ -361,3 +361,8 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Service Manager's list misses them. Plan: let them look up just the unsold
   delivered display models' sites (rules change + deploy), not the rest of
   the sales records. Alex said to remind him another time (Oct 2026).
+- Turn on GitHub's free security checks for the repo (Settings → Security:
+  Dependabot alerts / security updates and code scanning), so outdated or
+  risky server packages get flagged on their own. Alex does it in GitHub's
+  settings; walk him through it when he's ready (from the Oct 2026 security
+  check).
