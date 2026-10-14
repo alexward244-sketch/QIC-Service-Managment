@@ -780,8 +780,22 @@ function emailsIn(text) {
 }
 
 // Loose on purpose: an email template may wrap the subject it's given.
+// Zoho's message lists give subjects HTML-escaped ("Quinte&#39;s Isle");
+// Flow and the app have the plain text.
+function decodeZohoText(s) {
+  return toStr(s)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+// A Zoho message list with readable subjects.
+function zohoMessages(json) {
+  return ((json && json.data) || []).map((m) => ({ ...m, subject: decodeZohoText(m.subject) }));
+}
+
 function sameSubject(a, b) {
-  const norm = (s) => toStr(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+  const norm = (s) => decodeZohoText(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
   const x = norm(a);
   const y = norm(b);
   return x === y || (x && y && (x.includes(y) || y.includes(x)));
@@ -864,7 +878,7 @@ async function syncZohoSentMail() {
 
   const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${folderId}&limit=50&sortBy=date`, accessToken);
   if (!listed.response) throw new Error(`Zoho wouldn't list the Sent folder (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
-  const all = ((await listed.response.json()).data || []).map((m) => ({ ...m, sentAt: zohoSentTime(m) }));
+  const all = zohoMessages(await listed.response.json()).map((m) => ({ ...m, sentAt: zohoSentTime(m) }));
   if (state.lastSentAt && !state.timesRepaired) {
     await repairZohoSentTimes(new Map(all.map((m) => [toStr(m.messageId), m])));
   }
@@ -981,7 +995,7 @@ async function findZohoCopy(c, accessToken, trashId) {
       if (zohoNotAllowed(result)) return { notAllowed: true };
       throw new Error(`Zoho search failed (${result.status}): ${toStr(result.body).slice(0, 200)}`);
     }
-    for (const m of (await result.response.json()).data || []) {
+    for (const m of zohoMessages(await result.response.json())) {
       if (toStr(m.folderId) !== toStr(trashId) && isZohoCopyOf(m, c)) found.set(toStr(m.messageId), m);
     }
   }
@@ -1074,7 +1088,7 @@ async function syncZohoInbox(now = Date.now()) {
   const until = direct ? Infinity : now - ZOHO_INBOX_COMPARE_DELAY_MS;
   const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${ZOHO_MAIL_INBOX_FOLDER_ID}&limit=50&sortBy=date`, accessToken);
   if (!listed.response) throw new Error(`Zoho wouldn't list the inbox (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
-  const messages = ((await listed.response.json()).data || [])
+  const messages = zohoMessages(await listed.response.json())
     .filter((m) => zohoSentTime(m) > since && zohoSentTime(m) <= until)
     .sort((a, b) => zohoSentTime(a) - zohoSentTime(b));
   let newest = since;
@@ -1224,7 +1238,7 @@ async function syncZohoTrash(accessToken) {
   const stateSnap = await ZOHO_SENT_STATE.get();
   const seen = (stateSnap.exists && stateSnap.data().trashSeen) || [];
   const cutoff = Date.now() - ZOHO_TRASH_LOOKBACK_MS;
-  const fresh = ((await listed.response.json()).data || []).filter((m) => !seen.includes(toStr(m.messageId)) && zohoSentTime(m) > cutoff);
+  const fresh = zohoMessages(await listed.response.json()).filter((m) => !seen.includes(toStr(m.messageId)) && zohoSentTime(m) > cutoff);
   let removed = 0;
   for (const m of fresh) {
     const ours = emailsIn(m.fromAddress).some((e) => e === OWN_INBOX);

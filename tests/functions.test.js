@@ -397,12 +397,13 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   const at = (minAgo) => String(now - minAgo * 60e3);
   zoho.on = true;
   // Flow delivered Anne's email; Bob's never came through Flow; a form notice; one too new to compare yet.
-  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips." });
+  // Zoho's list escapes the apostrophe ("Quinte&#39;s"); Flow's copy has it plain.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Re: Quinte's Isle - Leak", body: "The tap drips." });
   zoho.inbox = [
-    { messageId: "m-anne", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
+    { messageId: "m-anne", subject: "Re: Quinte&#39;s Isle - Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
     { messageId: "m-bob", subject: "Deck boards", fromAddress: "bob@y.com", receivedTime: at(9) },
     { messageId: "m-form", subject: "New entry", fromAddress: "forms@zoho.com", receivedTime: at(8) },
-    { messageId: "m-new", subject: "Hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
+    { messageId: "m-new", subject: "Cy&#39;s hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
   ];
   zoho.inboxContent = { "m-bob": "<p>Two boards are soft.</p>", "m-form": "<p>Jo has submitted the following</p>", "m-new": "<p>When is my reading?</p>" };
   await fns.zohoInbox();
@@ -421,7 +422,7 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
 
   // Switched on: Flow's copies are ignored, the inbox is read directly.
   await db.doc("campground/data").set({ settings: { emailIntakeDirect: true } }, { merge: true });
-  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Hydro question", body: "When is my reading?" });
+  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Cy's hydro question", body: "When is my reading?" });
   assert.equal(flow.body.reason, "direct-intake");
   await fns.zohoInbox();
   await fns.zohoInbox();
@@ -432,6 +433,7 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   assert.equal(cy[0].zohoMessageId, "m-new");
   assert.equal(cy[0].status, "new");
   assert.equal(cy[0].body, "When is my reading?");
+  assert.equal(cy[0].subject, "Cy's hydro question", "the subject is saved readable");
   assert.equal(cy[0].receivedAt, new Date(Number(at(1))).toISOString(), "Zoho's own time");
   assert.equal(corr.length, 3);
 });
