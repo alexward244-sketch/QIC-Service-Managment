@@ -92,20 +92,21 @@ global.fetch = async (url, opts) => {
 };
 
 const fns = require(path.join(ROOT, "functions", "index.js"));
-const admin = require(path.join(FN_MODULES, "firebase-admin"));
-const db = admin.firestore();
+// Loaded the way functions/index.js loads them, so it's the same app.
+const fnRequire = require("module").createRequire(path.join(ROOT, "functions", "index.js"));
+const { getFirestore } = fnRequire("firebase-admin/firestore");
+const { getAuth } = fnRequire("firebase-admin/auth");
+const db = getFirestore();
 
-// Firebase Auth: a small in-memory user list.
+// Firebase Auth: a small in-memory user list (getAuth() hands the functions
+// this same object, so its methods are swapped in place).
 const auth = { users: {}, calls: [] };
-Object.defineProperty(admin, "auth", {
-  configurable: true,
-  value: () => ({
-    getUserByEmail: async (email) => { if (!auth.users[email]) throw new Error("not found"); return auth.users[email]; },
-    setCustomUserClaims: async (uid, claims) => { auth.calls.push(["claims", uid, claims]); },
-    revokeRefreshTokens: async (uid) => { auth.calls.push(["revoke", uid]); },
-    listUsers: async () => ({ users: Object.values(auth.users) }),
-    verifyIdToken: async (token) => { const u = Object.values(auth.users).find((x) => x.uid === token); if (!u) throw new Error("bad token"); return { uid: u.uid, ...(u.customClaims || {}) }; }
-  })
+Object.assign(getAuth(), {
+  getUserByEmail: async (email) => { if (!auth.users[email]) throw new Error("not found"); return auth.users[email]; },
+  setCustomUserClaims: async (uid, claims) => { auth.calls.push(["claims", uid, claims]); },
+  revokeRefreshTokens: async (uid) => { auth.calls.push(["revoke", uid]); },
+  listUsers: async () => ({ users: Object.values(auth.users) }),
+  verifyIdToken: async (token) => { const u = Object.values(auth.users).find((x) => x.uid === token); if (!u) throw new Error("bad token"); return { uid: u.uid, ...(u.customClaims || {}) }; }
 });
 
 // Wipes the functions' test project in the emulator (a plain HTTP DELETE,

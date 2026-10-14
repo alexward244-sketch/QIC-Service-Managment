@@ -17,7 +17,8 @@
 //      needed and is a standing credential if left lying around.
 //   5. Sign out of the app and back in, so your token picks up the claim.
 
-const admin = require("firebase-admin");
+const { initializeApp, cert } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 const path = require("path");
 
 const email = process.argv[2];
@@ -37,12 +38,12 @@ try {
   process.exit(1);
 }
 
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+initializeApp({ credential: cert(serviceAccount) });
 
 admin
   .auth()
   .getUserByEmail(email)
-  .then((user) => admin.auth().setCustomUserClaims(user.uid, { role: "admin" }))
+  .then((user) => getAuth().setCustomUserClaims(user.uid, { role: "admin" }))
   .then(() => {
     console.log(`Granted the admin claim to ${email}.`);
     console.log("Ask them to sign out and back in for it to take effect.");
