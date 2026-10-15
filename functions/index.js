@@ -1288,6 +1288,93 @@ async function syncZohoTrash(accessToken) {
   return { removed };
 }
 
+// ---------------------------------------------------------------------
+// The Zoho "Done" folder: the app and the Zoho inbox agree on what's dealt
+// with. Turned on by making a folder called "Done" in the service mailbox
+// (nothing happens until it exists).
+//  - An incoming email marked handled in the app (replied to, made into a
+//    work order, "Mark handled"...) has its Zoho copy moved to Done.
+//  - An email someone moves to Done in Zoho is marked handled in the app.
+// Each Zoho message in Done is looked at once (done.seen), so reopening an
+// email in the app doesn't get undone by it still sitting in Done.
+const ZOHO_DONE_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
+const ZOHO_DONE_SEEN_MAX = 500;
+async function zohoDoneFolderId(accessToken) {
+  const result = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders`, accessToken);
+  if (!result.response) throw new Error(`Zoho wouldn't list the mailbox's folders (${result.status}): ${toStr(result.body).slice(0, 200)}`);
+  const folder = ((await result.response.json()).data || []).find((f) => toStr(f.folderName).trim().toLowerCase() === "done");
+  return folder ? toStr(folder.folderId) : null;
+}
+// Website forms and calls/walk-ins logged in the app never went through Zoho.
+const NOT_FROM_ZOHO_SOURCES = ["webform", "phone", "walkin"];
+
+async function syncZohoDone(accessToken, now = Date.now()) {
+  const iso = new Date(now).toISOString();
+  const doneId = await zohoDoneFolderId(accessToken);
+  if (!doneId) {
+    await ZOHO_INBOX_STATE.set({ done: { folder: false, checkedAt: iso } }, { merge: true });
+    return { folder: false, moved: 0, handled: 0 };
+  }
+  const stateSnap = await ZOHO_INBOX_STATE.get();
+  const prior = (stateSnap.exists && stateSnap.data().done) || {};
+  const seen = Array.isArray(prior.seen) ? [...prior.seen] : [];
+  const trashId = await zohoFolderId(accessToken, "trash");
+
+  // App -> Zoho: recently handled incoming emails go to Done.
+  let moved = 0;
+  const recent = await db.collection("correspondence").where("handledAt", ">=", new Date(now - ZOHO_DONE_LOOKBACK_MS).toISOString()).get();
+  for (const d of recent.docs) {
+    const c = d.data();
+    if (c.direction === "out" || c.status !== "handled" || c.zohoDoneAt || NOT_FROM_ZOHO_SOURCES.includes(c.source)) continue;
+    let messageId = toStr(c.zohoMessageId);
+    if (!messageId) {
+      const copy = await findZohoCopy({ ...c, direction: "in" }, accessToken, trashId);
+      if (copy.notAllowed) return { notAllowed: true };
+      messageId = copy.best ? toStr(copy.best.messageId) : "";
+    }
+    if (!messageId) {
+      // Not in Zoho any more (or never was) - don't look again.
+      await d.ref.update({ zohoDoneAt: iso, zohoDoneMissing: true });
+      continue;
+    }
+    const result = await zohoMailSend("PUT", `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/updatemessage`, accessToken, { mode: "moveMessage", messageId: [messageId], destfolderId: doneId });
+    if (!result.response) {
+      if (zohoNotAllowed(result)) return { notAllowed: true };
+      throw new Error(`Zoho wouldn't move an email to Done (${result.status}): ${toStr(result.body).slice(0, 200)}`);
+    }
+    await d.ref.update({ zohoDoneAt: iso, zohoMessageId: messageId });
+    if (!seen.includes(messageId)) seen.push(messageId);
+    moved++;
+  }
+
+  // Zoho -> app: emails moved to Done in Zoho are marked handled.
+  let handled = 0;
+  const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${doneId}&limit=50&sortBy=date`, accessToken);
+  if (!listed.response) throw new Error(`Zoho wouldn't list the Done folder (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
+  const cutoff = now - ZOHO_TRASH_LOOKBACK_MS;
+  for (const m of zohoMessages(await listed.response.json())) {
+    const messageId = toStr(m.messageId);
+    if (!messageId || seen.includes(messageId) || zohoSentTime(m) <= cutoff) continue;
+    seen.push(messageId);
+    const byId = await db.collection("correspondence").where("zohoMessageId", "==", messageId).limit(1).get();
+    const entry = byId.empty ? await flowEntryFor(m) : byId.docs[0];
+    if (!entry) continue;
+    const c = entry.data();
+    if (c.direction === "out" || c.status === "handled") continue;
+    await entry.ref.update({ status: "handled", handledAt: iso, followUpAt: null, handledInZoho: true, zohoDoneAt: iso, zohoMessageId: messageId });
+    handled++;
+  }
+
+  await ZOHO_INBOX_STATE.set({ done: {
+    folder: true,
+    checkedAt: iso,
+    movedTotal: (prior.movedTotal || 0) + moved,
+    handledTotal: (prior.handledTotal || 0) + handled,
+    seen: seen.slice(-ZOHO_DONE_SEEN_MAX)
+  } }, { merge: true });
+  return { folder: true, moved, handled };
+}
+
 exports.zohoSentMail = onSchedule(
   { schedule: "every 5 minutes", secrets: [ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, EMAILJS_PRIVATE_KEY], timeoutSeconds: 120 },
   async () => {
@@ -1305,6 +1392,14 @@ exports.zohoSentMail = onSchedule(
     } catch (err) {
       console.error("Zoho trash sync failed:", err);
       await reportServerProblem("zohoDelete", `Couldn't check Zoho's Trash for emails deleted there: ${err.message || err}`);
+    }
+    try {
+      const done = await syncZohoDone(await getZohoAccessToken());
+      if (done.notAllowed) await reportServerProblem("zohoDone", "Couldn't move emails to Zoho's Done folder - the Zoho connection isn't allowed to move mail yet.");
+      else if (done.moved || done.handled) console.log(`Done folder: moved ${done.moved}, marked ${done.handled} handled.`);
+    } catch (err) {
+      console.error("Zoho Done folder sync failed:", err);
+      await reportServerProblem("zohoDone", `Couldn't sync Zoho's Done folder: ${err.message || err}`);
     }
   }
 );
