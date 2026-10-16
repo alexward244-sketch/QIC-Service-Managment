@@ -25,12 +25,14 @@ async function seed() {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
-    await db.doc("campground/data").set({ settings: {}, userRoles: { "a@x.com": "admin" } });
+    await db.doc("campground/data").set({ settings: { taxRate: 13 }, userRoles: { "a@x.com": "admin" }, loginCodes: {} });
     for (const c of ["workOrders", "customers", "correspondence", "pendingSignups", "sites", "parts", "dailySummaries"]) await db.doc(`${c}/x`).set({ id: "x", note: "" });
     await db.doc("invoices/i1").set({ id: "i1", lineItems: [{ quantity: 1, unitPrice: 85 }], notes: "" });
     await db.doc("deals/d1").set({ id: "d1" });
     await db.doc("hydroReadings/h1").set({ id: "h1", reading: 100 });
     await db.doc("serverAlerts/a1").set({ count: 1 });
+    await db.doc("serverState/zohoInbox").set({ checkedAt: "x" });
+    await db.doc("serverState/zohoToken").set({ token: "secret" });
     await db.doc("aiUsage/u1").set({ count: 1 });
   });
 }
@@ -45,7 +47,7 @@ test("staff roles can use everyday data; accounts without a role and signed-out 
     assert.ok(await allowed(role, (db) => db.doc("workOrders/x").get()), `${role} read work orders`);
     assert.ok(await allowed(role, (db) => db.doc("workOrders/new").set({ id: "new", title: "t" })), `${role} create work order`);
     assert.ok(await allowed(role, (db) => db.doc("customers/x").update({ note: "hi" })), `${role} edit customer`);
-    assert.ok(await allowed(role, (db) => db.doc("campground/data").update({ settings: { a: 1 } })), `${role} save settings`);
+    assert.ok(await allowed(role, (db) => db.doc("campground/data").update({ activityLog: [role] })), `${role} save shared data`);
     assert.ok(await allowed(role, (db) => db.doc("parts/x").update({ sku: "A-1" })), `${role} edit a part`);
   }
   for (const role of ["noRole", "signedOut"]) {
@@ -76,7 +78,38 @@ test("money, sales, hydro and alerts are limited to the right roles", async () =
   await expect("read deals", (db) => db.doc("deals/d1").get(), ["admin", "salesmanager"]);
   await expect("correct a hydro reading", (db, role) => db.doc("hydroReadings/h1").update({ reading: 200 + [...ROLES, "noRole"].indexOf(role) }), ["admin", "accounting"]);
   await expect("read server alerts", (db) => db.doc("serverAlerts/a1").get(), ["admin", "manager"]);
+  await expect("read the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").get(), ["admin", "manager"]);
+  await expect("read the Zoho login", (db) => db.doc("serverState/zohoToken").get(), []);
+  await expect("change the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").set({ checkedAt: "y" }), []);
   await expect("read AI usage counters", (db) => db.doc("aiUsage/u1").get(), []);
+});
+
+test("app settings and sign-in codes are Admin only, except the winterizing plan's and the couple-name check", async () => {
+  await seed();
+  const expect = async (desc, op, who) => {
+    for (const role of [...ROLES, "noRole"]) assert.equal(await allowed(role, (db) => op(db, role)), who.includes(role), `${desc}: ${role}`);
+  };
+  const n = (role) => [...ROLES, "noRole"].indexOf(role);
+  await expect("change the tax rate", (db, role) => db.doc("campground/data").update({ "settings.taxRate": 20 + n(role) }), ["admin"]);
+  await expect("add a new setting", (db, role) => db.doc("campground/data").update({ "settings.paymentInstructions": "pay " + role }), ["admin"]);
+  await expect("change sign-in codes", (db, role) => db.doc("campground/data").update({ loginCodes: { x: role } }), ["admin"]);
+  await expect("change the winterizing daily limit", (db, role) => db.doc("campground/data").update({ "settings.winterDailyLimit": 20 + n(role) }), ["admin", "manager", "accounting"]);
+  await expect("block a winterizing day", (db, role) => db.doc("campground/data").update({ "settings.winterBlockedDays": [{ date: "2026-10-2" + n(role) }] }), ["admin", "manager", "accounting"]);
+  await expect("mark couple names reviewed", (db, role) => db.doc("campground/data").update({ "settings.coupleNamesReviewed": [role] }), ROLES);
+  await expect("save other shared data", (db, role) => db.doc("campground/data").update({ activityLog: ["x" + role] }), ROLES);
+});
+
+test("invoices: only money roles create them, apart from the propane fill and anode rod the app makes", async () => {
+  await seed();
+  const expect = async (desc, make, who) => {
+    for (const role of [...ROLES, "noRole"]) assert.equal(await allowed(role, (db) => db.doc(`invoices/${desc.replace(/\W/g, "")}-${role}`).set(make())), who.includes(role), `${desc}: ${role}`);
+  };
+  const auto = { lineItems: [{ quantity: 1, unitPrice: 25 }], laborHours: 0, serviceCall: 0, shopSuppliesAmount: 0, shopSuppliesPercent: 0, sentDate: null };
+  await expect("propane fill", () => ({ ...auto, title: "Propane Fill", sourceType: "workOrder" }), ROLES);
+  await expect("anode rod", () => ({ ...auto, title: "Anode Rod Replacement", sourceType: "winterizing" }), ROLES);
+  await expect("propane fill with labour", () => ({ ...auto, title: "Propane Fill", sourceType: "workOrder", laborHours: 2 }), ["admin", "manager", "accounting"]);
+  await expect("propane fill marked sent", () => ({ ...auto, title: "Propane Fill", sourceType: "workOrder", sentDate: "2026-10-14" }), ["admin", "manager", "accounting"]);
+  await expect("any other invoice", () => ({ ...auto, title: "Furnace repair", sourceType: "workOrder" }), ["admin", "manager", "accounting"]);
 });
 
 test("device error reports: staff can add their own, only Admins and Service Managers read them", async () => {
@@ -123,6 +156,10 @@ test("work order photos: staff can add images, not other files or huge ones; no 
   await assertFails(st("noRole").ref("work-order-photos/w1/c.jpg").put(jpeg, { contentType: "image/jpeg" }));
   await assertFails(st("noRole").ref("work-order-photos/w1/a.jpg").getMetadata());
   await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").delete());
+  // Cottage nameplate photos follow the same rules.
+  await assertSucceeds(st("office").ref("cottage-photos/k1/nameplate.jpg").put(jpeg, { contentType: "image/jpeg" }));
+  await assertFails(st("office").ref("cottage-photos/k1/notes.txt").putString("hi", "raw", { contentType: "text/plain" }));
+  await assertFails(st("noRole").ref("cottage-photos/k1/nameplate.jpg").getMetadata());
 });
 
 test("Site Map equipment: every staff role can see it, only Admin, Service Manager and Accounting change it", async () => {

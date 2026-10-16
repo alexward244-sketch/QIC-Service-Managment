@@ -64,10 +64,30 @@ service cloud.firestore {
     // write it via the Admin SDK, which is trusted server-side code and
     // bypasses these rules entirely — so this is intentionally NOT
     // "if isAdmin()", it's a hard no from the client, full stop.
+    //
+    // App settings (prices, tax, company details, email intake, the Admin
+    // screens) and the sign-in codes are Admin only. Money roles may also
+    // change the winterizing plan's settings (the Plan board), and anyone
+    // may mark the couple-name tidy-up reviewed. The app keeps a non-Admin's
+    // save from touching the other settings (persist: keepLockedSettings).
+    function settingsOf(d) {
+      return d.get('settings', {});
+    }
+    function changedSettings() {
+      return settingsOf(request.resource.data).diff(settingsOf(resource.data)).affectedKeys();
+    }
+    function settingsYouMayChange() {
+      return isMoneyRole()
+        ? ['coupleNamesReviewed', 'winterSeasonStart', 'winterDailyLimit', 'winterAutoPlaceNew', 'winterKeyEmailOff', 'winterBlockedDays', 'winterizingReminderText', 'winterizingSeasonStart']
+        : ['coupleNamesReviewed'];
+    }
     match /campground/data {
       allow read: if isSignedIn();
       allow write: if isSignedIn()
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userRoles']);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userRoles'])
+        && (isAdmin()
+            || (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['loginCodes'])
+                && changedSettings().hasOnly(settingsYouMayChange())));
     }
 
     // Every other top-level collection the app uses, listed explicitly
@@ -94,11 +114,23 @@ service cloud.firestore {
     // Invoices: office and field screens create some automatically (a
     // prepaid propane fill or an anode rod marked done), and General
     // Service adds a note to an existing one - so any signed-in user may
-    // create an invoice or change only those note fields. Anything else
+    // create one of those or change only those note fields. Anything else
     // (amounts, paid/sent status, deleting) is money roles only.
+    // Only the two kinds the app makes on its own can be created by other
+    // roles: a propane fill and an anode rod (parts only - no labour,
+    // service call or shop supplies, not marked sent).
+    function isAutoInvoice(d) {
+      return ((d.get('title', '') == 'Propane Fill' && d.get('sourceType', '') == 'workOrder')
+              || (d.get('title', '') == 'Anode Rod Replacement' && d.get('sourceType', '') == 'winterizing'))
+        && d.get('laborHours', 0) == 0
+        && d.get('serviceCall', 0) == 0
+        && d.get('shopSuppliesAmount', 0) == 0
+        && d.get('shopSuppliesPercent', 0) == 0
+        && d.get('sentDate', null) == null;
+    }
     match /invoices/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isMoneyRole() || (isSignedIn() && isAutoInvoice(request.resource.data));
       allow update: if isMoneyRole()
         || (isSignedIn()
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -151,6 +183,13 @@ service cloud.firestore {
       allow read: if role() in ['admin', 'manager'];
       allow delete: if isAdmin();
       allow update: if false;
+    }
+    // How reading the inbox straight from Zoho is going (Admin > Email
+    // Intake). Written only by the zohoInbox Cloud Function; the rest of
+    // serverState (e.g. the Zoho login) stays unreadable.
+    match /serverState/zohoInbox {
+      allow read: if role() in ['admin', 'manager'];
+      allow write: if false;
     }
     match /serverAlerts/{id} {
       allow read: if role() in ['admin', 'manager'];

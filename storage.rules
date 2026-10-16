@@ -43,6 +43,14 @@ service firebase.storage {
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
+    // Cottage nameplate photos (Scan nameplate on a cottage), kept as the
+    // record of its serial number. Shrunk to a JPEG by the app first.
+    match /cottage-photos/{cottageId}/{fileName} {
+      allow read, delete: if isStaff();
+      allow create, update: if isStaff()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
     // Files attached to outgoing correspondence emails (Correspondence
     // reply box, Work Order "Email Customer", service request replies).
     match /correspondence-attachments/{fileName} {

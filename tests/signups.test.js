@@ -38,6 +38,7 @@ test("A winterizing sign-up matched by phone + site is confirmed and the new ema
   await page.getByRole("button", { name: "Confirm Sign-Up" }).click();
   const req = await waitFor(() => findIn("winterizingRequests", (r) => r.cottageId === "k42"), "the winterizing request");
   assert.equal(req.customerId, "c1");
+  assert.equal(req.submittedAt, "2026-10-01T12:00:00Z", "keeps when the customer signed up (earliest keep a full day)");
   await waitFor(async () => (await readCollection("pendingSignups")).length === 0, "the pending sign-up to be removed");
   const customer = await waitFor(async () => { const c = await readDoc("customers/c1"); return (c.matchEmails || []).includes("bob.smith@gmail.com") ? c : null; }, "the email to be remembered");
   assert.ok(customer);

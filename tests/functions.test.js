@@ -41,6 +41,39 @@ test("a sign-up with no site number isn't lost silently: Admins are emailed once
   assert.match(emails[0].message, /Sam Lee, sam@x\.com/);
 });
 
+test("Claude reads a website service request for the draft work order; without Claude it's still saved", async () => {
+  claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ flag: null, needsReply: true, category: "service", summary: "Furnace clicking on start-up", siteNumber: "1051", requestedDate: null, priority: "High" }) }] });
+  await callWebhook(fns.generalServiceRequest, { firstName: "Linda", lastName: "Smith", email: "l@x.com", siteNumber: "1051", description: "The furnace clicks every time it starts." });
+  const [p] = await all("pendingSignups");
+  assert.equal(p.triage.summary, "Furnace clicking on start-up");
+  assert.equal(p.triage.priority, "High");
+  assert.match(claude.calls[0].messages[0].content, /The furnace clicks every time it starts/);
+  await clearData();
+  claude.script.push(new Error("Claude is down"));
+  const res = await callWebhook(fns.generalServiceRequest, { firstName: "Sam", email: "s@x.com", siteNumber: "20", description: "Door sticks" });
+  assert.equal(res.statusCode, 200);
+  const [q] = await all("pendingSignups");
+  assert.equal(q.submittedDescription, "Door sticks");
+  assert.equal(q.triage, undefined);
+});
+
+test("morning summary: pending jobs only on their reminder days and start date, never as open or overdue work", async () => {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const plus = (n) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  await db.doc("workOrders/a").set({ id: "a", title: "Deck rebuild", status: "Pending", startDate: plus(7), pendingSince: plus(-20), date: plus(-20) });
+  await db.doc("workOrders/b").set({ id: "b", title: "Skirting", status: "Pending", startDate: plus(9), pendingSince: plus(-20), date: plus(-20) });
+  await db.doc("workOrders/c").set({ id: "c", title: "Roof", status: "Pending", startDate: plus(14), pendingSince: plus(-1), date: plus(-1) });
+  await db.doc("workOrders/d").set({ id: "d", title: "Shed", status: "Pending", startDate: today, pendingSince: plus(-40), date: plus(-40) });
+  await db.doc("workOrders/e").set({ id: "e", title: "Porch", status: "Pending", startDate: plus(1), pendingSince: plus(-40), date: plus(-40) });
+  const res = await call(fns.generateMorningSummary, {}, "admin");
+  assert.equal(res.ok, true);
+  const summary = (await db.doc(`dailySummaries/${res.date}`).get()).data();
+  assert.deepEqual(summary.facts.pendingJobsComingUp.map((w) => w.title), ["Shed", "Porch", "Deck rebuild", "Roof"], "start day, the day before, a week before, two weeks before - not the one with no reminder today");
+  assert.equal(summary.facts.pendingJobsComingUp[2].daysUntilStart, 7);
+  assert.equal(summary.facts.openWorkOrders, 0);
+  assert.equal(summary.facts.overdueWorkOrders, 0);
+});
+
 test("incoming email: forwards keep their content, staff mail comes in, our own replies are skipped", async () => {
   const send = (fromEmail, subject, body) => callWebhook(fns.serviceCorrespondence, { fromEmail, subject, body });
   await send("jane@gmail.com", "Fwd: Deck quote", "See below\n\n---------- Forwarded message ---------\nFrom: Bob <bob@builders.ca>\nDate: Mon\nSubject: Deck quote\n\nThe deck needs 3 new joists.");
@@ -338,6 +371,110 @@ test("deleting an email in the app moves its Zoho copy to Zoho's Trash", async (
   assert.equal((await call(fns.trashEmailInZoho, { subject: "Leak" }, "")).error, "permission-denied");
 });
 
+test("opening an email in the app marks its Zoho copy read", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  zoho.on = true;
+  zoho.search = [
+    { messageId: "z-leak", folderId: "inbox1", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3 - 20e3) },
+    { messageId: "z-other", folderId: "inbox1", subject: "Other thing", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3) },
+    { messageId: "z-gone", folderId: "trash1", subject: "Leak", fromAddress: "anne@x.com", toAddress: "service@qicampark.com", receivedTime: String(now - 3600e3) }
+  ];
+  const open = (data) => call(fns.markEmailReadInZoho, data);
+  assert.deepEqual(await open({ fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: true, marked: 1 });
+  assert.deepEqual(zoho.moved.pop(), { mode: "markAsRead", messageId: ["z-leak"] }, "just that email, not her other one or one in Trash");
+  assert.deepEqual(await open({ fromEmail: "nobody@z.com", subject: "Hi", receivedAt: iso(now) }), { ok: true, marked: 0 });
+  assert.equal((await all("serverAlerts")).length, 0);
+  // Zoho refuses (the connection can't update mail yet): reported.
+  zoho.moveStatus = 400;
+  assert.deepEqual(await open({ fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) }), { ok: false, reason: "not-allowed" });
+  assert.equal((await all("serverAlerts"))[0].source, "zohoRead");
+  assert.equal((await call(fns.markEmailReadInZoho, { subject: "Leak" }, "")).error, "permission-denied");
+});
+
+test("reading the inbox from Zoho: first only compares with Flow; once switched on it brings emails in itself, once each", async () => {
+  const now = Date.now();
+  const at = (minAgo) => String(now - minAgo * 60e3);
+  zoho.on = true;
+  // Flow delivered Anne's email; Bob's never came through Flow; a form notice; one too new to compare yet.
+  // Zoho's list escapes the apostrophe ("Quinte&#39;s"); Flow's copy has it plain.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Re: Quinte's Isle - Leak", body: "The tap drips." });
+  zoho.inbox = [
+    { messageId: "m-anne", subject: "Re: Quinte&#39;s Isle - Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
+    { messageId: "m-bob", subject: "Deck boards", fromAddress: "bob@y.com", receivedTime: at(9) },
+    { messageId: "m-form", subject: "New entry", fromAddress: "forms@zoho.com", receivedTime: at(8) },
+    { messageId: "m-new", subject: "Cy&#39;s hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
+  ];
+  zoho.inboxContent = { "m-bob": "<p>Two boards are soft.</p>", "m-form": "<p>Jo has submitted the following</p>", "m-new": "<p>When is my reading?</p>" };
+  await fns.zohoInbox();
+  let corr = await all("correspondence");
+  assert.equal(corr.length, 1, "nothing is added while comparing");
+  assert.equal(corr[0].zohoMessageId, "m-anne", "Flow's entry is tied to its Zoho message");
+  const compare = (await db.doc("serverState/zohoInbox").get()).data().compare;
+  assert.deepEqual([compare.checked, compare.matched, compare.missedCount, compare.missed.map((x) => x.from)], [3, 1, 1, ["bob@y.com"]], "Bob's is listed as missed by Flow; the form notice isn't; the newest waits");
+
+  // Flow is late with Bob's (it checks the inbox on a timer): it counts as a match after all.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "bob@y.com", subject: "Deck boards", body: "Two boards are soft." });
+  await fns.zohoInbox();
+  const after = (await db.doc("serverState/zohoInbox").get()).data().compare;
+  assert.deepEqual([after.checked, after.matched, after.missedCount, after.missed.length], [3, 2, 0, 0], "Bob's moves from missed to matched");
+  assert.equal((await all("correspondence")).find((c) => c.fromEmail === "bob@y.com").zohoMessageId, "m-bob");
+
+  // Switched on: Flow's copies are ignored, the inbox is read directly.
+  await db.doc("campground/data").set({ settings: { emailIntakeDirect: true } }, { merge: true });
+  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Cy's hydro question", body: "When is my reading?" });
+  assert.equal(flow.body.reason, "direct-intake");
+  await fns.zohoInbox();
+  await fns.zohoInbox();
+  corr = await all("correspondence");
+  const cy = corr.filter((c) => c.fromEmail === "cy@z.com");
+  assert.equal(cy.length, 1, "once, however often it runs");
+  assert.equal(cy[0].id, "zoho_in_m-new");
+  assert.equal(cy[0].zohoMessageId, "m-new");
+  assert.equal(cy[0].status, "new");
+  assert.equal(cy[0].body, "When is my reading?");
+  assert.equal(cy[0].subject, "Cy's hydro question", "the subject is saved readable");
+  assert.equal(cy[0].receivedAt, new Date(Number(at(1))).toISOString(), "Zoho's own time");
+  assert.equal(corr.length, 3);
+});
+
+test("Zoho's Done folder: handled emails move there, and emails moved there are marked handled", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const put = (c) => db.collection("correspondence").doc(c.id).set(c);
+  zoho.on = true;
+  await put({ id: "zoho_in_m1", direction: "in", status: "handled", handledAt: iso(now - 60e3), fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3), zohoMessageId: "m1" });
+  await put({ id: "zoho_in_m2", direction: "in", status: "new", fromEmail: "bob@y.com", subject: "Deck", receivedAt: iso(now - 3000e3), zohoMessageId: "m2" });
+  await put({ id: "webform_s1", direction: "in", status: "handled", handledAt: iso(now - 60e3), source: "webform", fromEmail: "carl@z.com", subject: "Form", receivedAt: iso(now - 3000e3) });
+  await put({ id: "out1", direction: "out", status: "handled", handledAt: iso(now - 60e3), toEmail: "anne@x.com", subject: "Re: Leak", receivedAt: iso(now - 60e3), zohoMessageId: "s1" });
+
+  // No Done folder in Zoho yet: nothing moves, and Admin is told how to set it up.
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 0);
+  assert.equal((await db.doc("serverState/zohoInbox").get()).data().done.folder, false);
+
+  // Someone made the folder; Bob's email was moved there in Zoho.
+  zoho.doneFolder = true;
+  zoho.done = [{ messageId: "m2", folderId: "done1", subject: "Deck", fromAddress: "bob@y.com", receivedTime: String(now - 3000e3) }];
+  await fns.zohoSentMail();
+  assert.deepEqual(zoho.moved, [{ mode: "moveMessage", messageId: ["m1"], destfolderId: "done1" }], "only Anne's handled email; not the web form or our reply");
+  const anne = (await db.doc("correspondence/zoho_in_m1").get()).data();
+  assert.ok(anne.zohoDoneAt);
+  const bob = (await db.doc("correspondence/zoho_in_m2").get()).data();
+  assert.equal(bob.status, "handled", "moved to Done in Zoho = handled here");
+  assert.equal(bob.handledInZoho, true);
+  const done = (await db.doc("serverState/zohoInbox").get()).data().done;
+  assert.deepEqual([done.folder, done.movedTotal, done.handledTotal], [true, 1, 1]);
+
+  // Runs again: nothing moves twice, and reopening Bob's here sticks.
+  zoho.done.push({ messageId: "m1", folderId: "done1", subject: "Leak", fromAddress: "anne@x.com", receivedTime: String(now - 3600e3) });
+  await db.doc("correspondence/zoho_in_m2").update({ status: "new" });
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 1);
+  assert.equal((await db.doc("correspondence/zoho_in_m2").get()).data().status, "new");
+  assert.equal((await all("serverAlerts")).length, 0);
+});
+
 test("an email moved to Zoho's Trash is removed from the app", async () => {
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();
@@ -369,4 +506,116 @@ test("an email moved to Zoho's Trash is removed from the app", async () => {
   await put({ id: "in-leak", direction: "in", status: "new", fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3) });
   await fns.zohoSentMail();
   assert.deepEqual((await all("correspondence")).map((c) => c.id).sort(), ["in-leak", "in-other"]);
+});
+
+test("winterizing keys: the open day before (Friday for Monday, Thanksgiving and closed days skipped), reception gets the cottages our master key doesn't open, once", async () => {
+  const set = (c, id, data) => db.collection(c).doc(id).set(data);
+  await Promise.all([
+    set("sites", "s1", { number: "0010", section: "Front of Park", winterHowTo: { code: "IN BT FD", note: "", masterKey: false } }),
+    set("sites", "s2", { number: "0009", section: "Front of Park", winterHowTo: { code: "BP", note: "", masterKey: true } }),
+    set("sites", "s3", { number: "0490", section: "Limestone South" }),
+    set("cottages", "k1", { name: "Willow", siteId: "s1" }),
+    set("cottages", "k2", { name: "Cedar", siteId: "s2" }),
+    set("cottages", "k3", { name: "Birch", siteId: "s3" }),
+    set("customers", "c1", { name: "Bo Day", phone: "6135550177" }),
+    // Monday the 19th: Willow (key needed), Cedar (master key works), Birch (not on the list, key at reception).
+    set("winterizingRequests", "r1", { cottageId: "k1", customerId: "c1", plannedDate: "2026-10-19" }),
+    set("winterizingRequests", "r2", { cottageId: "k2", plannedDate: "2026-10-19" }),
+    set("winterizingRequests", "r3", { cottageId: "k3", requestedDate: "2026-10-19", options: { keyAtReception: true } }),
+    set("winterizingRequests", "r4", { cottageId: "k1", plannedDate: "2026-10-19", completed: true }),
+    set("winterizingRequests", "r5", { cottageId: "k1", plannedDate: "2026-10-20" }),
+    // A park rental the same day: we have its keys, so it's not on the email.
+    set("cottages", "k4", { name: "Rental 1", siteId: "s1" }),
+    set("winterizingRequests", "r6", { cottageId: "k4", plannedDate: "2026-10-19", parkOwned: "rental" })
+  ]);
+  // Friday Oct 16, 9am Toronto.
+  await fns.winterKeyList({ scheduleTime: "2026-10-16T13:00:00Z" });
+  assert.equal(emails.length, 1);
+  assert.equal(emails[0].to, "reserve@qicampark.com");
+  assert.equal(emails[0].subject, "Winterizing keys needed for Monday, October 19");
+  assert.match(emails[0].message, /These 2 cottages are being winterized on Monday, October 19/);
+  assert.match(emails[0].message, /Front of Park\n- Site 0010 · Willow · Bo Day, 6135550177\n\nLimestone South\n- Site 0490 · Birch · no owner linked \(customer said the key is at reception; not on the master list - check\)/);
+  assert.doesNotMatch(emails[0].message, /Cedar/);
+  assert.doesNotMatch(emails[0].message, /Rental 1/);
+  // Once per day, and not at all when turned off or nothing needs a key.
+  await fns.winterKeyList({ scheduleTime: "2026-10-16T13:00:00Z" });
+  assert.equal(emails.length, 1);
+  await fns.winterKeyList({ scheduleTime: "2026-10-19T13:00:00Z" });
+  assert.equal(emails.length, 2, "Monday sends Tuesday's");
+  assert.match(emails[1].subject, /Tuesday, October 20/);
+  // Thanksgiving Monday (Oct 12) is closed: Friday the 9th covers it and Tuesday; nothing goes out on the Monday.
+  await db.collection("winterizingRequests").doc("t1").set({ cottageId: "k1", customerId: "c1", plannedDate: "2026-10-13" });
+  await fns.winterKeyList({ scheduleTime: "2026-10-12T13:00:00Z" });
+  assert.equal(emails.length, 2, "closed on Thanksgiving");
+  await fns.winterKeyList({ scheduleTime: "2026-10-09T13:00:00Z" });
+  assert.equal(emails.length, 3);
+  assert.equal(emails[2].subject, "Winterizing keys needed for Tuesday, October 13");
+  // A blocked day marked closed works the same way (Wed 21st closed: Tuesday covers Thursday).
+  await db.collection("winterizingRequests").doc("t2").set({ cottageId: "k1", plannedDate: "2026-10-22" });
+  await db.doc("campground/data").set({ settings: { winterBlockedDays: [{ date: "2026-10-21", label: "Staff day", closed: true }] } }, { merge: true });
+  await fns.winterKeyList({ scheduleTime: "2026-10-20T13:00:00Z" });
+  assert.equal(emails.length, 4);
+  assert.equal(emails[3].subject, "Winterizing keys needed for Thursday, October 22");
+  await db.doc("campground/data").set({ settings: { winterKeyEmailOff: true } }, { merge: true });
+  await db.collection("winterizingRequests").doc("r6").set({ cottageId: "k1", plannedDate: "2026-10-21" });
+  await fns.winterKeyList({ scheduleTime: "2026-10-23T13:00:00Z" });
+  assert.equal(emails.length, 4, "turned off");
+});
+
+test("winterizing keys: Resend now sends the list as planned now, marked UPDATED once today's went out", async () => {
+  assert.deepEqual(await call(fns.resendWinterKeyList, {}, "office"), { error: "permission-denied" });
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // Every weekday of the next two weeks, so whichever is "next" has one.
+  const days = [];
+  for (let i = 1; days.length < 10; i++) {
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + i);
+    if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) days.push(d.toISOString().slice(0, 10));
+  }
+  await db.doc("sites/s1").set({ number: "0010", section: "Front of Park" });
+  await db.doc("cottages/k1").set({ name: "Willow", siteId: "s1" });
+  await Promise.all(days.map((d, i) => db.doc(`winterizingRequests/r${i}`).set({ cottageId: "k1", plannedDate: d })));
+  await db.doc("campground/data").set({ settings: { winterKeyEmailOff: true } }, { merge: true });
+  const first = await call(fns.resendWinterKeyList, {}, "manager");
+  assert.equal(first.ok, true);
+  assert.equal(first.count, 1);
+  assert.equal(emails.length, 1, "sent even with the daily email off - it was asked for");
+  assert.doesNotMatch(emails[0].subject, /UPDATED/);
+  await call(fns.resendWinterKeyList, {}, "admin");
+  assert.equal(emails.length, 2);
+  assert.match(emails[1].subject, /^UPDATED - Winterizing keys needed for /);
+  assert.match(emails[1].message, /replaces the one sent earlier today/);
+  const sent = (await db.doc(`winterKeyEmails/${today}`).get()).data();
+  assert.equal(sent.resends, 1);
+});
+
+test("nameplate reader: staff only, sends the photo to Claude and tidies what comes back", async () => {
+  assert.deepEqual(await call(fns.readCottageNameplate, { image: "abcd" }, ""), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.readCottageNameplate, { image: "not base64!" }), { error: "invalid-argument" });
+  claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({
+    isNameplate: true, manufacturer: "Northlander Industries", tradeName: "Cottager Escape", modelNumber: "SW.16-4513-3Y", serialNumber: " 2165117532 ", serialNumber2: "", size: " 39' x 12' ", year: "2016",
+    appliances: [
+      { type: "Furnace", label: "Furnace", make: "Suburban", model: "P-40", serialNumber: " 190707005 ", fuel: "Gas" },
+      { type: "Toaster", label: "Toaster", make: "GE", model: "T1", fuel: "Electric" },
+      { type: "Other", label: "Generator", make: "", model: "", fuel: "" }
+    ],
+    notes: ""
+  }) }] });
+  const res = await call(fns.readCottageNameplate, { image: "aGVsbG8=" });
+  const req = claude.calls[claude.calls.length - 1];
+  assert.equal(req.messages[0].content[0].source.data, "aGVsbG8=");
+  assert.equal(res.plate.serialNumber, "2165117532");
+  assert.equal(res.plate.size, "39' x 12'");
+  assert.equal(res.plate.appliances[0].serialNumber, "190707005");
+  assert.deepEqual(res.plate.appliances.map((a) => a.type), ["Furnace", "Other"], "unknown types become Other; blank lines are dropped");
+  claude.script.push(new Error("boom"));
+  assert.deepEqual(await call(fns.readCottageNameplate, { image: "aGVsbG8=" }), { error: "unavailable" });
+  // A PDF from the cottage's file goes to Claude as a document.
+  const pdf = Buffer.from("%PDF-1.4 spec sheet").toString("base64");
+  claude.script.push({ stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ isNameplate: true, manufacturer: "Northlander", tradeName: "", modelNumber: "M1", serialNumber: "S1", year: "2016", appliances: [], notes: "" }) }] });
+  const fromPdf = await call(fns.readCottageNameplate, { pdf });
+  const pdfReq = claude.calls[claude.calls.length - 1];
+  assert.deepEqual(pdfReq.messages[0].content[0], { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } });
+  assert.equal(fromPdf.plate.serialNumber, "S1");
+  assert.deepEqual(await call(fns.readCottageNameplate, { pdf: "aGVsbG8=" }), { error: "invalid-argument" }, "not a PDF");
 });

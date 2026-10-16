@@ -75,7 +75,8 @@ test("Deleting a part moves it to Trash and removes its document; restoring brin
   await page.getByRole("button", { name: "Delete", exact: true }).first().click();
   await page.getByRole("button", { name: /^(Delete|Move to Trash|Yes)/ }).last().click();
   await waitFor(async () => Object.keys(await partsInCollection()).length === 1, "the part to be removed");
-  const trash = (await readDoc("campground/data")).trash;
+  // The part's document goes first, then the shared doc with the Trash entry.
+  const trash = await waitFor(async () => { const t = (await readDoc("campground/data")).trash || []; return t.length ? t : null; }, "the part to reach Trash");
   assert.equal(trash.length, 1);
   await page.evaluate(async () => {
     const db = window.__api.db;

@@ -472,8 +472,8 @@ async function openWinterizing(page) {
     const add = (n) => winterAddDays(today, n);
     let db = {
       settings: { winterizingSeasonStart: "01-01" }, activityLog: [], parts: [], trash: [], staff: [], workOrderTemplates: [], quotes: [], invoices: [], correspondence: [],
-      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }],
-      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
+      sites: [{ id: "s1", number: "126", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s2", number: "233", section: "Limestone South", siteType: "Seasonal" }, { id: "s3", number: "107", section: "Pebble Beach Seasonal", siteType: "Seasonal" }, { id: "s4", number: "301", section: "Rentals", siteType: "Rental Cottage" }, { id: "s5", number: "302", section: "Rentals", siteType: "Rental Cottage" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }, { id: "k4", name: "Lakeview Rental", siteId: "s4" }],
       customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", phone: "613-555-0177", siteIds: ["s1"] }, { id: "c2", name: "Gary C", email: "gary@x.com", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", email: "anne@x.com", siteIds: ["s3"] }],
       workOrders: [{ id: "w1", workOrderNumber: "WO-0388", title: "Deck boards", siteId: "s1", date: "2026-08-12", status: "Completed", partsUsed: [], notes: [] }],
       winterizingRequests: [
@@ -484,7 +484,9 @@ async function openWinterizing(page) {
       ]
     };
     const root = ReactDOM.createRoot(document.getElementById("root"));
-    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
+    window.__addRequest = (r) => { db = { ...db, winterizingRequests: [...db.winterizingRequests, r] }; render(); };
+    const putSites = (list) => { db = { ...db, sites: db.sites.map((x) => list.find((y) => y.id === x.id) || x) }; render(); };
+    const render = () => root.render(React.createElement(WinterizingView, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests, sites: db.sites }; render(); }, saveWinterizingRequest: (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); }, deleteWinterizingRequest() {}, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), saveSite: (x) => putSites([x]), bulkWriteSites: async (list) => { putSites(list); return true; }, saveCottage: (c) => { db = { ...db, cottages: [...db.cottages, c] }; render(); }, readOnly: false, pendingSignups: [], removePendingSignup() {}, confirmPendingSignup() {} }));
     render();
   });
 }
@@ -508,38 +510,456 @@ test("winterizing season planning: auto-plan from the start date, 25 a day (2 he
     const rain = Object.fromEntries(pushBackWinterDay(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
     // It's the 14th and r4, r6 (planned the 13th) weren't finished.
     const carry = Object.fromEntries(carryOverWinter(planned, db, "2026-10-14").map((p) => [p.request.id, p.date]));
-    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)) };
+    return { plan, rain, carry, start: winterBoardStart(winterSeason(db), "2026-10-06"), blockedIsWorkday: winterWorkday("2026-10-15", winterSeason(db)), thanksgiving: [winterSeason(db).closed["2026-10-12"], winterWorkday("2026-10-12", winterSeason(db))] };
   });
   // r6 is kept on the 13th (put there by hand); r1, r2 get the day they asked for; r3 overflows past the
   // blocked 15th to the 16th; r4 and r5 (asked for a day before the season) fill the rest in sign-up order.
   assert.deepEqual(out.plan, { r1: "2026-10-14", r2: "2026-10-14", r3: "2026-10-16", r4: "2026-10-13", r5: "2026-10-16" });
   assert.deepEqual(out.rain, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r5: "2026-10-19" }, "a rain day moves that day and after back a weekday, skipping the blocked day and the weekend");
-  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-16", r3: "2026-10-19", r4: "2026-10-14", r5: "2026-10-19", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend)");
+  assert.deepEqual(out.carry, { r1: "2026-10-16", r2: "2026-10-19", r3: "2026-10-19", r4: "2026-10-14", r6: "2026-10-14" }, "the 13th's unfinished go on the 14th first; what no longer fits moves on a workday (past the blocked 15th and the weekend) - on the 16th, r5 (asked for the 8th) and r1 (asked for the 14th, signed up first) stay");
   assert.equal(out.start, "2026-10-13", "the board opens on the season's first day");
   assert.equal(out.blockedIsWorkday, "2026-10-16");
+  assert.deepEqual(out.thanksgiving, [true, "2026-10-13"], "Thanksgiving Monday is closed and never planned");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: when more are on a day than fit, those who asked for the earliest date keep it, then the earliest sign-ups (auto-plan and the daily tidy-up)", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    // Listed out of order; sign-up times decide (the web form's time, else when it was entered).
+    const asked = [
+      { id: "late", requestedDate: "2026-10-14", submittedAt: "2026-09-20T10:00:00Z", createdAt: "2026-09-01T00:00:00Z" },
+      { id: "first", requestedDate: "2026-10-14", submittedAt: "2026-09-02T10:00:00Z" },
+      { id: "second", requestedDate: "2026-10-14", createdAt: "2026-09-05T10:00:00Z" }
+    ];
+    const plan = autoPlanWinter(asked, db, { today: "2026-10-06", byArea: true }).map((p) => [p.request.id, p.date]);
+    // Already on the 14th (3 there, limit 2): the latest sign-up moves on.
+    const onDay = asked.map((r) => ({ ...r, plannedDate: "2026-10-14" }));
+    const tidy = carryOverWinter(onDay, db, "2026-10-13").map((p) => [p.request.id, p.date]);
+    // Thursday the 15th: one moved there from a full Wednesday (asked for the 14th) beats two who
+    // asked for the 15th - of those, the earlier sign-up stays.
+    const thu = [
+      { id: "wed", requestedDate: "2026-10-14", plannedDate: "2026-10-15", submittedAt: "2026-09-30T00:00:00Z" },
+      { id: "thuLate", requestedDate: "2026-10-15", plannedDate: "2026-10-15", submittedAt: "2026-09-10T00:00:00Z" },
+      { id: "thuEarly", requestedDate: "2026-10-15", plannedDate: "2026-10-15", submittedAt: "2026-09-01T00:00:00Z" }
+    ];
+    const tidyThu = carryOverWinter(thu, db, "2026-10-13").map((p) => [p.request.id, p.date]);
+    return { plan, tidy, tidyThu };
+  });
+  assert.deepEqual(out.plan, [["first", "2026-10-14"], ["second", "2026-10-14"], ["late", "2026-10-15"]]);
+  assert.deepEqual(out.tidy, [["late", "2026-10-15"]]);
+  assert.deepEqual(out.tidyThu, [["thuLate", "2026-10-16"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing park cottages: rentals and unsold inventory are found; they go on the quietest day, move first when a day is full, and step aside for a customer", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [
+      { id: "r1", number: "0301", section: "Rentals", siteType: "Rental Cottage" },
+      { id: "s1", number: "0241", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s2", number: "0242", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s3", number: "0243", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s4", number: "0244", section: "Front of Park", siteType: "Seasonal" },
+      { id: "s5", number: "0245", section: "Front of Park", siteType: "Seasonal", tags: ["QIC Inventory"] },
+      { id: "s6", number: "0246", section: "Front of Park", siteType: "Seasonal" }
+    ];
+    const cottages = [{ id: "ko", name: "Owned unit", siteId: "s6" }, { id: "kt", name: "Tagged unit", siteId: "s5" }, { id: "kr", name: "Rental A", siteId: "r1" }, { id: "k1", name: "Show home", siteId: "s1" }, { id: "k2", name: "Sold one", siteId: "s2" }, { id: "k3", name: "Customer", siteId: "s3" }, { id: "kdone", name: "Already on", siteId: "r1" }];
+    const cottageOrders = [
+      { id: "o1", type: "Display Model", status: "Delivered/Onsite", siteId: "s1", model: "Breckenridge" },
+      { id: "o2", type: "Display Model", status: "Delivered/Onsite", siteId: "s2", soldDate: "2026-09-01" },
+      { id: "o3", type: "Display Model", status: "Ordered/Being Built", siteId: "s3" },
+      { id: "o4", type: "Display Model", status: "Delivered/Onsite", siteId: "s4", model: "Cove" }
+    ];
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2, winterAutoPlaceNew: true }, sites, cottages, cottageOrders, customers: [{ id: "cq", name: "QIC Inventory", siteIds: ["s6"] }], winterizingRequests: [{ id: "x", cottageId: "kdone", parkOwned: "rental" }] };
+    const found = winterParkCottages(db);
+    // Customers: two on Tue 13th, one on Wed 14th, two on Thu 15th; a park cottage goes on Wed (quietest).
+    const reqs = [
+      { id: "a", requestedDate: "2026-10-13", createdAt: "1" }, { id: "b", requestedDate: "2026-10-13", createdAt: "2" },
+      { id: "c", requestedDate: "2026-10-14", createdAt: "3" },
+      { id: "d", requestedDate: "2026-10-15", createdAt: "4" }, { id: "e", requestedDate: "2026-10-15", createdAt: "5" },
+      { id: "p", parkOwned: "rental", cottageId: "kr" }
+    ];
+    const plan = Object.fromEntries(autoPlanWinter(reqs, db, { today: "2026-10-06", byArea: false }).map((x) => [x.request.id, x.date]));
+    // Thursday over the limit with a park cottage on it: the park cottage moves, even though it's first by site.
+    const thu = [{ id: "d", plannedDate: "2026-10-15", requestedDate: "2026-10-15" }, { id: "e", plannedDate: "2026-10-15" }, { id: "p", plannedDate: "2026-10-15", parkOwned: "inventory" }];
+    const tidy = carryOverWinter(thu, db, "2026-10-13").map((x) => [x.request.id, x.date]);
+    // A new customer sign-up asks for Wednesday, full with c and the park cottage: the park cottage steps aside to a quiet day.
+    const wed = [{ id: "a", plannedDate: "2026-10-13" }, { id: "c", plannedDate: "2026-10-14" }, { id: "p", plannedDate: "2026-10-14", parkOwned: "rental" }, { id: "n", requestedDate: "2026-10-14" }];
+    const placed = placeNewWinterSignups(wed, db, "2026-10-06").map((x) => [x.request.id, x.date, !!x.shifted]);
+    return { found: found.list.map((x) => [x.cottage.id, x.kind]), missing: found.unitsWithoutCottage.map((x) => x.unit.id), plan, tidy, placed };
+  });
+  assert.deepEqual(out.found, [["k1", "inventory"], ["kt", "inventory"], ["ko", "inventory"], ["kr", "rental"]], "rental, a site tagged QIC Inventory, one owned by our QIC Inventory customer, and unsold, delivered inventory in Sales; not sold, not on order, not already on the list");
+  assert.deepEqual(out.missing, ["o4"], "an inventory unit with no cottage record is pointed out");
+  assert.deepEqual(out.plan, { a: "2026-10-13", b: "2026-10-13", c: "2026-10-14", d: "2026-10-15", e: "2026-10-15", p: "2026-10-14" });
+  assert.deepEqual(out.tidy, [["p", "2026-10-16"]]);
+  assert.deepEqual(out.placed, [["n", "2026-10-14", false], ["p", "2026-10-13", true]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: Add park cottages puts the rentals on the list, marked Park, with no customer; a rental site with no cottage record gets one", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.locator("[data-park-add]").click();
+  await page.locator("[data-park-list]").getByText("Site 301 \u00B7 Lakeview Rental").waitFor();
+  // Site 302 has no cottage record yet: create one, and it joins the list.
+  await page.locator("[data-park-rental-missing]").getByText("1 rental site doesn't have a cottage record yet (site 302)", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Create 1 cottage record" }).click();
+  await page.locator("[data-park-list]").getByText("Site 302 \u00B7 Rental cottage 302").waitFor();
+  assert.equal(await page.locator("[data-park-rental-missing]").count(), 0);
+  await page.getByRole("button", { name: "Add 2" }).click();
+  assert.equal(await page.evaluate(() => window.__saved.filter((r) => r.parkOwned === "rental").length), 2);
+  const saved = await page.evaluate(() => window.__saved.filter((r) => r.cottageId === "k4"));
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].parkOwned, "rental");
+  assert.equal(saved[0].customerId, null);
+  assert.equal(await page.evaluate((r) => winterOwnerLabel(r, {}), saved[0]), "Park \u00B7 rental cottage");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing maps: each site is found on its section map; colours come from the how-to; a day prints one page per map with its cottages circled", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const pin = (n) => { const p = winterMapPin({ number: n }); return p ? p.map.key : null; };
+    const sites = [
+      { id: "s1", number: "0126", section: "Front of Park", winterHowTo: { code: "BP" } },
+      { id: "s2", number: "0412A", section: "4 Season", winterHowTo: { code: "IN KT W DT" } },
+      { id: "s3", number: "0490", section: "Limestone South" },
+      { id: "s4", number: "1009", section: "Pebble Beach" },
+      { id: "s5", number: "000A", section: "Front of Park", winterHowTo: { code: "DT" } },
+      { id: "s6", number: "9999", section: "Somewhere" }
+    ];
+    const cottages = sites.map((x, i) => ({ id: "k" + i, name: "Cottage " + x.number, siteId: x.id }));
+    const db = { sites, cottages, customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }], settings: {} };
+    const reqs = [{ id: "r1", cottageId: "k0", customerId: "c1", options: { keyAtReception: true }, notes: "Dog in yard" }, { id: "r2", cottageId: "k1", parkOwned: "rental", options: {} }, { id: "r3", cottageId: "k2", options: {} }, { id: "r6", cottageId: "k5", options: {} }];
+    const html = buildWinterMapPages(winterMapEntriesForDay(reqs, db), db, "Tuesday, October 14");
+    const box = document.createElement("div"); box.innerHTML = html;
+    return {
+      pins: ["0126", "0412A", "0490", "1009", "000A", "K1", "0023A", "9999"].map(pin),
+      kinds: [sites[0], sites[1], sites[2]].map((x) => winterMapKinds(x).map((k) => k.letter).join("")),
+      pages: [...box.querySelectorAll(".wmap")].map((p) => [p.querySelector(".meta").textContent, p.querySelectorAll("svg text").length, [...p.querySelectorAll(".wmap-list tr")].length - 1]),
+      firstRow: box.querySelector(".wmap .wmap-list tr:nth-child(2)").textContent,
+      parkRow: [...box.querySelectorAll(".wmap-list tr")].map((r) => r.textContent).find((t) => /0412A/.test(t)),
+      offMap: [...box.querySelectorAll(".wo")].pop().textContent
+    };
+  });
+  assert.deepEqual(out.pins, ["front-of-park", "four-season", "limestone-south", "pebble-beach-west", "front-of-park", "front-of-park", "front-of-park", null]);
+  assert.deepEqual(out.kinds, ["B", "ID", ""]);
+  // Front of Park, 4 Season, Limestone South: one page each, one badge per cottage; 9999 isn't on a map.
+  assert.deepEqual(out.pages, [["Front of Park1 cottage", 1, 1], ["4 Season1 cottage", 1, 1], ["Limestone South1 cottage", 1, 1]]);
+  assert.match(out.firstRow, /0126.*Cottage 0126.*Bo Day.*Bypass.*Key left with reception.*Dog in yard/);
+  assert.match(out.parkRow, /Park · rental cottage/);
+  assert.match(out.offMap, /Not on a map.*9999/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing plan board: a day's Map button and the Section map picker print maps", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.evaluate(() => { window.__printed = []; window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } }); });
+  await page.getByRole("tab", { name: "Plan" }).click();
+  const today = await page.evaluate(() => todayISO());
+  await page.locator(`[data-plan-column="${today}"] [data-day-map]`).click();
+  const day = await page.evaluate(() => window.__printed.pop());
+  assert.match(day, /class="wo wmap"/);
+  assert.match(day, /<svg viewBox=/);
+  await page.locator("[data-section-map]").selectOption("front-of-park");
+  const section = await page.evaluate(() => window.__printed.pop());
+  assert.match(section, /Front of Park — how each site is winterized/);
+  assert.match(section, /5 cottages/, "sites 126, 233, 107, 301 and 302 are all on the Front of Park map");
+  await page.locator("[data-section-map]").selectOption("pebble-beach-west");
+  assert.match(await page.evaluate(() => window.__printed.pop()), /None of these sites are set up in the app yet/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("Admin Storage keeps the park map PDF and every section map, each with open / print / download", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => { window.__printed = []; window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } }); ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(StoragePane)); });
+  await page.locator("[data-storage]").waitFor();
+  const files = await page.locator("[data-storage-file]").evaluateAll((els) => els.map((e) => [e.getAttribute("data-storage-file"), [...e.querySelectorAll("a[download]")].map((a) => a.getAttribute("href")).join()]));
+  assert.deepEqual(files, [["park-map", "maps/park-map.pdf"], ["front-of-park", "maps/front-of-park.jpg"], ["four-season", "maps/four-season.jpg"], ["limestone-south", "maps/limestone-south.jpg"], ["pebble-beach-east", "maps/pebble-beach-east.jpg"], ["pebble-beach-west", "maps/pebble-beach-west.jpg"]]);
+  // Every file it points at is in the repo.
+  for (const [, href] of files) assert.ok(require("fs").existsSync(require("path").join(__dirname, "..", href)), href);
+  await page.locator('[data-storage-file="limestone-south"]').getByRole("button", { name: "Print" }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Limestone South[\s\S]*maps\/limestone-south\.jpg/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("a refresh keeps your place: the open tab, Admin page and email come back after a reload", async () => {
+  const page = await openApp(browser, "stub");
+  const mount = () => page.evaluate(() => {
+    const Probe = () => {
+      const [tab, setTab] = useSessionState("qic-tab", "dashboard");
+      return React.createElement("button", { id: "probe", onClick: () => setTab("winterizing") }, tab);
+    };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Probe));
+  });
+  await mount();
+  assert.equal(await page.locator("#probe").innerText(), "dashboard");
+  await page.locator("#probe").click();
+  await page.locator("#probe", { hasText: "winterizing" }).waitFor();
+  await page.reload();
+  await page.waitForFunction(() => typeof useSessionState === "function");
+  await mount();
+  assert.equal(await page.locator("#probe").innerText(), "winterizing", "still on Winterizing after the refresh");
+  // The Admin settings page remembers its pane the same way.
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AdminSettingsView, { db: { settings: {}, sites: [], activityLog: [] }, persist() {} })));
+  await page.getByRole("button", { name: "Storage" }).click();
+  await page.reload();
+  await page.waitForFunction(() => typeof AdminSettingsView === "function");
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(AdminSettingsView, { db: { settings: {}, sites: [], activityLog: [] }, persist() {} })));
+  await page.locator("[data-storage]").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("typing in an open pop-up makes a refresh ask first; closing it (saved or cancelled) stops asking", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__setOpen = null;
+    const Box = () => {
+      const [open, setOpen] = React.useState(true);
+      const [v, setV] = React.useState("");
+      window.__setOpen = setOpen;
+      return open ? React.createElement(Modal, { title: "New Work Order", onClose: () => setOpen(false) }, React.createElement("input", { id: "f", value: v, onChange: (e) => setV(e.target.value) })) : null;
+    };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Box));
+  });
+  const leaving = () => page.evaluate(() => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
+  await page.locator("#f").waitFor();
+  assert.equal(await leaving(), false, "nothing typed yet");
+  await page.locator("#f").fill("Leaky tap");
+  assert.equal(await leaving(), true, "typed in it: the browser asks before leaving");
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.locator("#f").waitFor({ state: "detached" });
+  assert.equal(await leaving(), false, "closed: no question");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterized email: a friendly date, and the extras said as done (anode rod only once it was replaced)", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: {}, sites: [{ id: "s1", number: "0126" }], cottages: [{ id: "k1", name: "Willow", siteId: "s1" }], customers: [] };
+    const req = { id: "r1", cottageId: "k1", completedDate: "2026-10-15", options: { dishwasher: true, outsideTap: true, anodeRod: true, keyAtReception: true } };
+    const text = (h) => { const d = document.createElement("div"); d.innerHTML = h; return d.textContent.replace(/\s+/g, " "); };
+    return { replaced: text(buildWinterizingEmailText({ ...req, anodeRodReplacedAt: "2026-10-15T15:00:00Z" }, db)), notYet: text(buildWinterizingEmailText(req, db)), subject: winterizedEmailSubject(req, db) };
+  });
+  assert.match(out.replaced, /Thursday, October 15, 2026 · Site 0126/);
+  assert.match(out.replaced, /winterizing for your cottage on Site 0126 has been completed/);
+  assert.doesNotMatch(out.replaced, /Willow/, "the site, not the cottage's name");
+  assert.match(out.replaced, /reach out\.\s*Wishing you a great winter — we'll see you in the spring!\s*— Quinte's Isle Campark Service Department/);
+  assert.equal(out.subject, "Your Cottage Has Been Winterized — Site 0126");
+  assert.match(out.replaced, /Dishwasher drained\s*Outside tap \/ shower drained\s*Anode rod replaced/);
+  assert.doesNotMatch(out.replaced, /Replace the anode rod|Key left with reception|2026-10-15/);
+  assert.doesNotMatch(out.notYet, /Anode rod/, "not listed until it's actually replaced");
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing report: how many were done each day of a week and each week of the season, by section, with totals", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__printed = [];
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } });
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0490", "Limestone South"], ["s4", "0412", "4 Season"]].map(([id, number, section]) => ({ id, number, section }));
+    const done = (id, site, date, extra) => ({ id, cottageId: "k" + site, completed: true, completedDate: date, options: {}, ...extra });
+    const db = { settings: {}, sites, customers: [], cottages: sites.map((x) => ({ id: "k" + x.id, name: "C" + x.number, siteId: x.id })), winterizingRequests: [
+      done("a", "s1", "2026-10-13"), done("b", "s2", "2026-10-13"), done("c", "s3", "2026-10-13"),
+      done("d", "s3", "2026-10-15"), done("e", "s4", "2026-10-20", { parkOwned: "rental" }),
+      { id: "f", cottageId: "ks1", options: {} },
+      done("old", "s1", "2025-10-14", { archived: true })
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(WinterizingReport, { db }));
+  });
+  const table = () => page.locator("[data-report-table] tr").evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent.trim())));
+  await page.getByLabel("Report date").fill("2026-10-14");
+  await page.locator('[data-report-table="week"]').waitFor();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Mon, Oct 12", "–", "–", "–", "0"],
+    ["Tue, Oct 13", "1", "–", "2", "3"],
+    ["Wed, Oct 14", "–", "–", "–", "0"],
+    ["Thu, Oct 15", "1", "–", "–", "1"],
+    ["Fri, Oct 16", "–", "–", "–", "0"],
+    ["Week total", "2", "0", "2", "4"]
+  ]);
+  await page.locator('[data-report-period="day"]').click();
+  await page.getByLabel("Report date").fill("2026-10-13");
+  assert.deepEqual(await table(), [["Section", "Done"], ["Limestone South", "1"], ["Front of Park", "2"], ["Total", "3"]]);
+  await page.locator('[data-report-period="season"]').click();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Week of Oct 12", "2", "–", "2", "4"],
+    ["Week of Oct 19", "–", "1", "–", "1"],
+    ["Season total", "2", "1", "2", "5"]
+  ]);
+  assert.match(await page.locator("[data-report-summary]").innerText(), /5 of 6 signed up winterized · 1 still to do · includes 1 park cottage/);
+  // Last year's (archived) season.
+  await page.getByLabel("Season").selectOption("2025");
+  assert.deepEqual((await table()).pop(), ["Season total", "1", "1"]);
+  await page.getByRole("button", { name: /Print/ }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Winterizing report[\s\S]*2025 season[\s\S]*Season total/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 2 }, cottages: [], sites: [], customers: [], winterizingRequests: [] };
+    const reqs = [
+      { id: "a", plannedDate: "2026-10-18" }, // a Sunday
+      { id: "b", plannedDate: "2026-10-16" },
+      { id: "c", plannedDate: "2026-10-16" },
+      { id: "d", plannedDate: "2026-10-16", requestedDate: "2026-10-16" },
+      { id: "e", plannedDate: "2026-10-16", keepOnDay: true }, // "Put it on Fri anyway"
+      { id: "f", requestedDate: "2026-10-17" }, // not placed yet: left alone
+      { id: "g", plannedDate: "2026-10-17", keepOnDay: true },
+      { id: "h", plannedDate: "2026-10-20", completed: true }
+    ];
+    return carryOverWinter(reqs, db, "2026-10-14").map((p) => [p.request.id, p.date, p.why]);
+  });
+  // Friday keeps the one who asked for it and the one put there on purpose; b and c move to Monday,
+  // where Sunday's a already is, so c (the last) goes on to Tuesday.
+  assert.deepEqual(out, [["a", "2026-10-19", "offDay"], ["b", "2026-10-19", "full"], ["c", "2026-10-20", "full"]]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing on a phone: picking a weekend in Planned for puts it on the Monday", async () => {
+  const page = await openApp(browser, "stub");
+  const info = await page.evaluate(() => {
+    window.__saved = [];
+    window.__toasts = [];
+    const today = todayISO();
+    const add = (n) => winterAddDays(today, n);
+    let sunday = add(7);
+    while (new Date(sunday + "T12:00").getDay() !== 0) sunday = winterAddDays(sunday, 1);
+    let monday = winterAddDays(sunday, 1);
+    let planned = add(1);
+    while (!winterIsWeekday(planned)) planned = winterAddDays(planned, 1);
+    let db = {
+      settings: { winterSeasonStart: add(-10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }],
+      customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }],
+      winterizingRequests: [{ id: "r1", cottageId: "k1", customerId: "c1", plannedDate: planned, options: {} }]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const save = (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); };
+    const render = () => root.render(React.createElement(FieldWinterTab, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, actor: "Dave", saveWinterizingRequest: save, saveInvoice() {}, saveWorkOrder() {}, onGoToDesktopTab() {}, setToast: (t) => window.__toasts.push(t) }));
+    render();
+    return { sunday, monday, planned };
+  });
+  await page.getByRole("tab", { name: "All sign-ups" }).click();
+  await page.locator('[data-field-winter="r1"]').first().click();
+  await page.locator("[data-winter-panel] input[type=date]").fill(info.sunday);
+  await page.waitForFunction(() => window.__saved.length > 0);
+  const saved = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
+  assert.equal(saved.plannedDate, info.monday);
+  assert.equal(saved.keepOnDay, false);
+  assert.match(await page.evaluate(() => window.__toasts.join("|")), /Weekends are off/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: a new sign-up for a full day goes on it when its area has the most there and a smaller area's cottage didn't ask for the day (it moves, marked Moved); earlier sign-ups who asked keep it", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0103", "Front of Park"], ["s4", "0490", "Limestone South"], ["s5", "0495", "Limestone South"], ["s6", "0480", "Limestone South"]].map(([id, number, section]) => ({ id, number, section }));
+    const db = { settings: { winterSeasonStart: "2026-10-13", winterDailyLimit: 3, winterAutoPlaceNew: true }, sites, cottages: sites.map((x, i) => ({ id: "k" + i, siteId: x.id })), customers: [] };
+    const req = (id, k, extra) => ({ id, cottageId: k, ...extra });
+    // Wed 14th is full: 2 Front of Park, 1 Limestone South (who asked for that day).
+    const base = [req("a", "k0", { plannedDate: "2026-10-14" }), req("b", "k1", { plannedDate: "2026-10-14" }), req("c", "k3", { plannedDate: "2026-10-14", requestedDate: "2026-10-14" })];
+    const run = (fresh) => { const all = [...base, fresh]; db.winterizingRequests = all; return placeNewWinterSignups(all, db, "2026-10-06").map((p) => [p.request.id, p.date, p.moved ? p.moved.from + " for " + p.moved.forSection : ""]); };
+    const frontOfPark = run(req("n", "k2", { requestedDate: "2026-10-14" }));
+    const limestone = run(req("n", "k4", { requestedDate: "2026-10-14" }));
+    // Two Limestone South there (one asked for the day), four Front of Park, limit 6: the one who didn't ask moves.
+    db.settings.winterDailyLimit = 6;
+    base.push(req("d", "k5", { plannedDate: "2026-10-14" }), req("e", "k2", { plannedDate: "2026-10-14" }), req("f", "k2", { plannedDate: "2026-10-14" }));
+    const protectedDate = run(req("n", "k2", { requestedDate: "2026-10-14" }));
+    return { frontOfPark, limestone, protectedDate };
+  });
+  assert.deepEqual(out.frontOfPark, [["n", "2026-10-15", ""]], "Limestone South's one asked for the day and signed up earlier, so it keeps it; the new one goes to the next day");
+  assert.deepEqual(out.limestone, [["n", "2026-10-15", ""]], "Limestone South is the smaller area there, so the new one goes to the next day with room");
+  assert.deepEqual(out.protectedDate, [["n", "2026-10-14", ""], ["d", "2026-10-15", "2026-10-14 for Front of Park"]], "the Limestone South cottage that asked for the day stays; the other one moves");
+  // On the Plan board and in the notice.
+  await openWinterizing(page);
+  await page.evaluate(() => window.__addRequest({ id: "m1", cottageId: "k2", customerId: "c2", plannedDate: winterAddDays(todayISO(), 1), movedOnPlan: { from: todayISO(), forSection: "Pebble Beach Seasonal" }, options: {} }));
+  await page.getByRole("tab", { name: "Plan" }).click();
+  await page.locator("[data-new-on-plan]").getByText("1 cottage was moved a day to make room").waitFor();
+  await page.locator('[data-moved="m1"]').getByText("to keep Pebble Beach Seasonal together", { exact: false }).waitFor();
+  await page.locator('[data-plan-card="m1"] [data-moved-tag]').waitFor();
+  await page.locator("[data-new-on-plan]").getByRole("button", { name: "Got it" }).click();
+  await page.locator("[data-new-on-plan]").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => window.__saved.filter((r) => r.id === "m1").pop().movedOnPlan), null);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing: once auto-plan has run, a new sign-up goes on the schedule by itself, marked New until seen", async () => {
+  const page = await openApp(browser, "stub");
+  await openWinterizing(page);
+  await page.getByRole("tab", { name: "Plan" }).click();
+  // Willow and Cedar have requested days; Oak (new, no date) arrives later.
+  await page.getByRole("button", { name: "Auto-plan…" }).click();
+  const planBtn = page.getByRole("button", { name: /^Plan \d+ cottage/ });
+  if (await planBtn.isEnabled()) await planBtn.click(); else await page.getByRole("button", { name: "Cancel" }).click();
+  // Auto-plan turns auto-placing on (set it directly if there was nothing to plan).
+  await page.getByLabel("Put new sign-ups on the schedule").check();
+  const before = await page.evaluate(() => window.__saved.length);
+  await page.evaluate(() => window.__addRequest({ id: "r9", cottageId: "k3", customerId: "c3", options: {} }));
+  await page.locator("[data-new-on-plan]").getByText(/1 new sign-up was put on the schedule/).waitFor();
+  const placed = await page.evaluate((n) => window.__saved.slice(n).find((r) => r.id === "r9"), before);
+  assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(placed.plannedDate), "it got a day");
+  assert.equal(placed.newOnPlan, true);
+  // Nothing is left "Not scheduled" but cottages taken off by hand.
+  assert.equal(await page.locator('[data-plan-column="pool"] [data-plan-card="r9"]').count(), 0);
+  await page.locator("[data-new-on-plan]").getByRole("button", { name: "Got it" }).click();
+  await page.locator("[data-new-on-plan]").waitFor({ state: "detached" });
+  assert.equal(await page.evaluate(() => window.__saved[window.__saved.length - 1].newOnPlan), false);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
 
 test("winterizing plan board: season settings, day counts, blocking a day and the auto-plan preview", async () => {
   const page = await openApp(browser, "stub");
+  // An ordinary open Wednesday, so the board's first day isn't a weekend or
+  // a closed day (it failed on Thanksgiving Monday 2026).
+  await page.clock.setFixedTime(new Date("2026-10-14T10:00:00"));
   await openWinterizing(page);
   await page.getByRole("tab", { name: "Plan" }).click();
   await page.getByLabel("Max per day").fill("1");
-  const today = await page.evaluate(() => todayISO());
-  const col = page.locator(`[data-plan-column="${today}"]`);
+  // Willow asked for today; on a closed day (Thanksgiving) the plan starts
+  // the next open day, so use the day Willow is actually on.
+  const day = await page.locator('[data-plan-card="r1"]').evaluate((el) => el.closest("[data-plan-column]").getAttribute("data-plan-column"));
+  const col = page.locator(`[data-plan-column="${day}"]`);
   assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
-  // Dropping Cedar on a full day offers the next day with room.
+  // Dropping Cedar on a full day offers the next day with room (on a
+  // weekend, it says it's a weekend instead - and there's no "anyway").
   await page.locator('[data-plan-card="r2"]').dragTo(col);
-  await page.getByText("That day is full").waitFor();
+  if (await page.evaluate((d) => winterIsWeekday(d), day)) await page.getByText("That day is full").waitFor();
+  else {
+    await page.getByText("That's a weekend").waitFor();
+    assert.equal(await page.getByRole("button", { name: /anyway/ }).count(), 0);
+  }
   await page.getByRole("button", { name: "Cancel" }).click();
   // Block a day (when the board shows one ahead).
-  const blockBtn = page.getByRole("button", { name: "Block day" }).first();
+  const blockBtn = page.getByRole("button", { name: "Block", exact: true }).first();
   if (await blockBtn.count()) {
     await blockBtn.click();
     await page.getByPlaceholder("e.g. Pebble Beach & By the Woods").fill("Pebble Beach");
     await page.getByRole("button", { name: "Block day" }).last().click();
-    await page.locator("[data-blocked-day]").first().getByText(/Pebble Beach/).waitFor();
+    await page.locator("[data-blocked-day]", { hasText: "Pebble Beach" }).first().waitFor();
   }
   // Print a day's forms in one click.
   await page.evaluate(() => {
@@ -601,10 +1021,11 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
   await page.getByRole("tab", { name: "Plan" }).click();
   const today = await page.evaluate(() => todayISO());
   const inTwo = await page.evaluate(() => winterAddDays(todayISO(), 2));
-  const inOne = await page.evaluate(() => winterAddDays(todayISO(), 1));
+  // The next open workday (not a weekend or closed day like Thanksgiving).
+  const inOne = await page.evaluate(() => winterNextWorkday(todayISO(), winterSeason({ settings: {} })));
   // Cedar is planned for its requested day; Willow for today.
   await page.locator(`[data-plan-column="${today}"] [data-plan-card="r1"]`).waitFor();
-  // Drag Willow to tomorrow (a weekday or not, a dropped-on day shows).
+  // Drag Willow to the next workday (when the board shows it).
   const target = page.locator(`[data-plan-column="${inOne}"]`);
   if (await target.count()) {
     await page.locator('[data-plan-card="r1"]').dragTo(target);
@@ -612,11 +1033,11 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
     assert.deepEqual([moved.id, moved.plannedDate, moved.requestedDate], ["r1", inOne, today]);
     await target.locator('[data-plan-card="r1"]').getByText(/^asked for /).waitFor();
   }
-  // Back to "To plan" takes it off the schedule.
+  // Back to "Not scheduled" takes it off the schedule.
   await page.locator('[data-plan-card="r2"]').dragTo(page.locator('[data-plan-column="pool"]'));
   const off = await page.evaluate(() => window.__saved[window.__saved.length - 1]);
   assert.deepEqual([off.id, off.plannedDate], ["r2", ""]);
-  await page.locator('[data-plan-column="pool"] [data-plan-card="r2"]').getByText("No date").waitFor();
+  await page.locator('[data-plan-column="pool"] [data-plan-card="r2"]').getByText("No day yet").waitFor();
   assert.ok(inTwo);
   // Found a problem: a work order for that site, prefilled.
   await page.locator('[data-plan-card="r2"]').click();
@@ -631,11 +1052,198 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
   await page.close();
 });
 
+test("winterizing how-to: the master list's codes in plain words, imported onto sites, shown and edited on the checklist", async () => {
+  const page = await openApp(browser, "stub");
+  // The real SheetJS (the app's own version), so a real .xlsx goes through the import.
+  await page.addScriptTag({ path: require.resolve("xlsx/dist/xlsx.full.min.js", { paths: [__dirname] }) });
+  const decoded = await page.evaluate(() => ["BP", "IN BT P D", "IN KT W", "BP (ot)", "OD", "DT Left of unit", "BP cz1010", "IN P D"].map((c) => winterHowToSteps(c).steps));
+  assert.deepEqual(decoded, [
+    ["Connect outside at the bypass"],
+    ["Connect inside at the bathroom sink, by the patio door"],
+    ["Connect inside at the kitchen sink, by the window"],
+    ["Connect outside at the bypass", "Outside tap too"],
+    ["On-demand hot water heater"],
+    ["Drain tap \u2014 left of unit"],
+    ["Connect outside at the bypass", "Also on the list: cz1010"],
+    ["Connect inside by the patio door"]
+  ]);
+  await openWinterizing(page);
+  // The master list: 126 written without leading zeros still finds its site; 999 isn't one.
+  const file = await page.evaluate(() => {
+    const ws = XLSX.utils.json_to_sheet([
+      { Unit_ID: 126, Master: "X", Instructions: "IN BT P D", Notes: "Outside Shower" },
+      { Unit_ID: 233, Master: "", Instructions: "BP", Notes: "" },
+      { Unit_ID: 107, Master: "", Instructions: "", Notes: "" },
+      { Unit_ID: 999, Master: "", Instructions: "BP", Notes: "" }
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "list");
+    return XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+  });
+  await page.getByRole("button", { name: "How-to list\u2026" }).click();
+  await page.getByLabel("Master list file").setInputFiles({ name: "winterization_master_list.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(file, "base64") });
+  await page.getByText("2 sites matched").waitFor();
+  await page.getByText("Not found in Sites (skipped): 999").waitFor();
+  await page.getByRole("button", { name: "Save to 2 sites" }).click();
+  await page.getByText("Saved \u2014 2 sites updated", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Close", exact: true }).last().click();
+  // On Willow's checklist (site 126), first thing.
+  await page.locator('[data-winter-row="r1"]').click();
+  const box = page.locator("[data-winter-howto]");
+  await box.getByText("Connect inside at the bathroom sink, by the patio door").waitFor();
+  await box.getByText("Outside Shower").waitFor();
+  await box.getByText("Our master key works", { exact: false }).waitFor();
+  // A one-off change.
+  await box.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("How-to code").fill("BP");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator("[data-winter-howto]").getByText("Connect outside at the bypass").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing on a phone keeps the simple list", async () => {
   const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
   await openWinterizing(page);
   await page.getByText(/^Pending \(/).first().waitFor();
   assert.equal(await page.getByRole("tab", { name: "Plan" }).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("winterizing in the field app: the crew's day, a checklist to finish each cottage, carry-over, all sign-ups", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 }, touch: true });
+  const info = await page.evaluate(() => {
+    window.__saved = [];
+    window.__toasts = [];
+    window.__workOrders = [];
+    const today = todayISO();
+    const add = (n) => winterAddDays(today, n);
+    let db = {
+      settings: { winterSeasonStart: add(-10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal", winterHowTo: { code: "IN KT W", note: "", masterKey: true } }, { id: "s2", number: "0233", section: "Limestone South" }, { id: "s3", number: "0107", section: "Pebble Beach Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Cedar", siteId: "s2" }, { id: "k3", name: "Maple", siteId: "s3" }],
+      customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", siteIds: ["s1"] }, { id: "c2", name: "Gary C", siteIds: ["s2"] }, { id: "c3", name: "Anne Lee", siteIds: ["s3"] }],
+      winterizingRequests: [
+        { id: "r1", cottageId: "k1", customerId: "c1", requestedDate: today, notes: "Dog in the yard \u2014 close the gate.", options: { outsideTap: true } },
+        { id: "r2", cottageId: "k2", customerId: "c2", requestedDate: add(1), options: {} },
+        { id: "r3", cottageId: "k3", customerId: "c3", plannedDate: add(-3), options: {} }
+      ]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("test"));
+    const save = (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); };
+    const render = () => root.render(React.createElement(FieldWinterTab, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; render(); }, actor: "Dave", saveWinterizingRequest: save, saveInvoice() {}, saveWorkOrder: (wo) => window.__workOrders.push(wo), onGoToDesktopTab() {}, setToast: (t) => window.__toasts.push(t) }));
+    render();
+    return { today, carryTo: winterFirstWorkday(winterSeason(db), today) };
+  });
+  // Maple wasn't finished 3 days ago, so it moved on by itself.
+  await page.locator("[data-carry-notice]").waitFor();
+  const maple = await page.evaluate(() => window.__saved.find((r) => r.id === "r3"));
+  assert.equal(maple.plannedDate, info.carryTo);
+  // The day opens on today, area by area.
+  assert.equal(await page.locator("[data-field-winter-day]").getAttribute("data-field-winter-day"), info.today);
+  const willow = page.locator('[data-field-winter="r1"]');
+  await willow.getByText("Dog in the yard", { exact: false }).waitFor();
+  await willow.getByText("Inside \u00B7 kitchen sink \u00B7 \uD83D\uDD11 master key", { exact: false }).waitFor();
+  await page.getByRole("heading", { name: "Pebble Beach Seasonal", exact: false }).first().waitFor();
+  // Open it: the checklist has to be ticked before it can be marked done.
+  await willow.click();
+  const done = page.getByRole("button", { name: /^Mark winterized/ });
+  await page.locator("[data-winter-howto]").getByText("Connect inside at the kitchen sink, by the window").waitFor();
+  assert.equal(await done.isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "Print" }).count(), 0, "no printing from the phone");
+  assert.equal(await page.getByRole("button", { name: "Edit sign-up" }).count(), 0);
+  await page.getByRole("button", { name: "Found a problem" }).waitFor();
+  for (const box of await page.locator("[data-winter-panel] input[type=checkbox]").all()) await box.check();
+  await done.click();
+  await page.locator("[data-winter-panel]").waitFor({ state: "detached" });
+  const saved = await page.evaluate(() => ({ r1: window.__saved.filter((r) => r.id === "r1").pop(), toast: window.__toasts.pop() }));
+  assert.equal(saved.r1.completed, true);
+  assert.equal(saved.r1.completedDate, info.today);
+  assert.equal(saved.toast, "Site 0126 winterized");
+  await page.getByText("Winterized today (1)").waitFor();
+  // The next day has Cedar.
+  await page.getByRole("button", { name: "Next day" }).click();
+  await page.locator('[data-field-winter="r2"]').waitFor();
+  await page.getByRole("button", { name: "Back to today" }).click();
+  // Every sign-up, searchable.
+  await page.getByRole("tab", { name: "All sign-ups" }).click();
+  await page.getByText("Winterized (1)").waitFor();
+  await page.getByLabel("Search winterizing").fill("cedar");
+  await page.locator('[data-field-winter="r2"]').waitFor();
+  assert.equal(await page.locator("[data-field-winter]").count(), 1);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("customer page: hydro bills for Admin, Accounting, the Service Manager and Office; not Sales", async () => {
+  const page = await openApp(browser, "stub");
+  const show = (email) => page.evaluate((who) => {
+    const db = { settings: { taxRate: 13 }, userRoles: { "boss@qicampark.com": "admin", "mgr@qicampark.com": "manager", "reserve@qicampark.com": "office", "sales@qicampark.com": "salesmanager" },
+      sites: [{ id: "s1", number: "0412A", ownerId: "c1" }], cottages: [], workOrders: [], quotes: [], invoices: [], correspondence: [],
+      customers: [{ id: "c1", name: "Bo Day", siteIds: ["s1"] }, { id: "c2", name: "Al Other", siteIds: [] }],
+      hydroReadings: [
+        { id: "h1", siteId: "s1", ownerAtReading: "c1", status: "invoiced", invoiceNumber: "HYD-26-0003", invoicedAt: "2026-10-02", date: "2026-10-01", previousReading: 1200, reading: 1450, usage: 250, amount: 45.2, taxAmount: 5.2, emailStatus: "not-emailed" },
+        { id: "h2", siteId: "s1", ownerAtReading: "c2", status: "invoiced", invoiceNumber: "HYD-26-0001", date: "2026-05-01", reading: 1200, usage: 100, amount: 20, taxAmount: 2.3 },
+        { id: "h3", siteId: "s1", ownerAtReading: "c1", status: "pending", date: "2026-10-05", reading: 1500 }
+      ] };
+    const root = document.getElementById("test");
+    root.innerHTML = "";
+    ReactDOM.createRoot(root).render(React.createElement(CurrentUserContext.Provider, { value: who }, React.createElement(CustomerDetailModal, { customer: db.customers[0], db, persist() {}, onClose() {}, onEdit() {}, variant: "drawer" })));
+  }, email);
+  for (const who of ["mgr@qicampark.com", "reserve@qicampark.com"]) {
+    await show(who);
+    await page.getByRole("button", { name: /^Hydro bills/ }).click();
+    const bill = page.locator('[data-customer-hydro-bill="h1"]');
+    await bill.getByText("HYD-26-0003 \u00B7 Site 0412A").waitFor();
+    await bill.getByText("$45.20").waitFor();
+    await bill.getByText("1200 \u2192 1450 \u00B7 250 kWh \u00B7 Not emailed", { exact: false }).waitFor();
+    assert.equal(await page.locator("[data-customer-hydro-bill]").count(), 1, `only this customer's billed readings (${who})`);
+    await bill.getByRole("button", { name: "View" }).click();
+    const frame = page.frameLocator('[data-hydro-bill-view="h1"]');
+    await frame.getByText("HYD-26-0003", { exact: false }).first().waitFor();
+    await page.getByRole("button", { name: "Close", exact: true }).last().click();
+    await page.locator("[data-hydro-bill-view]").waitFor({ state: "detached" });
+  }
+  await show("sales@qicampark.com");
+  await page.getByRole("button", { name: /^Work Orders/ }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /^Hydro bills/ }).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("customers: taking over or giving up a site on the form asks if it's a sale and offers Transfer Ownership", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__sites = [];
+    window.__customers = [];
+    let db = { ...emptyDb(), sites: [{ id: "s1", number: "0042" }], cottages: [{ id: "k1", name: "Loon", siteId: "s1" }], customers: [{ id: "c1", name: "Robert Smith", siteIds: ["s1"] }, { id: "c2", name: "Bea Buyer", siteIds: [] }] };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const render = () => root.render(React.createElement(CustomersView, { db, persist: (n) => { db = n; render(); }, saveCustomer: (c) => window.__customers.push(c), deleteCustomer() {}, saveWorkOrder() {}, saveCorrespondence() {}, saveCottage() {}, saveSite: (x) => window.__sites.push(x), canTransfer: true }));
+    window.__commits = [];
+    render();
+  });
+  // Bea's form: adding Robert's site.
+  await page.getByRole("button", { name: "Bea Buyer" }).first().click();
+  await page.getByRole("button", { name: "Edit Customer" }).click();
+  await page.getByPlaceholder("Search sites to add\u2026").fill("0042");
+  await page.getByText("Site 0042", { exact: true }).last().click();
+  const note = page.locator("[data-sale-check]");
+  await note.getByText("Site 0042 belongs to Robert Smith.").waitFor();
+  await note.getByText("Is this a sale?", { exact: false }).waitFor();
+  await note.getByRole("button", { name: "Transfer Ownership instead" }).click();
+  // The transfer opens with Bea already picked; completing it records the sale.
+  await page.getByRole("button", { name: "Complete Transfer" }).click();
+  const site = await page.evaluate(() => window.__sites[0]);
+  assert.equal(site.transferHistory[0].fromCustomerName, "Robert Smith");
+  assert.equal(site.transferHistory[0].toCustomerName, "Bea Buyer");
+  assert.equal(await page.evaluate(() => window.__customers.length), 0, "the form's own save didn't happen");
+  // Robert's form: removing his site says the same.
+  await page.getByRole("button", { name: "\u2190 All customers" }).click();
+  await page.getByRole("button", { name: "Robert Smith" }).first().click();
+  await page.getByRole("button", { name: "Edit Customer" }).click();
+  await page.getByRole("button", { name: "Remove site" }).click();
+  await page.locator("[data-sale-check]").getByText("Removing Site 0042.").waitFor();
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -680,6 +1288,30 @@ test("correspondence: voicemails show who called, are never linked or grouped, a
   await page.close();
 });
 
+test("correspondence: an email someone moved to Done in Zoho is tagged \"Done in Zoho\"", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { settings: {}, activityLog: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
+      correspondence: [
+        { id: "z", direction: "in", status: "handled", handledInZoho: true, customerId: "c1", fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips", receivedAt: "2026-10-02T12:00:00Z" },
+        { id: "h", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "Deck", body: "Soft boards", receivedAt: "2026-10-01T12:00:00Z" },
+        { id: "u", direction: "in", status: "handled", handledInZoho: true, fromEmail: "news@shop.com", subject: "Sale", body: "Big sale", receivedAt: "2026-10-03T12:00:00Z" }
+      ] };
+    window.__db = db;
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+  });
+  await page.locator("[data-done-in-zoho]").first().waitFor();
+  assert.equal(await page.locator("[data-done-in-zoho]").count(), 2, "Anne's row (her newest was moved in Zoho) and the unmatched one");
+  // Opened: the unmatched email's page and the customer's conversation say so too.
+  await page.getByText("news@shop.com").first().click();
+  await page.getByText("Done in Zoho").nth(2).waitFor();
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
+  await page.locator("#test").getByText("The tap drips").waitFor();
+  assert.equal(await page.locator("#test").getByText("Done in Zoho", { exact: true }).count(), 1);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: every message in a customer's conversation can be deleted (to Trash)", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => {
@@ -708,14 +1340,15 @@ test("correspondence: every message in a customer's conversation can be deleted 
   const trash = await page.evaluate(() => window.__persisted[window.__persisted.length - 1].trash);
   assert.equal(trash[0].data.id, "b");
   const calls = await page.evaluate(() => window.__calls);
-  assert.deepEqual(calls.map(([n, d]) => [n, d.direction, d.toEmail, d.subject, d.receivedAt]), [["trashEmailInZoho", "out", "anne@x.com", "Re: First", "2026-10-01T13:00:00Z"]], "its copy in Zoho goes to Zoho's Trash too");
+  assert.deepEqual(calls.filter(([n]) => n === "markEmailReadInZoho").map(([, d]) => [d.fromEmail, d.subject]), [["anne@x.com", "Second"]], "opening the email marks it read in Zoho, once");
+  assert.deepEqual(calls.filter(([n]) => n === "trashEmailInZoho").map(([n, d]) => [n, d.direction, d.toEmail, d.subject, d.receivedAt]), [["trashEmailInZoho", "out", "anne@x.com", "Re: First", "2026-10-01T13:00:00Z"]], "its copy in Zoho goes to Zoho's Trash too");
   await card("Older message").waitFor();
   assert.equal(await card("Duplicate copy").count(), 0);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
 
-test("trash: a deleted email can be read before restoring, and says where it was deleted", async () => {
+test("trash: deleted emails have their own tab; one can be read before restoring, and says where it was deleted", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => {
     window.__restored = [];
@@ -726,7 +1359,14 @@ test("trash: a deleted email can be read before restoring, and says where it was
     ] };
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(TrashModal, { db, persist() {}, saveCorrespondence: (c) => window.__restored.push(c), onClose() {} }));
   });
+  // The main Trash opens on everything but emails.
+  await page.getByText("Site 0001").waitFor();
+  assert.equal(await page.getByText("Deleted in Zoho").count(), 0, "emails aren't mixed in");
+  assert.equal(await page.locator("[data-trash-tab=emails]").innerText(), "Emails (1)");
+  assert.equal(await page.locator("[data-trash-tab=other]").innerText(), "Everything else (1)");
+  await page.locator("[data-trash-tab=emails]").click();
   await page.getByText("Deleted in Zoho").waitFor();
+  assert.equal(await page.getByText("Site 0001").count(), 0);
   assert.equal(await page.getByRole("button", { name: "View" }).count(), 1, "only emails have View");
   await page.getByRole("button", { name: "View" }).click();
   const shown = await page.locator("[data-trash-email]").innerText();
@@ -734,6 +1374,42 @@ test("trash: a deleted email can be read before restoring, and says where it was
   assert.match(shown, /The tap leaks\.\s+Thanks, Anne/);
   await page.getByRole("button", { name: "Restore" }).first().click();
   assert.deepEqual(await page.evaluate(() => window.__restored.map((c) => c.id)), ["e1"]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("correspondence: Deleted emails opens the Trash on its Emails tab", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__opened = 0;
+    const db = { customers: [], correspondence: [], activityLog: [], trash: [
+      { id: "t1", type: "correspondence", data: { id: "e1" }, label: "Email \u2014 Leak", deletedAt: "2026-10-05T12:00:00Z" },
+      { id: "t2", type: "site", data: { id: "s1" }, label: "Site 0001", deletedAt: "2026-10-04T12:00:00Z" }
+    ] };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const view = (props) => React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {}, ...props });
+    const App = () => {
+      const [open, setOpen] = React.useState(false);
+      return React.createElement(React.Fragment, null, view({ onOpenEmailTrash: () => setOpen("emails") }), open && React.createElement(TrashModal, { db, persist() {}, initialTab: open, onClose: () => setOpen(false) }));
+    };
+    root.render(React.createElement(App));
+  });
+  await page.locator("[data-email-trash]").click();
+  await page.getByText("Email \u2014 Leak").waitFor();
+  assert.equal(await page.locator("[data-email-trash]").innerText(), "Deleted emails (1)");
+  assert.equal(await page.getByText("Site 0001").count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("correspondence: no Deleted emails button for people who can't open Trash", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { customers: [], correspondence: [], activityLog: [], trash: [] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+  });
+  await page.getByText("Canned Replies").waitFor();
+  assert.equal(await page.locator("[data-email-trash]").count(), 0);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -769,12 +1445,12 @@ test("invoice form: typing in a line's description offers parts, labour rates an
   assert.equal(await desc().count(), 5);
 
   // Shop supplies: 5% of parts + labour, kept up to date; it can be picked by typing too.
-  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$12.00", "5% of $20 parts + $220 labour");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$15.50", "5% of $20 parts + $220 labour + $70 service call");
   await page.getByLabel("Hours").fill("3");
-  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$17.50");
+  assert.equal(await page.locator("[data-shop-amount]").innerText(), "$21.00", "5% of $20 + $330 labour + $70 service call");
   await page.getByLabel("Hours").fill("2");
   await desc().nth(4).fill("shop");
-  await page.getByRole("option", { name: /Shop supplies.*5% of parts \+ labour/ }).waitFor();
+  await page.getByRole("option", { name: /Shop supplies.*5% of parts, labour \+ service call/ }).waitFor();
   await desc().nth(4).fill("");
   assert.equal(await page.getByText("Shop Supplies", { exact: true }).count(), 0, "no separate shop supplies box");
   assert.equal(await page.getByPlaceholder("Add from parts…").count(), 0, "no separate parts picker");
@@ -782,12 +1458,15 @@ test("invoice form: typing in a line's description offers parts, labour rates an
 
   await page.getByRole("button", { name: "Save Invoice" }).click();
   const inv = await page.evaluate(() => window.__saved[0]);
-  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 12, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
+  assert.deepEqual(inv.lineItems.map((l) => [l.kind || "part", l.description, l.quantity, l.unitPrice, l.account]), [["shopSupplies", "Shop supplies", 1, 15.5, ""], ["labour", "Labour — Service Tech", 2, 110, "4037"], ["part", "Washer", 1, 20, "4010"], ["serviceCall", "Service call — Tech", 1, 70, ""]]);
   assert.equal(inv.lineItems[0].percent, 5);
   assert.equal(inv.shopSuppliesPercent, 0, "shop supplies is the line, not the old field");
   const t = await page.evaluate((i) => computeQuoteTotals(i, 13), inv);
-  // Shop supplies: 5% of parts + labour, not the service call.
-  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 12, 70, 322]);
+  // Shop supplies: 5% of parts + labour + the service call.
+  assert.deepEqual([t.lineItemsSubtotal, t.laborCost, t.shopSupplies, t.serviceCall, t.subtotal], [20, 220, 15.5, 70, 325.5]);
+  // An invoice saved before the change keeps its amount (its line isn't marked withServiceCall).
+  const old = await page.evaluate(() => computeQuoteTotals({ lineItems: [{ description: "Caulking Tube", quantity: 2, unitPrice: 18.21 }, { kind: "serviceCall", description: "Service call", quantity: 1, unitPrice: 50 }, { kind: "shopSupplies", description: "Shop supplies", percent: 5, quantity: 1, unitPrice: 1.82 }] }, 13));
+  assert.deepEqual([old.shopSupplies, Math.round(old.total * 100) / 100], [1.82, 99.71]);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -851,7 +1530,7 @@ test("cottage appliances: range and fireplace types, with make, model, year and 
     window.__saved = [];
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ApplianceForm, { initial: null, onSave: (a) => window.__saved.push(a), onCancel() {} }));
   });
-  assert.deepEqual(await page.locator("select option").allInnerTexts(), ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace"]);
+  assert.deepEqual(await page.locator("select option").allInnerTexts(), ["AC Unit", "Hot Water Tank", "Furnace", "Range", "Fireplace", "Refrigerator", "Microwave", "Generator", "Other"]);
   await page.locator("select").selectOption("Fireplace");
   await page.getByLabel("Make").fill(" Napoleon ");
   await page.getByLabel("Model").fill("GX70");
@@ -888,6 +1567,28 @@ test("hydro areas still find sites A-D and K1-K5 after the 4-digit change, and 0
   const page = await openApp(browser, "stub");
   const groups = await page.evaluate(() => groupSitesByHydroRange(["1046", "0001", "000B", "0412A", "K1", "000A", "0256", "0500"].map((n, i) => ({ id: String(i), number: n }))).map((g) => `${g.label}: ${g.sites.map((s) => s.number).join(" ")}`));
   assert.deepEqual(groups, ["Front of Park: 000A 000B K1 0001 0256", "4 Season: 0412A", "Limestone South: 0500", "Pebble Beach: 1046"]);
+  await page.close();
+});
+
+test("propane forms still show the tanks after parts were re-entered (new ids, slightly different names)", async () => {
+  const page = await openApp(browser, "stub");
+  const out = await page.evaluate(() => {
+    // Parts re-entered after the SKU loss: new ids, "100 lb Propane Refill" instead of "100lb Propane Refill Filled".
+    const db = { ...emptyDb(), parts: [{ id: "buy100", name: "100lb Propane Tank (New)", price: 260 }, { id: "new100", name: "100 lb Propane Refill", price: 95 }, { id: "new20", name: "20lb Propane Tank Filled", price: 25 }, { id: "x", name: "Washer", price: 2 }], cottages: [{ id: "k1", name: "Loon", siteId: "s1" }], sites: [{ id: "s1", number: "0042" }] };
+    const old = { id: "r1", cottageId: "k1", requestedDate: "2026-10-08", run: "10am", partsUsed: [{ partId: "gone100", quantity: 1, name: "100lb Propane Refill Filled" }] };
+    const orphan = { id: "r2", cottageId: "k1", requestedDate: "2026-10-08", partsUsed: [{ partId: "gone", quantity: 2 }] };
+    return {
+      tanks: tankPartsFor(db).map((p) => p.id),
+      oldForm: buildPropaneRequestHtml(old, db).replace(/<[^>]+>/g, " ").replace(/\s+/g, " "),
+      orphanForm: buildPropaneRequestHtml(orphan, db).replace(/<[^>]+>/g, " ").replace(/\s+/g, " "),
+      default100: (findTankPart(db.parts, "100lb Propane Refill Filled") || {}).id
+    };
+  });
+  assert.deepEqual(out.tanks, ["new20", "new100"], "tank sizes are found by size when the name differs");
+  assert.equal(out.default100, "new100", "the refill, not the new tank listed before it");
+  assert.match(out.oldForm, /1× 100 lb Propane Refill/, "a request saved before the parts were re-entered finds the new part by name");
+  assert.match(out.orphanForm, /2× Part no longer in Parts/, "a line whose part is gone still shows, not a blank form");
+  assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
 
@@ -1120,5 +1821,66 @@ test("correspondence: messages not linked to anyone are grouped by the other per
     { id: "5", direction: "out", toEmail: "z@y.com", customerId: "c1" }
   ]).map((r) => r.ids));
   assert.deepEqual(rows, [["1", "2"], ["3"], ["4", "5"]]);
+  await page.close();
+});
+
+test("editing a record keeps the fields its form doesn't show (plan dates, extra emails, links)", async () => {
+  const page = await openApp(browser, "stub");
+  const db = { sites: [{ id: "a", number: "1051" }], cottages: [{ id: "k1", name: "Loon", siteId: "a" }], customers: [{ id: "c1", name: "Rob", siteIds: ["a"] }], settings: {} };
+  const cases = [
+    { form: "WinterizingRequestForm", props: { db }, initial: { id: "w1", cottageId: "k1", customerId: "c1", requestedDate: "2026-10-20", options: {}, plannedDate: "2026-10-21", newOnPlan: true }, button: "Save Sign-Up", kept: ["plannedDate", "newOnPlan"] },
+    { form: "PropaneRequestForm", props: { db }, initial: { id: "p1", cottageId: "k1", requestedDate: "2026-10-20", run: "Tuesday", payment: "Bill", partsUsed: [], archived: true }, button: "Save Request", kept: ["archived"] },
+    { form: "CustomerForm", props: { sites: db.sites, customers: db.customers }, initial: { id: "c1", name: "Rob", siteIds: ["a"], matchEmails: ["bob@y.com"] }, button: "Save Customer", kept: ["matchEmails"] },
+    { form: "QuoteForm", props: { sites: db.sites, cottages: db.cottages, customers: db.customers, parts: [], quotes: [], taxRate: 13, templates: [], rateOptions: [], serviceCallOptions: [] }, initial: { id: "q1", title: "Deck", date: "2026-10-01", status: "Accepted", lineItems: [], commentLog: [], workOrderId: "w9" }, button: "Save Quote", kept: ["workOrderId"] }
+  ];
+  for (const c of cases) {
+    await page.evaluate(({ form, props, initial }) => {
+      window.__saved = null;
+      document.getElementById("root").innerHTML = "";
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(window[form] || eval(form), { ...props, initial, onSave: (x) => { window.__saved = x; }, onCancel() {} }));
+    }, c);
+    await page.getByRole("button", { name: c.button }).click();
+    const saved = await page.evaluate(() => window.__saved);
+    assert.ok(saved, `${c.form} saved`);
+    for (const k of c.kept) assert.deepEqual(saved[k], c.initial[k], `${c.form} keeps ${k}`);
+  }
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("propane: a new request (e.g. from an email in Correspondence) starts with one 100lb refill; an edit keeps its own tanks", async () => {
+  const page = await openApp(browser, "stub");
+  const db = { sites: [{ id: "a", number: "1051" }], cottages: [{ id: "k1", name: "Loon", siteId: "a" }], customers: [{ id: "c1", name: "Rob", siteIds: ["a"] }], settings: {},
+    parts: [{ id: "new100", name: "100lb Propane Tank (New)" }, { id: "fill100", name: "100lb Propane Refill Filled" }, { id: "fill20", name: "20lb Propane Tank Filled" }] };
+  const run = async (initial) => {
+    await page.evaluate(({ db, initial }) => {
+      window.__saved = null;
+      document.getElementById("root").innerHTML = "";
+      ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(QuickPropaneRequestModal, { db, initial, savePropaneRequest: (x) => { window.__saved = x; }, onClose() {} }));
+    }, { db, initial });
+    await page.getByRole("button", { name: /Save Request|Create Request|Add Request/ }).click();
+    return page.evaluate(() => window.__saved);
+  };
+  // As Correspondence opens it: customer and cottage filled in, the email as the note.
+  const fromEmail = await run({ cottageId: "k1", customerId: "c1", notes: "Please fill my 100lb tank" });
+  assert.deepEqual(fromEmail.partsUsed, [{ partId: "fill100", quantity: 1, name: "100lb Propane Refill Filled" }]);
+  const edited = await run({ id: "p1", cottageId: "k1", customerId: "c1", requestedDate: "2026-10-20", run: "Tuesday", partsUsed: [{ partId: "fill20", quantity: 2, name: "20lb Propane Tank Filled" }] });
+  assert.deepEqual(edited.partsUsed, [{ partId: "fill20", quantity: 2, name: "20lb Propane Tank Filled" }]);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("a Save that can't save yet says what's missing", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__saved = null;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    ReactDOM.createRoot(host).render(React.createElement(SiteForm, { initial: null, sites: [], onSave: (x) => { window.__saved = x; }, onCancel() {} }));
+  });
+  await page.getByRole("button", { name: "Save Site" }).click();
+  await page.getByRole("alert").filter({ hasText: "Add a site number to save." }).waitFor();
+  assert.equal(await page.evaluate(() => window.__saved), null);
+  assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

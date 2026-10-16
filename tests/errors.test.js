@@ -4,7 +4,7 @@
 const { test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { launch, openApp } = require("./helpers/app");
-const { resetData, readCollection, writeDoc, cleanup } = require("./helpers/emulator");
+const { resetData, readCollection, readDoc, writeDoc, cleanup } = require("./helpers/emulator");
 const { mountWithDb, waitFor } = require("./helpers/screens");
 
 let browser;
@@ -78,5 +78,39 @@ test("Admins see errors grouped in System Health and can clear them", async () =
   await waitFor(async () => !(await readCollection("clientErrors")).some((e) => e.message === "Ancient"), "records over 30 days old to be cleared");
   await page.getByRole("button", { name: "Clear" }).first().click();
   await waitFor(async () => (await readCollection("clientErrors")).length === 2 || (await readCollection("clientErrors")).length === 1, "a group to be cleared");
+  await page.close();
+});
+
+test("Email Intake: the Zoho inbox check shows how it compares with Flow, and switches on with a confirm", async () => {
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), compare: { since: "2026-10-09T12:00:00Z", checked: 12, matched: 11, missedCount: 1, missed: [{ messageId: "m1", from: "news@shop.com", subject: "Fall sale", at: "2026-10-09T13:00:00Z" }] } });
+  const page = await openApp(browser, "emulator", { role: "admin", email: "boss@qicampark.com" });
+  await mountWithDb(page, `(api) => React.createElement(CurrentUserContext.Provider, { value: "boss@qicampark.com" }, React.createElement(EmailIntakePane, { db: api.db, persist: api.persist }))`);
+  const box = page.locator("[data-zoho-inbox]");
+  await box.locator("[data-zoho-compare]").getByText("11 of 12").waitFor();
+  await box.getByText("news@shop.com", { exact: false }).waitFor();
+  await box.getByRole("button", { name: "Switch on" }).click();
+  await box.getByRole("button", { name: "Yes, switch on" }).click();
+  await box.getByText("On", { exact: true }).waitFor();
+  await waitFor(async () => { const d = await readDoc("campground/data"); return d && d.settings && d.settings.emailIntakeDirect === true; }, "the switch to be saved");
+  // The Done folder: how to set it up, then what it's done once it's there.
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: false, checkedAt: new Date().toISOString() } });
+  await box.locator("[data-zoho-done='off']").getByText('Make a folder called "Done"', { exact: false }).waitFor();
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: true, checkedAt: new Date().toISOString(), movedTotal: 4, handledTotal: 2 } });
+  await box.locator("[data-zoho-done='on']").getByText("4 moved to Done, 2 marked handled from Zoho", { exact: false }).waitFor();
+  await page.close();
+});
+
+test("A save by someone who can't change app settings keeps the saved settings and still goes through", async () => {
+  await writeDoc("campground/data", { settings: { taxRate: 13 }, activityLog: [], staff: [], parts: [], workOrderTemplates: [], loginCodes: { k: { required: true, codes: ["1"] } }, userRoles: { "boss@qicampark.com": "admin", "dave@qicampark.com": "office" } });
+  const page = await openApp(browser, "emulator", { role: "office", email: "dave@qicampark.com" });
+  await mountWithDb(page, "(api) => React.createElement('div', null, 'ready')");
+  // A screen holding an older copy (tax 10, no sign-in codes) saves the activity log.
+  const ok = await page.evaluate(() => window.__api.persist({ ...window.__api.db, settings: { taxRate: 10, coupleNamesReviewed: ["c1"] }, loginCodes: {}, activityLog: [{ id: "a1", text: "hi" }] }));
+  assert.equal(ok, true);
+  const saved = await readDoc("campground/data");
+  assert.equal(saved.settings.taxRate, 13);
+  assert.deepEqual(saved.settings.coupleNamesReviewed, ["c1"]);
+  assert.deepEqual(saved.loginCodes, { k: { required: true, codes: ["1"] } });
+  assert.equal(saved.activityLog[0].text, "hi");
   await page.close();
 });
