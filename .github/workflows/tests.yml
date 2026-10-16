@@ -7,6 +7,10 @@ on:
   push:
     branches: [main]
 
+# Only needs to read the code.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

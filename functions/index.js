@@ -326,7 +326,7 @@ function isContactFormName(name) {
 // from the subject. Returns { callerName, callerNumber, to } or null.
 function parseVoicemail(subject, plainBody) {
   const subj = toStr(subject);
-  if (!/^\s*((re|fwd?|fw)\s*:\s*)*v-?mail from\b/i.test(subj) && !/you have a new voicemail from/i.test(plainBody || "")) return null;
+  if (!/^\s*((?:re|fwd?)\s*:\s*)*v-?mail from\b/i.test(subj) && !/you have a new voicemail from/i.test(plainBody || "")) return null;
   const phone = "(\\(?\\d{3}\\)?[\\s.-]*\\d{3}[\\s.-]*\\d{4})";
   const nice = (name) => {
     const n = toStr(name).replace(/^from\s+/i, "");
@@ -495,24 +495,34 @@ async function triageCorrespondence(subject, body) {
 // correspondence arrives as full HTML (tags, signature markup, entities),
 // but the Correspondence thread in the app displays `body` as plain text
 // by design, so it needs to be clean before it's written to Firestore.
+// Repeats a replace until nothing changes, so a tag split around another
+// ("<scr<script></script>ipt>") can't survive one pass.
+function replaceAll(text, pattern, value) {
+  let prev;
+  do {
+    prev = text;
+    text = text.replace(pattern, value);
+  } while (text !== prev);
+  return text;
+}
 function htmlToPlainText(html) {
   if (!html) return "";
-  return html
-    // A plain-text "Name <name@example.com>" (e.g. a forwarded message's
-    // From: line) isn't a tag - set the address aside so it survives.
-    .replace(/<([\w.+-]+@[\w-]+(?:\.[\w-]+)+)>/g, "\u0001$1\u0002")
-    .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/<meta[^>]*>/gi, "")
-    .replace(/<(br|\/p|\/div|\/li|\/tr)\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
+  // A plain-text "Name <name@example.com>" (e.g. a forwarded message's
+  // From: line) isn't a tag - set the address aside so it survives.
+  let text = html.replace(/<([\w.+-]+@[\w-]+(?:\.[\w-]+)+)>/g, "\u0001$1\u0002");
+  text = replaceAll(text, /<(script|style|head)[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
+  text = text.replace(/<(br|\/p|\/div|\/li|\/tr)\s*\/?>/gi, "\n");
+  text = replaceAll(text, /<[^>]*>/g, "");
+  return text
     .replace(/\u0001/g, "<")
     .replace(/\u0002/g, ">")
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // Last, so "&amp;lt;" stays "&lt;" as written.
+    .replace(/&amp;/g, "&")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -799,7 +809,7 @@ function zohoMessages(json) {
 }
 
 function sameSubject(a, b) {
-  const norm = (s) => decodeZohoText(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+  const norm = (s) => decodeZohoText(s).toLowerCase().replace(/^\s*((?:re|fwd?)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
   const x = norm(a);
   const y = norm(b);
   return x === y || (x && y && (x.includes(y) || y.includes(x)));
