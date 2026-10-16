@@ -61,12 +61,13 @@ const ZOHO_INBOX = "50669000000002014";
 const zoho = { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {}, doneFolder: false, done: [] };
 const jsonResponse = (status, data) => ({ ok: status < 300, status, json: async () => data, text: async () => JSON.stringify(data) });
 global.fetch = async (url, opts) => {
-  if (String(url).includes("api.emailjs.com")) {
+  const host = new URL(String(url)).hostname;
+  if (host === "api.emailjs.com") {
     const body = JSON.parse(opts.body);
     emails.push({ to: body.template_params.to_email, subject: body.template_params.subject, message: body.template_params.message });
     return { ok: true, status: 200, text: async () => "OK" };
   }
-  if (zoho.on && String(url).includes("zohocloud.ca")) {
+  if (zoho.on && (host === "zohocloud.ca" || host.endsWith(".zohocloud.ca"))) {
     const u = new URL(url);
     if (u.pathname.endsWith("/oauth/v2/token")) return jsonResponse(200, { access_token: "zoho-token", expires_in: 3600 });
     if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }, { folderId: "trash1", folderName: "Trash", folderType: "Trash" }, ...(zoho.doneFolder ? [{ folderId: "done1", folderName: "Done", folderType: "Normal" }] : [])] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
