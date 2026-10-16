@@ -34,12 +34,16 @@ test("a job shows the customer's notes, its appliance and the cottage's recent h
   });
   const page = await openJob("w1");
   await page.locator("[data-job-customer-notes]").getByText("Gate code 4421. Dog inside - call first.").waitFor();
+  // One line each, tap to open.
+  await page.locator('[data-job-line="appliance"]').getByText("Furnace").waitFor();
+  assert.match(await page.locator('[data-job-line="history"]').innerText(), /Last here Oct 7 · WO-0440 · Deck board loose — In Progress \(\+2\)/);
+  assert.equal(await page.locator("[data-job-appliance]").count(), 0, "closed until tapped");
+  await page.locator('[data-job-line="appliance"]').click();
   const appl = page.locator("[data-job-appliance]");
-  await appl.getByText("Suburban P-40").waitFor();
   await appl.getByText("190707005").waitFor();
   await appl.getByText("Annual furnace check").waitFor();
+  await page.locator('[data-job-line="history"]').click();
   const hist = await page.locator("[data-job-history]").innerText();
-  assert.match(hist, /Last time we were here/);
   assert.match(hist, /WO-0440 · Deck board loose — In Progress/);
   assert.match(hist, /Winterized/);
   assert.match(hist, /WO-0431 · Annual furnace check/);

@@ -212,10 +212,12 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   likes the Runs screens as they are - don't change them. The computer
   keeps `CorrespondenceInboxView`.
 - The phone's job screen (`FieldJobContext`, under the job's main card)
-  shows the customer's notes (from the work order's customer, else the
-  cottage's / site's owners), the appliance the job is tagged to (make,
-  model, serial, age, last service visits) and "Last time we were here"
-  (`cottageHistory`, minus the job itself).
+  shows the customer's notes always open (from the work order's customer,
+  else the cottage's / site's owners), then one compact card with a
+  tap-to-open line each for the appliance the job is tagged to (make,
+  model, serial, age, last service visits) and "Last here …"
+  (`cottageHistory`, minus the job itself). Alex didn't want a long page -
+  keep it compact.
 
 **Incoming**
 - The Incoming tab (`IncomingView`) lists every request waiting on us: new

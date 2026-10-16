@@ -21316,39 +21316,56 @@ function WorkOrderPhotos({ wo, saveWorkOrder, actor, compact }) {
 // What the crew needs to know at a job, under its main card: the
 // customer's notes (gate codes, pets, "call first"), the appliance it's for
 // with its last service visits, and the last few things done at this cottage.
+// What the crew needs to know at a job, under its main card: the
+// customer's notes (gate codes, pets, "call first") always open, then one
+// compact card with a line each for the appliance the job is for and the
+// last things done at this cottage - tap a line to open it.
 function FieldJobContext({ db, wo, site, cottage, customer }) {
   const h = React.createElement;
+  const [open, setOpen] = useState(null);
   const owners = customer ? [customer] : cottage ? cottageOwners(db, cottage) : site ? (db.customers || []).filter((c) => customerSiteIds(c).includes(site.id)) : [];
   const withNotes = owners.filter((c) => (c.notes || "").trim());
   const appliance = wo.applianceId && cottage ? (cottage.appliances || []).find((a) => a.id === wo.applianceId) : null;
   const age = appliance ? applianceAge(appliance) : 0;
   const log = appliance ? (appliance.serviceLog || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 3) : [];
   const history = cottage ? cottageHistory(db, cottage).filter((e) => !(e.wo && e.wo.id === wo.id) && !String(e.key).startsWith("np") && !String(e.key).startsWith("x-")).slice(0, 4) : site ? (db.workOrders || []).filter((w) => w.siteId === site.id && w.id !== wo.id).sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 4).map((w) => ({ key: w.id, date: w.status === "Completed" ? w.completedDate || w.date : w.date, open: w.status !== "Completed", text: `${w.workOrderNumber ? w.workOrderNumber + " \xB7 " : ""}${w.title || "Work order"}${w.status === "Completed" ? "" : ` \u2014 ${w.status}`}` })) : [];
-  const label = (t) => h("div", { className: "text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A] mb-1.5" }, t);
+  const shortDate = (d) => d ? new Date(`${d}T12:00:00`).toLocaleDateString(void 0, { month: "short", day: "numeric" }) : "";
+  const line = (key, icon, summary, body) => h(
+    "div",
+    { key, className: "border-b border-[#EEEBE5] last:border-0" },
+    h(
+      "button",
+      { type: "button", onClick: () => setOpen(open === key ? null : key), "aria-expanded": open === key, "data-job-line": key, className: "w-full min-h-[48px] flex items-center gap-2.5 text-left py-2" },
+      h("span", { className: "w-5 text-center flex-shrink-0" }, icon),
+      h("span", { className: "flex-1 min-w-0 text-[14px] text-[#1E1A13] truncate" }, summary),
+      h("span", { className: `text-[#9A968D] flex-shrink-0 transition-transform ${open === key ? "rotate-90" : ""}` }, "\u203A")
+    ),
+    open === key && h("div", { className: "pl-7 pb-3" }, body)
+  );
+  const lines = [];
+  if (appliance) {
+    lines.push(line("appliance", "\uD83D\uDD27", h(React.Fragment, null, h("b", null, appliance.type), " \xB7 ", [appliance.make, appliance.model].filter(Boolean).join(" ") || "no make on file", age >= 1 ? ` \xB7 ${age} yrs` : ""), h(
+      "div",
+      { "data-job-appliance": true },
+      appliance.serialNumber && h("div", { className: "text-[13px] text-[#4B4740]" }, "Serial # ", h("span", { className: "font-mono" }, appliance.serialNumber)),
+      appliance.fuel && h("div", { className: "text-[13px] text-[#4B4740]" }, appliance.fuel),
+      log.length ? log.map((e, i) => h("div", { key: e.id || i, className: "text-[13px] text-[#4B4740] flex gap-2 mt-1" }, h("span", { className: "text-[#9A968D] flex-shrink-0" }, e.date || ""), h("span", null, e.description || e.notes || "Service"))) : h("div", { className: "text-[13px] text-[#9A968D] mt-1" }, "No service visits logged yet.")
+    )));
+  }
+  if (history.length) {
+    const last = history[0];
+    lines.push(line("history", "\uD83D\uDD58", h(React.Fragment, null, h("b", null, "Last here ", shortDate(last.date)), " \xB7 ", last.text, history.length > 1 ? ` (+${history.length - 1})` : ""), h("div", { className: "space-y-1.5", "data-job-history": true }, history.map((e) => h("div", { key: e.key, className: "text-[13px] flex gap-2" }, h("span", { className: "text-[#9A968D] flex-shrink-0 w-[74px]" }, e.date || ""), h("span", { className: e.open ? "text-[#9A6B1F] font-medium" : "text-[#1E1A13]" }, e.text))))));
+  }
   return h(
     React.Fragment,
     null,
     withNotes.length > 0 && h(
       "div",
-      { className: "rounded-xl border border-[#E9C46A] bg-[#FBEEDA] p-4 mb-3", "data-job-customer-notes": true },
-      label("Customer notes"),
+      { className: "rounded-xl border border-[#E9C46A] bg-[#FBEEDA] px-4 py-3 mb-3", "data-job-customer-notes": true },
+      h("div", { className: "text-[11px] font-bold uppercase tracking-[0.07em] text-[#9A6B1F] mb-0.5" }, "Customer notes"),
       withNotes.map((c) => h("div", { key: c.id, className: "text-[15px] text-[#1E1A13] whitespace-pre-line leading-snug" }, withNotes.length > 1 || owners.length > 1 ? h("b", null, c.name, ": ") : null, c.notes.trim()))
     ),
-    appliance && h(
-      "div",
-      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3", "data-job-appliance": true },
-      label("The appliance"),
-      h("div", { className: "text-[15px] font-semibold text-[#1E1A13]" }, appliance.type, age >= 1 ? h("span", { className: `ml-2 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${age >= 15 ? "bg-[#F5E3D9] text-[#a8532a]" : "bg-[#F1EEE9] text-[#75716A]"}` }, `${age} yr${age === 1 ? "" : "s"}`) : null),
-      h("div", { className: "text-sm text-[#4B4740]" }, [[appliance.make, appliance.model].filter(Boolean).join(" "), appliance.fuel].filter(Boolean).join(" \xB7 ") || "Make / model not on file"),
-      appliance.serialNumber && h("div", { className: "text-sm text-[#4B4740]" }, "Serial # ", h("span", { className: "font-mono" }, appliance.serialNumber)),
-      log.length > 0 && h("div", { className: "mt-2 pt-2 border-t border-[#EEEBE5] space-y-1" }, log.map((e, i) => h("div", { key: e.id || i, className: "text-[13px] text-[#4B4740] flex gap-2" }, h("span", { className: "text-[#9A968D] flex-shrink-0" }, e.date || ""), h("span", null, e.description || e.notes || "Service"))))
-    ),
-    history.length > 0 && h(
-      "div",
-      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3", "data-job-history": true },
-      label(cottage ? "Last time we were here" : "Other jobs on this site"),
-      h("div", { className: "space-y-1.5" }, history.map((e) => h("div", { key: e.key, className: "text-[13.5px] flex gap-2" }, h("span", { className: "text-[#9A968D] flex-shrink-0 w-[78px]" }, e.date || ""), h("span", { className: e.open ? "text-[#9A6B1F] font-medium" : "text-[#1E1A13]" }, e.text))))
-    )
+    lines.length > 0 && h("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] px-4 mb-3" }, lines)
   );
 }
 function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, onCreateInvoice, onGoToSiteMap, setToast }) {
