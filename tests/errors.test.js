@@ -92,5 +92,25 @@ test("Email Intake: the Zoho inbox check shows how it compares with Flow, and sw
   await box.getByRole("button", { name: "Yes, switch on" }).click();
   await box.getByText("On", { exact: true }).waitFor();
   await waitFor(async () => { const d = await readDoc("campground/data"); return d && d.settings && d.settings.emailIntakeDirect === true; }, "the switch to be saved");
+  // The Done folder: how to set it up, then what it's done once it's there.
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: false, checkedAt: new Date().toISOString() } });
+  await box.locator("[data-zoho-done='off']").getByText('Make a folder called "Done"', { exact: false }).waitFor();
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: true, checkedAt: new Date().toISOString(), movedTotal: 4, handledTotal: 2 } });
+  await box.locator("[data-zoho-done='on']").getByText("4 moved to Done, 2 marked handled from Zoho", { exact: false }).waitFor();
+  await page.close();
+});
+
+test("A save by someone who can't change app settings keeps the saved settings and still goes through", async () => {
+  await writeDoc("campground/data", { settings: { taxRate: 13 }, activityLog: [], staff: [], parts: [], workOrderTemplates: [], loginCodes: { k: { required: true, codes: ["1"] } }, userRoles: { "boss@qicampark.com": "admin", "dave@qicampark.com": "office" } });
+  const page = await openApp(browser, "emulator", { role: "office", email: "dave@qicampark.com" });
+  await mountWithDb(page, "(api) => React.createElement('div', null, 'ready')");
+  // A screen holding an older copy (tax 10, no sign-in codes) saves the activity log.
+  const ok = await page.evaluate(() => window.__api.persist({ ...window.__api.db, settings: { taxRate: 10, coupleNamesReviewed: ["c1"] }, loginCodes: {}, activityLog: [{ id: "a1", text: "hi" }] }));
+  assert.equal(ok, true);
+  const saved = await readDoc("campground/data");
+  assert.equal(saved.settings.taxRate, 13);
+  assert.deepEqual(saved.settings.coupleNamesReviewed, ["c1"]);
+  assert.deepEqual(saved.loginCodes, { k: { required: true, codes: ["1"] } });
+  assert.equal(saved.activityLog[0].text, "hi");
   await page.close();
 });

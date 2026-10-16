@@ -58,7 +58,7 @@ const emails = [];
 // `zoho.inbox` / `zoho.inboxContent` are the service inbox (read directly
 // by zohoInbox).
 const ZOHO_INBOX = "50669000000002014";
-const zoho = { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {} };
+const zoho = { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {}, doneFolder: false, done: [] };
 const jsonResponse = (status, data) => ({ ok: status < 300, status, json: async () => data, text: async () => JSON.stringify(data) });
 global.fetch = async (url, opts) => {
   if (String(url).includes("api.emailjs.com")) {
@@ -69,7 +69,8 @@ global.fetch = async (url, opts) => {
   if (zoho.on && String(url).includes("zohocloud.ca")) {
     const u = new URL(url);
     if (u.pathname.endsWith("/oauth/v2/token")) return jsonResponse(200, { access_token: "zoho-token", expires_in: 3600 });
-    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }, { folderId: "trash1", folderName: "Trash", folderType: "Trash" }] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
+    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }, { folderId: "trash1", folderName: "Trash", folderType: "Trash" }, ...(zoho.doneFolder ? [{ folderId: "done1", folderName: "Done", folderType: "Normal" }] : [])] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
+    if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "done1") return jsonResponse(200, { data: zoho.done });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "sent1") return jsonResponse(200, { data: zoho.sent });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "trash1") return jsonResponse(200, { data: zoho.trash });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === ZOHO_INBOX) return jsonResponse(200, { data: zoho.inbox });
@@ -92,21 +93,22 @@ global.fetch = async (url, opts) => {
 };
 
 const fns = require(path.join(ROOT, "functions", "index.js"));
-const admin = require(path.join(FN_MODULES, "firebase-admin"));
-const db = admin.firestore();
+// Loaded the way functions/index.js loads them, so it's the same app.
+const fnRequire = require("module").createRequire(path.join(ROOT, "functions", "index.js"));
+const { getFirestore } = fnRequire("firebase-admin/firestore");
+const { getAuth } = fnRequire("firebase-admin/auth");
+const db = getFirestore();
 
-// Firebase Auth: a small in-memory user list.
+// Firebase Auth: a small in-memory user list (getAuth() hands the functions
+// this same object, so its methods are swapped in place).
 const auth = { users: {}, calls: [] };
-Object.defineProperty(admin, "auth", {
-  configurable: true,
-  value: () => ({
-    getUserByEmail: async (email) => { if (!auth.users[email]) throw new Error("not found"); return auth.users[email]; },
-    setCustomUserClaims: async (uid, claims) => { auth.calls.push(["claims", uid, claims]); },
-    revokeRefreshTokens: async (uid) => { auth.calls.push(["revoke", uid]); },
-    updateUser: async (uid, props) => { auth.calls.push(["update", uid, props]); },
-    listUsers: async () => ({ users: Object.values(auth.users) }),
-    verifyIdToken: async (token) => { const u = Object.values(auth.users).find((x) => x.uid === token); if (!u) throw new Error("bad token"); return { uid: u.uid, ...(u.customClaims || {}) }; }
-  })
+Object.assign(getAuth(), {
+  getUserByEmail: async (email) => { if (!auth.users[email]) throw new Error("not found"); return auth.users[email]; },
+  setCustomUserClaims: async (uid, claims) => { auth.calls.push(["claims", uid, claims]); },
+  revokeRefreshTokens: async (uid) => { auth.calls.push(["revoke", uid]); },
+  updateUser: async (uid, props) => { auth.calls.push(["update", uid, props]); },
+  listUsers: async () => ({ users: Object.values(auth.users) }),
+  verifyIdToken: async (token) => { const u = Object.values(auth.users).find((x) => x.uid === token); if (!u) throw new Error("bad token"); return { uid: u.uid, ...(u.customClaims || {}) }; }
 });
 
 // Wipes the functions' test project in the emulator (a plain HTTP DELETE,
@@ -125,7 +127,7 @@ async function clearData() {
   claude.script.length = 0;
   claude.calls.length = 0;
   emails.length = 0;
-  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {} });
+  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {}, doneFolder: false, done: [] });
   auth.users = {};
   auth.calls.length = 0;
 }

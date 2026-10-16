@@ -110,7 +110,23 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   compares (ties Flow's entries to their Zoho message id, lists what Flow
   didn't bring in in `serverState/zohoInbox`) and adds nothing; once on, it
   saves `zoho_in_<messageId>` entries and the Flow webhook skips email. The
-  Email Intake ignore list applies to any sender.
+  Email Intake ignore list applies to any sender. Flow checks the inbox on a
+  timer, so its copy (stamped when delivered) can be late: the compare
+  matches Flow copies up to 2 hours after Zoho's time (`FLOW_LATE_MS`) and
+  re-checks the "missed" list every run.
+- Zoho "Done" folder (`syncZohoDone`, in `zohoSentMail` every 5 min): on
+  once a folder named "Done" exists in the service mailbox. An incoming
+  email handled in the app (any way - `handledAt` in the last 3 days) has
+  its Zoho copy moved there (`zohoDoneAt` on the entry); an email moved to
+  Done in Zoho is marked handled in the app (`handledInZoho`, a green "Done
+  in Zoho" tag on the email). Each Done
+  message is looked at once (`serverState/zohoInbox.done.seen`), so
+  reopening one in the app sticks. Web forms / logged calls are skipped.
+  Status shows under Admin > Email Intake. Reading an email in Zoho does
+  not mark it handled - read isn't answered.
+- Zoho's message lists give subjects HTML-escaped ("Quinte&#39;s");
+  `zohoMessages` decodes them and `sameSubject` compares decoded text, so
+  they match Flow's copies and are saved readable.
 - The Zoho access token is shared through `serverState/zohoToken` (never
   readable by the app) - Zoho allows only 10 refreshes per 10 minutes.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
@@ -174,7 +190,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   the next workday's cottages (Friday → Monday) whose site's how-to doesn't
   say our master key works, so reception collects the keys. Once per day
   (`winterKeyEmails/{date sent}`); off with `settings.winterKeyEmailOff`
-  (checkbox on the Plan board).
+  (checkbox on the Plan board). "Resend keys email now" next to it
+  (`resendWinterKeyList`, Admin / Service Manager) sends the list as planned
+  now, even if today's already went or the daily email is off - marked
+  "UPDATED" when it replaces one sent that day.
 - Closed days: Thanksgiving Monday automatically, plus blocked days ticked
   "We're closed" (`winterBlockedDays[].closed`). Nothing is planned on them,
   no keys email goes out that morning, and the open day before covers
@@ -191,6 +210,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   a whole section (Pebble Beach / By the Woods days). Cut from the park's
   vector map PDF with `tools/winter-maps/` (see its README). Pins match
   site numbers without leading zeros (`winterMapKey`).
+- Winterizing → Report (`WinterizingReport`): how many cottages were marked
+  done (by `completedDate`) per day, per week (Mon-Fri) and for the season
+  (per week + season total), with a column per section and totals. Counts
+  only, no site list. Printable; past seasons picked by year.
 - Admin > Settings > Files > Storage (`StoragePane`) keeps files for any
   use: the park's large map PDF (`maps/park-map.pdf`) and the section maps
   (open / print / download). Add future files there.
@@ -202,6 +225,41 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   sunroom / D door; DT drain tap; OD on-demand hot water heater; (ot)
   outside tap; Master X = our master key works. Unknown bits (e.g.
   "cz1010") show as written - don't guess at them.
+
+**Incoming**
+- The Incoming tab (`IncomingView`) lists every request waiting on us: new
+  incoming emails/voicemails (not FYIs), website sign-ups (service, propane,
+  winterizing) and calls/walk-ins logged there (correspondence `source`
+  "phone"/"walkin"). Grouped: Needs a work order / Propane·Trees·Winterizing
+  / About an existing job / Just needs an answer, one main button each.
+  Sign-ups use the same review forms as their own screens. It's in the
+  menu's "Today" group (`SERVICE_NAV_GROUPS`, not just `TABS`), and the
+  Dashboard's "Sign-Ups Needing Review" card opens it.
+- Website service requests are read by Claude on arrival
+  (`generalServiceRequest` runs `triageCorrespondence`, saved as the
+  sign-up's `triage`): the draft work order's title and priority come from
+  it, and the appliance is guessed from the words (`guessAppliance`). If
+  Claude can't be reached the request is saved without it.
+- The Service Requests tab is hidden (taken out of `TABS` and the menu);
+  `GeneralServiceView` is still in the code until Alex says to delete it.
+- A website form confirmed for a customer (from anywhere) is saved in their
+  correspondence as `correspondence/webform_<sign-up id>` (handled, linked to
+  what it made) so a reply to it reads in order. Web forms and logged calls
+  never touch Zoho (`notFromZoho`).
+
+**Work orders**
+- Statuses: Open, In Progress, Pending, Completed. Pending is for jobs booked
+  well ahead and needs a `startDate`. Pending jobs stay out of the open /
+  urgent / overdue counts, the nav badge and the crew's lists (`woActive`)
+  until someone moves them to In Progress - never automatically.
+- Reminders: a month, two weeks, a week, two days and the day before the
+  start date - weekends included, the park is open - (only those still ahead
+  when it was set, `pendingSince`), in the morning
+  summary on those days and the start date only (not daily), and as a pop-up
+  (`PendingJobsPrompt`) for Admins and Service Managers: each person answers
+  their own ("Not yet" is saved per person in `reminderSeen`), one nobody
+  saw (app not opened that day) shows next time, and it's daily once the start date has
+  come. Changing the start date (pop-up or form) resets the reminders.
 
 **Parts**
 - Each part is its own document in the `parts` collection (not in
@@ -249,7 +307,15 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   maker and the factory appliances. An appliance already filled in isn't
   overwritten unless ticked (it may have been replaced since the factory).
   The boxed sideways "ISSUE NO." on the plate is not the serial. Photo kept
-  at `cottage-photos/{cottageId}/` (`nameplatePhoto`).
+  at `cottage-photos/{cottageId}/` (`nameplatePhoto`). It also takes a PDF
+  from the cottage's file (scanned plate, spec sheet, bill of sale; under
+  7 MB), sent to Claude as a document; the PDF isn't uploaded - the cottage
+  notes it in `nameplateDoc` ("Details read from …" in its history).
+  It reads each appliance's serial # too (Northlander's "APPLIANCES" sheet:
+  PRODUCT = trade name, PLAN # = model, SIZE = unit size), the unit size
+  (`unitSize`, e.g. 39' x 12') and a double-wide's second serial
+  (`serialNumber2` - two boxes joined into one cottage have one per
+  section; both count for the duplicate-serial warning).
 - Cottages tab: list on the left, the cottage's page on the right (wide
   screens; a pop-up on narrow ones). Top boxes are just total cottages and
   "with serial #" - Alex didn't want more. The page shows serial/model/
@@ -262,6 +328,19 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   (`logWorkOrderToAppliance` in `saveWorkOrder`); untagged ones still get
   the "Log to an Appliance?" prompt.
 
+**Customers tab**
+- First view is a table with filters (Needs a reply, Open work orders, No
+  email on file, each area). Clicking a customer opens their full page
+  (`CustomerPage`); "← All customers" goes back with the filter kept.
+- The page: contact, cottage cards, "Needs attention", `notes` (a free
+  text field on the customer - gate codes, pets, "call first"), and one
+  history (`customerHistory`) with All / Emails / Work / Bills & invoices.
+  Every line opens its item. An email still waiting (`customerNeedsReply`)
+  shows opened with the reply box under it; sending marks it handled.
+- Office sees invoices and hydro bills (view + print) but can't edit
+  invoices - same as before (firestore.rules). Other screens still use the
+  older `CustomerDetailModal` pop-up.
+
 **Forms**
 - Saves replace the whole Firestore document, so every edit form spreads
   the original record first (`...initial && initial.id ? initial : {}`)
@@ -272,12 +351,41 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 **Invoices**
 - Account numbers (sales/labour accounts) are kept on line items for
   accounting but not shown on the invoice form or anything customers see.
+- A part's Description (Parts) is its usual customer-facing wording: adding
+  the part to an invoice or quote copies it onto the line as `details`
+  (shown under the part name on the form, print and email), editable there
+  without changing the part ("Use the part's usual wording" puts it back).
 - Shop supplies (default 5%) is a share of parts + labour + the service
   call (lines with `withServiceCall`). Older lines and the old
   shop-supplies fields stay parts + labour, so invoices already sent keep
   their totals.
 
+**Security**
+- App settings (`campground/data` `settings`) and sign-in codes
+  (`loginCodes`) are Admin only (firestore.rules). Money roles may also
+  change the winterizing plan's settings, everyone `coupleNamesReviewed`
+  (`settingsRoleMayChange`; add a key there and in the rules if a
+  non-Admin screen needs a new setting). A non-Admin's `persist()` keeps
+  the saved copy of the rest (`keepLockedSettings`), so a stale screen
+  can't undo an Admin's change.
+- Only money roles create invoices, except the two the app makes itself:
+  "Propane Fill" (workOrder) and "Anode Rod Replacement" (winterizing),
+  parts only, not sent (`isAutoInvoice`).
+- Cloud Functions use firebase-admin's modular imports (`getFirestore`,
+  `getAuth`, `FieldValue` from `firebase-admin/firestore`...); v14 dropped
+  `admin.firestore()`. Tests swap `getAuth()`'s methods in place.
+
 ## Ideas parked for later
 
 - Auto-deploy Cloud Functions from GitHub Actions on merge (needs a Firebase
   deploy key as a GitHub secret) — Alex wants this eventually.
+- "Add park cottages…" for the Service Manager: unsold QIC Inventory units
+  come from `cottageOrders`, which only Admin / Sales Manager can read, so a
+  Service Manager's list misses them. Plan: let them look up just the unsold
+  delivered display models' sites (rules change + deploy), not the rest of
+  the sales records. Alex said to remind him another time (Oct 2026).
+- Turn on GitHub's free security checks for the repo (Settings → Security:
+  Dependabot alerts / security updates and code scanning), so outdated or
+  risky server packages get flagged on their own. Alex does it in GitHub's
+  settings; walk him through it when he's ready (from the Oct 2026 security
+  check).

@@ -765,6 +765,53 @@ test("winterized email: a friendly date, and the extras said as done (anode rod 
   await page.close();
 });
 
+test("winterizing report: how many were done each day of a week and each week of the season, by section, with totals", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__printed = [];
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } });
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0490", "Limestone South"], ["s4", "0412", "4 Season"]].map(([id, number, section]) => ({ id, number, section }));
+    const done = (id, site, date, extra) => ({ id, cottageId: "k" + site, completed: true, completedDate: date, options: {}, ...extra });
+    const db = { settings: {}, sites, customers: [], cottages: sites.map((x) => ({ id: "k" + x.id, name: "C" + x.number, siteId: x.id })), winterizingRequests: [
+      done("a", "s1", "2026-10-13"), done("b", "s2", "2026-10-13"), done("c", "s3", "2026-10-13"),
+      done("d", "s3", "2026-10-15"), done("e", "s4", "2026-10-20", { parkOwned: "rental" }),
+      { id: "f", cottageId: "ks1", options: {} },
+      done("old", "s1", "2025-10-14", { archived: true })
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(WinterizingReport, { db }));
+  });
+  const table = () => page.locator("[data-report-table] tr").evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent.trim())));
+  await page.getByLabel("Report date").fill("2026-10-14");
+  await page.locator('[data-report-table="week"]').waitFor();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Mon, Oct 12", "–", "–", "–", "0"],
+    ["Tue, Oct 13", "1", "–", "2", "3"],
+    ["Wed, Oct 14", "–", "–", "–", "0"],
+    ["Thu, Oct 15", "1", "–", "–", "1"],
+    ["Fri, Oct 16", "–", "–", "–", "0"],
+    ["Week total", "2", "0", "2", "4"]
+  ]);
+  await page.locator('[data-report-period="day"]').click();
+  await page.getByLabel("Report date").fill("2026-10-13");
+  assert.deepEqual(await table(), [["Section", "Done"], ["Limestone South", "1"], ["Front of Park", "2"], ["Total", "3"]]);
+  await page.locator('[data-report-period="season"]').click();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Week of Oct 12", "2", "–", "2", "4"],
+    ["Week of Oct 19", "–", "1", "–", "1"],
+    ["Season total", "2", "1", "2", "5"]
+  ]);
+  assert.match(await page.locator("[data-report-summary]").innerText(), /5 of 6 signed up winterized · 1 still to do · includes 1 park cottage/);
+  // Last year's (archived) season.
+  await page.getByLabel("Season").selectOption("2025");
+  assert.deepEqual((await table()).pop(), ["Season total", "1", "1"]);
+  await page.getByRole("button", { name: /Print/ }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Winterizing report[\s\S]*2025 season[\s\S]*Season total/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
@@ -886,16 +933,21 @@ test("winterizing: once auto-plan has run, a new sign-up goes on the schedule by
 
 test("winterizing plan board: season settings, day counts, blocking a day and the auto-plan preview", async () => {
   const page = await openApp(browser, "stub");
+  // An ordinary open Wednesday, so the board's first day isn't a weekend or
+  // a closed day (it failed on Thanksgiving Monday 2026).
+  await page.clock.setFixedTime(new Date("2026-10-14T10:00:00"));
   await openWinterizing(page);
   await page.getByRole("tab", { name: "Plan" }).click();
   await page.getByLabel("Max per day").fill("1");
-  const today = await page.evaluate(() => todayISO());
-  const col = page.locator(`[data-plan-column="${today}"]`);
+  // Willow asked for today; on a closed day (Thanksgiving) the plan starts
+  // the next open day, so use the day Willow is actually on.
+  const day = await page.locator('[data-plan-card="r1"]').evaluate((el) => el.closest("[data-plan-column]").getAttribute("data-plan-column"));
+  const col = page.locator(`[data-plan-column="${day}"]`);
   assert.equal(await col.locator("[data-day-count]").innerText(), "1 / 1");
   // Dropping Cedar on a full day offers the next day with room (on a
   // weekend, it says it's a weekend instead - and there's no "anyway").
   await page.locator('[data-plan-card="r2"]').dragTo(col);
-  if (await page.evaluate(() => winterIsWeekday(todayISO()))) await page.getByText("That day is full").waitFor();
+  if (await page.evaluate((d) => winterIsWeekday(d), day)) await page.getByText("That day is full").waitFor();
   else {
     await page.getByText("That's a weekend").waitFor();
     assert.equal(await page.getByRole("button", { name: /anyway/ }).count(), 0);
@@ -907,7 +959,7 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
     await blockBtn.click();
     await page.getByPlaceholder("e.g. Pebble Beach & By the Woods").fill("Pebble Beach");
     await page.getByRole("button", { name: "Block day" }).last().click();
-    await page.locator("[data-blocked-day]").first().getByText(/Pebble Beach/).waitFor();
+    await page.locator("[data-blocked-day]", { hasText: "Pebble Beach" }).first().waitFor();
   }
   // Print a day's forms in one click.
   await page.evaluate(() => {
@@ -1172,7 +1224,7 @@ test("customers: taking over or giving up a site on the form asks if it's a sale
     render();
   });
   // Bea's form: adding Robert's site.
-  await page.getByText("Bea Buyer").first().click();
+  await page.getByRole("button", { name: "Bea Buyer" }).first().click();
   await page.getByRole("button", { name: "Edit Customer" }).click();
   await page.getByPlaceholder("Search sites to add\u2026").fill("0042");
   await page.getByText("Site 0042", { exact: true }).last().click();
@@ -1187,7 +1239,8 @@ test("customers: taking over or giving up a site on the form asks if it's a sale
   assert.equal(site.transferHistory[0].toCustomerName, "Bea Buyer");
   assert.equal(await page.evaluate(() => window.__customers.length), 0, "the form's own save didn't happen");
   // Robert's form: removing his site says the same.
-  await page.getByText("Robert Smith").first().click();
+  await page.getByRole("button", { name: "\u2190 All customers" }).click();
+  await page.getByRole("button", { name: "Robert Smith" }).first().click();
   await page.getByRole("button", { name: "Edit Customer" }).click();
   await page.getByRole("button", { name: "Remove site" }).click();
   await page.locator("[data-sale-check]").getByText("Removing Site 0042.").waitFor();
@@ -1231,6 +1284,30 @@ test("correspondence: voicemails show who called, are never linked or grouped, a
   await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
   await page.locator("#test").getByText("Hello there").waitFor();
   assert.equal(await page.locator("#test").getByText(/V-Mail/).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("correspondence: an email someone moved to Done in Zoho is tagged \"Done in Zoho\"", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { settings: {}, activityLog: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
+      correspondence: [
+        { id: "z", direction: "in", status: "handled", handledInZoho: true, customerId: "c1", fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips", receivedAt: "2026-10-02T12:00:00Z" },
+        { id: "h", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "Deck", body: "Soft boards", receivedAt: "2026-10-01T12:00:00Z" },
+        { id: "u", direction: "in", status: "handled", handledInZoho: true, fromEmail: "news@shop.com", subject: "Sale", body: "Big sale", receivedAt: "2026-10-03T12:00:00Z" }
+      ] };
+    window.__db = db;
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+  });
+  await page.locator("[data-done-in-zoho]").first().waitFor();
+  assert.equal(await page.locator("[data-done-in-zoho]").count(), 2, "Anne's row (her newest was moved in Zoho) and the unmatched one");
+  // Opened: the unmatched email's page and the customer's conversation say so too.
+  await page.getByText("news@shop.com").first().click();
+  await page.getByText("Done in Zoho").nth(2).waitFor();
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
+  await page.locator("#test").getByText("The tap drips").waitFor();
+  assert.equal(await page.locator("#test").getByText("Done in Zoho", { exact: true }).count(), 1);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
