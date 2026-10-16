@@ -24,14 +24,14 @@
 <!-- Tailwind (utility classes) -->
 <script src="https://cdn.tailwindcss.com"></script>
 
-<!-- SheetJS (Excel export) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-<!-- PDF.js (read text out of uploaded PDFs, e.g. Square sales reports) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- SheetJS (Excel import/export) and PDF.js (read text out of uploaded PDFs,
+     e.g. Square sales reports): kept in vendor/ with the app - see
+     vendor/README.md. -->
+<script src="vendor/xlsx-0.20.3.full.min.js"></script>
+<script src="vendor/pdf-3.11.174.min.js"></script>
 <script>
   if (window["pdfjsLib"]) {
-    window["pdfjsLib"].GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    window["pdfjsLib"].GlobalWorkerOptions.workerSrc = "vendor/pdf-3.11.174.worker.min.js";
   }
 </script>
 
@@ -1135,7 +1135,7 @@ function correspondenceVoicemail(item) {
   if (!item || item.direction === "out") return null;
   if (item.voicemail) return item.voicemail;
   const subject = String(item.subject || "");
-  if (!/^\s*((re|fwd?|fw)\s*:\s*)*v-?mail from\b/i.test(subject) && !/you have a new voicemail from/i.test(String(item.body || ""))) return null;
+  if (!/^\s*((?:re|fwd?)\s*:\s*)*v-?mail from\b/i.test(subject) && !/you have a new voicemail from/i.test(String(item.body || ""))) return null;
   return parseVoicemailCaller(subject, item.body);
 }
 function parseVoicemailCaller(subject, body) {
@@ -7048,7 +7048,7 @@ function normalizeSubject(subject) {
   let s = (subject || "").trim();
   let changed = true;
   while (changed) {
-    const next = s.replace(/^(re|fwd?|fw)\s*:\s*/i, "").trim();
+    const next = s.replace(/^(?:re|fwd?)\s*:\s*/i, "").trim();
     changed = next !== s;
     s = next;
   }

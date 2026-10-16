@@ -377,6 +377,14 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   `getAuth`, `FieldValue` from `firebase-admin/firestore`...); v14 dropped
   `admin.firestore()`. Tests swap `getAuth()`'s methods in place.
 
+- GitHub security checks are on (Dependabot alerts + security updates,
+  CodeQL default scanning, secret scanning). Dependabot PRs: check, test,
+  merge; ones in `functions/` need a deploy. `tests/` packages are test
+  tools only (never reach the app). SheetJS (Excel import/export, 0.20.3 -
+  cdnjs stopped at 0.18.5, which has known issues) and PDF.js are kept in
+  `vendor/` and served with the app, not loaded from another site (see
+  `vendor/README.md`); tests use the same SheetJS from npm (`@e965/xlsx`).
+
 ## Ideas parked for later
 
 - Auto-deploy Cloud Functions from GitHub Actions on merge (needs a Firebase
@@ -386,8 +394,3 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Service Manager's list misses them. Plan: let them look up just the unsold
   delivered display models' sites (rules change + deploy), not the rest of
   the sales records. Alex said to remind him another time (Oct 2026).
-- Turn on GitHub's free security checks for the repo (Settings → Security:
-  Dependabot alerts / security updates and code scanning), so outdated or
-  risky server packages get flagged on their own. Alex does it in GitHub's
-  settings; walk him through it when he's ready (from the Oct 2026 security
-  check).
