@@ -1288,6 +1288,30 @@ test("correspondence: voicemails show who called, are never linked or grouped, a
   await page.close();
 });
 
+test("correspondence: an email someone moved to Done in Zoho is tagged \"Done in Zoho\"", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { settings: {}, activityLog: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
+      correspondence: [
+        { id: "z", direction: "in", status: "handled", handledInZoho: true, customerId: "c1", fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips", receivedAt: "2026-10-02T12:00:00Z" },
+        { id: "h", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "Deck", body: "Soft boards", receivedAt: "2026-10-01T12:00:00Z" },
+        { id: "u", direction: "in", status: "handled", handledInZoho: true, fromEmail: "news@shop.com", subject: "Sale", body: "Big sale", receivedAt: "2026-10-03T12:00:00Z" }
+      ] };
+    window.__db = db;
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+  });
+  await page.locator("[data-done-in-zoho]").first().waitFor();
+  assert.equal(await page.locator("[data-done-in-zoho]").count(), 2, "Anne's row (her newest was moved in Zoho) and the unmatched one");
+  // Opened: the unmatched email's page and the customer's conversation say so too.
+  await page.getByText("news@shop.com").first().click();
+  await page.getByText("Done in Zoho").nth(2).waitFor();
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
+  await page.locator("#test").getByText("The tap drips").waitFor();
+  assert.equal(await page.locator("#test").getByText("Done in Zoho", { exact: true }).count(), 1);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("correspondence: every message in a customer's conversation can be deleted (to Trash)", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => {

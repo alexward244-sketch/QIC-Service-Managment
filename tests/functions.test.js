@@ -438,6 +438,43 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   assert.equal(corr.length, 3);
 });
 
+test("Zoho's Done folder: handled emails move there, and emails moved there are marked handled", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const put = (c) => db.collection("correspondence").doc(c.id).set(c);
+  zoho.on = true;
+  await put({ id: "zoho_in_m1", direction: "in", status: "handled", handledAt: iso(now - 60e3), fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3), zohoMessageId: "m1" });
+  await put({ id: "zoho_in_m2", direction: "in", status: "new", fromEmail: "bob@y.com", subject: "Deck", receivedAt: iso(now - 3000e3), zohoMessageId: "m2" });
+  await put({ id: "webform_s1", direction: "in", status: "handled", handledAt: iso(now - 60e3), source: "webform", fromEmail: "carl@z.com", subject: "Form", receivedAt: iso(now - 3000e3) });
+  await put({ id: "out1", direction: "out", status: "handled", handledAt: iso(now - 60e3), toEmail: "anne@x.com", subject: "Re: Leak", receivedAt: iso(now - 60e3), zohoMessageId: "s1" });
+
+  // No Done folder in Zoho yet: nothing moves, and Admin is told how to set it up.
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 0);
+  assert.equal((await db.doc("serverState/zohoInbox").get()).data().done.folder, false);
+
+  // Someone made the folder; Bob's email was moved there in Zoho.
+  zoho.doneFolder = true;
+  zoho.done = [{ messageId: "m2", folderId: "done1", subject: "Deck", fromAddress: "bob@y.com", receivedTime: String(now - 3000e3) }];
+  await fns.zohoSentMail();
+  assert.deepEqual(zoho.moved, [{ mode: "moveMessage", messageId: ["m1"], destfolderId: "done1" }], "only Anne's handled email; not the web form or our reply");
+  const anne = (await db.doc("correspondence/zoho_in_m1").get()).data();
+  assert.ok(anne.zohoDoneAt);
+  const bob = (await db.doc("correspondence/zoho_in_m2").get()).data();
+  assert.equal(bob.status, "handled", "moved to Done in Zoho = handled here");
+  assert.equal(bob.handledInZoho, true);
+  const done = (await db.doc("serverState/zohoInbox").get()).data().done;
+  assert.deepEqual([done.folder, done.movedTotal, done.handledTotal], [true, 1, 1]);
+
+  // Runs again: nothing moves twice, and reopening Bob's here sticks.
+  zoho.done.push({ messageId: "m1", folderId: "done1", subject: "Leak", fromAddress: "anne@x.com", receivedTime: String(now - 3600e3) });
+  await db.doc("correspondence/zoho_in_m2").update({ status: "new" });
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 1);
+  assert.equal((await db.doc("correspondence/zoho_in_m2").get()).data().status, "new");
+  assert.equal((await all("serverAlerts")).length, 0);
+});
+
 test("an email moved to Zoho's Trash is removed from the app", async () => {
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();

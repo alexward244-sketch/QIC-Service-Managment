@@ -104,6 +104,16 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   timer, so its copy (stamped when delivered) can be late: the compare
   matches Flow copies up to 2 hours after Zoho's time (`FLOW_LATE_MS`) and
   re-checks the "missed" list every run.
+- Zoho "Done" folder (`syncZohoDone`, in `zohoSentMail` every 5 min): on
+  once a folder named "Done" exists in the service mailbox. An incoming
+  email handled in the app (any way - `handledAt` in the last 3 days) has
+  its Zoho copy moved there (`zohoDoneAt` on the entry); an email moved to
+  Done in Zoho is marked handled in the app (`handledInZoho`, a green "Done
+  in Zoho" tag on the email). Each Done
+  message is looked at once (`serverState/zohoInbox.done.seen`), so
+  reopening one in the app sticks. Web forms / logged calls are skipped.
+  Status shows under Admin > Email Intake. Reading an email in Zoho does
+  not mark it handled - read isn't answered.
 - Zoho's message lists give subjects HTML-escaped ("Quinte&#39;s");
   `zohoMessages` decodes them and `sameSubject` compares decoded text, so
   they match Flow's copies and are saved readable.
