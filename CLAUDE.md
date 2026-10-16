@@ -82,6 +82,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   A lost phone: another Admin uses "Reset two-step" in Manage Access
   (`resetTwoStep`). Other roles don't need it (`TWO_STEP_ROLES`).
 
+- Every Cloud Function call waits for `messagingReady`: on a device with
+  notifications allowed, the Functions SDK asks Messaging for a token on
+  each call, and without our `sw.js` Messaging tries the site root's
+  `firebase-messaging-sw.js` - the SDK bundle lets that error fail the call
+  (seen as Draft reply failing on a phone). `functions_.httpsCallable` is
+  wrapped to wait for it.
+
 **Correspondence / email intake**
 - Never block Tim's emails — only skip the automatic website form notices.
 - Voicemails (phone system emails) never link to a customer.

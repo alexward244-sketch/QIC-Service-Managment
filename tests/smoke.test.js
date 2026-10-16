@@ -1289,6 +1289,29 @@ test("correspondence: voicemails show who called, are never linked or grouped, a
   await page.close();
 });
 
+test("server calls on a device with notifications on wait for Messaging to get our service worker first", async () => {
+  // A phone with notifications allowed: the Functions SDK asks Messaging for a
+  // token on every call, which failed every call (Draft reply) until Messaging
+  // had our sw.js.
+  const page = await openApp(browser, "stub", { initScript: () => {
+    window.__log = [];
+    Object.defineProperty(window, "Notification", { value: Object.assign(function () {}, { permission: "granted", requestPermission: async () => "granted" }), configurable: true });
+    let readyFn;
+    Object.defineProperty(navigator, "serviceWorker", { value: { ready: new Promise((r) => { readyFn = r; }), register: () => Promise.resolve({}) }, configurable: true });
+    setTimeout(() => readyFn({ scope: "sw.js" }), 300);
+    window.__messaging = { getToken: async (o) => { window.__log.push(["token", o.serviceWorkerRegistration && o.serviceWorkerRegistration.scope, !!o.vapidKey]); return "tok"; }, onMessage() {} };
+  } });
+  const out = await page.evaluate(async () => {
+    window.__callable = async (name) => { window.__log.push(["call", name]); return { data: { ok: true } }; };
+    const res = await functions_.httpsCallable("draftCorrespondenceReply")({});
+    return { res: res.data, log: window.__log };
+  });
+  assert.deepEqual(out.res, { ok: true });
+  assert.deepEqual(out.log.map((x) => x[0]), ["token", "call"], "Messaging gets our service worker before the call goes out");
+  assert.deepEqual(out.log[0], ["token", "sw.js", true]);
+  await page.close();
+});
+
 test("correspondence: an email someone moved to Done in Zoho is tagged \"Done in Zoho\"", async () => {
   const page = await openApp(browser, "stub");
   await page.evaluate(() => {

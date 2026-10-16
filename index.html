@@ -199,6 +199,29 @@ function mergeHydroReadings(collectionList, legacyList) {
 }
 const storage_ = firebase.storage();
 const functions_ = firebase.functions();
+const VAPID_KEY = "BKyelv6IM5rfJ2rIEeCBEpn_WYKa7LcjjYnxmH3C-YJH3mux5QhL281_awCm3Dvy-HUiFyNbfdnDwuysdQ7KjpI";
+// Every Cloud Function call first asks Messaging for this device's
+// notification token when notifications are allowed. Without our service
+// worker, Messaging looks for /firebase-messaging-sw.js at the site's root
+// (not where the app lives), and the Functions SDK's bundle lets that error
+// fail the call itself ("Messaging: We are unable to register the default
+// service worker" under Draft reply). So hand Messaging our sw.js first,
+// and have every call wait for that (at most a few seconds).
+const messagingReady = (async () => {
+  try {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted" || !("serviceWorker" in navigator)) return;
+    const registration = await Promise.race([navigator.serviceWorker.ready, new Promise((resolve) => setTimeout(resolve, 5e3))]);
+    if (!registration) return;
+    await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+  } catch (e) {
+    console.warn("Couldn't set up notifications for server calls:", e);
+  }
+})();
+const plainHttpsCallable = functions_.httpsCallable.bind(functions_);
+functions_.httpsCallable = (name, options) => {
+  const call = plainHttpsCallable(name, options);
+  return (data) => messagingReady.then(() => call(data));
+};
 // On phones and tablets, opening a form shouldn't jump straight into the
 // first box and pop up the keyboard over what you're trying to read - tap a
 // box to start typing. Mouse/keyboard computers keep the head start.
@@ -24381,7 +24404,6 @@ function AppContent() {
   const [notifStatus, setNotifStatus] = useState(
     typeof Notification !== "undefined" ? Notification.permission : "unsupported"
   );
-  const VAPID_KEY = "BKyelv6IM5rfJ2rIEeCBEpn_WYKa7LcjjYnxmH3C-YJH3mux5QhL281_awCm3Dvy-HUiFyNbfdnDwuysdQ7KjpI";
   const enablePushNotifications = async () => {
     try {
       if (typeof Notification === "undefined") {
