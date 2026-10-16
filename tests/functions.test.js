@@ -226,6 +226,25 @@ test("only Admins change roles; Remove and Sign out everywhere end sessions", as
   assert.equal(roles["boss@qicampark.com"], "admin");
 });
 
+test("an Admin who hasn't signed in with two-step can't change roles or use staff functions", async () => {
+  auth.users = { "dave@qicampark.com": { uid: "ud", customClaims: { role: "office" } } };
+  await db.doc("campground/data").set({ settings: {}, userRoles: { "dave@qicampark.com": "office" } });
+  assert.deepEqual(await call(fns.setUserRole, { email: "dave@qicampark.com", role: "admin" }, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.signOutUserEverywhere, { email: "dave@qicampark.com" }, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.askThePark, { question: "hi" }, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.generateMorningSummary, {}, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(auth.calls, []);
+});
+
+test("Reset two-step removes an Admin's phone and signs them out; Admins only", async () => {
+  auth.users = { "tim@quintesisle.ca": { uid: "ut", customClaims: { role: "admin" } } };
+  assert.deepEqual(await call(fns.resetTwoStep, { email: "tim@quintesisle.ca" }, "manager"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.resetTwoStep, { email: "nobody@x.com" }, "admin"), { error: "not-found" });
+  assert.deepEqual(auth.calls, []);
+  assert.deepEqual(await call(fns.resetTwoStep, { email: " Tim@quintesisle.ca " }, "admin"), { ok: true, email: "tim@quintesisle.ca" });
+  assert.deepEqual(auth.calls, [["update", "ut", { multiFactor: { enrolledFactors: null } }], ["revoke", "ut"]]);
+});
+
 test("the work order summary needs a staff role and returns Claude's text", async () => {
   auth.users = { "a@x.com": { uid: "staff1", customClaims: { role: "office" } }, "b@x.com": { uid: "norole", customClaims: {} } };
   const summarize = async (token, rawNotes) => {

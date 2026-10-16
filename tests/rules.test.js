@@ -20,6 +20,12 @@ before(async () => {
   });
 });
 after(async () => { await env.cleanup(); });
+// Signs in with the given claims. Admins have done two-step (Firebase marks
+// that sign-in with sign_in_second_factor) - see "an Admin needs two-step".
+function signIn(uid, claims) {
+  const twoStep = claims.role === "admin" ? { firebase: { sign_in_provider: "password", sign_in_second_factor: "phone" } } : {};
+  return env.authenticatedContext(uid, { ...claims, ...twoStep });
+}
 
 async function seed() {
   await env.clearFirestore();
@@ -37,7 +43,7 @@ async function seed() {
     await db.doc("auditLog/e1").set({ ts: "2026-10-14T15:00:00Z", by: "a@x.com", action: "changed" });
   });
 }
-const as = (role) => role === "signedOut" ? env.unauthenticatedContext().firestore() : env.authenticatedContext("u-" + role, role === "noRole" ? {} : { role }).firestore();
+const as = (role) => role === "signedOut" ? env.unauthenticatedContext().firestore() : signIn("u-" + role, role === "noRole" ? {} : { role }).firestore();
 async function allowed(role, op) {
   try { await op(as(role)); return true; } catch (e) { return false; }
 }
@@ -120,7 +126,7 @@ test("invoices: only money roles create them, apart from the propane fill and an
 test("device error reports: staff can add their own, only Admins and Service Managers read them", async () => {
   await seed();
   const report = (email, extra = {}) => ({ kind: "error", message: "Boom", stack: "at x", email, device: "phone", screen: "workorders", userAgent: "UA", ts: "2026-10-01T12:00:00Z", day: "2026-10-01", ...extra });
-  const withEmail = (role, email) => env.authenticatedContext("e-" + role, role ? { role, email } : { email }).firestore();
+  const withEmail = (role, email) => signIn("e-" + role, role ? { role, email } : { email }).firestore();
   await assertSucceeds(withEmail("office", "dave@qicampark.com").doc("clientErrors/a").set(report("dave@qicampark.com")));
   await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/b").set(report("boss@qicampark.com")));
   await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/c").set(report("dave@qicampark.com", { extra: 1 })));
@@ -135,7 +141,7 @@ test("device error reports: staff can add their own, only Admins and Service Man
 test("notes of emails the app sent: staff can add them in the set shape, nobody reads them", async () => {
   await seed();
   const note = (extra = {}) => ({ toEmail: "anne@x.com", subject: "Invoice 1001", sentAt: "2026-10-02T12:00:00Z", ...extra });
-  const as = (role) => env.authenticatedContext("s-" + role, role ? { role } : {}).firestore();
+  const as = (role) => signIn("s-" + role, role ? { role } : {}).firestore();
   await assertSucceeds(as("office").doc("appSentEmails/a").set(note()));
   await assertFails(as("office").doc("appSentEmails/b").set(note({ body: "x" })));
   await assertFails(as("").doc("appSentEmails/c").set(note()));
@@ -144,7 +150,7 @@ test("notes of emails the app sent: staff can add them in the set shape, nobody 
 });
 
 test("file storage needs a staff role", async () => {
-  const st = (role) => env.authenticatedContext("s-" + role, role === "noRole" ? {} : { role }).storage();
+  const st = (role) => signIn("s-" + role, role === "noRole" ? {} : { role }).storage();
   await assertSucceeds(st("office").ref("correspondence-attachments/a.txt").putString("hi"));
   await assertSucceeds(st("admin").ref("correspondence-attachments/a.txt").getMetadata());
   await assertFails(st("noRole").ref("correspondence-attachments/b.txt").putString("hi"));
@@ -152,7 +158,7 @@ test("file storage needs a staff role", async () => {
 });
 
 test("work order photos: staff can add images, not other files or huge ones; no role, no access", async () => {
-  const st = (role) => env.authenticatedContext("p-" + role, role === "noRole" ? {} : { role }).storage();
+  const st = (role) => signIn("p-" + role, role === "noRole" ? {} : { role }).storage();
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
   await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").put(jpeg, { contentType: "image/jpeg" }));
   await assertSucceeds(st("manager").ref("work-order-photos/w1/a.jpg").getMetadata());
@@ -165,6 +171,21 @@ test("work order photos: staff can add images, not other files or huge ones; no 
   await assertSucceeds(st("office").ref("cottage-photos/k1/nameplate.jpg").put(jpeg, { contentType: "image/jpeg" }));
   await assertFails(st("office").ref("cottage-photos/k1/notes.txt").putString("hi", "raw", { contentType: "text/plain" }));
   await assertFails(st("noRole").ref("cottage-photos/k1/nameplate.jpg").getMetadata());
+});
+
+test("an Admin needs two-step: a password-only Admin sign-in gets nothing", async () => {
+  await seed();
+  const noTwoStep = env.authenticatedContext("a-no2fa", { role: "admin", firebase: { sign_in_provider: "password" } });
+  const noFirebaseField = env.authenticatedContext("a-bare", { role: "admin" });
+  for (const ctx of [noTwoStep, noFirebaseField]) {
+    await assertFails(ctx.firestore().doc("workOrders/x").get());
+    await assertFails(ctx.firestore().doc("campground/data").get());
+    await assertFails(ctx.firestore().doc("quotes/new").set({ id: "new" }));
+    await assertFails(ctx.storage().ref("correspondence-attachments/a.txt").putString("hi"));
+  }
+  // With two-step, the same Admin gets in; other roles never need it.
+  await assertSucceeds(signIn("a-2fa", { role: "admin" }).firestore().doc("workOrders/x").get());
+  await assertSucceeds(env.authenticatedContext("o-plain", { role: "office", firebase: { sign_in_provider: "password" } }).firestore().doc("workOrders/x").get());
 });
 
 test("Site Map equipment: every staff role can see it, only Admin, Service Manager and Accounting change it", async () => {

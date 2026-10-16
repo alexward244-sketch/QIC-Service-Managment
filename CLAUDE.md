@@ -72,6 +72,16 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 
 ## Business rules (don't undo these)
 
+**Sign-in**
+- Admins use two-step sign-in: a code texted to their cell (Firebase SMS
+  multi-factor, needs Identity Platform + "SMS Multi-factor Authentication"
+  on in the Firebase console). Asked once per device at sign-in, not daily.
+  The rules and Cloud Functions refuse an Admin token without
+  `firebase.sign_in_second_factor` (`passedTwoStep`); the app shows
+  `TwoStepSetupScreen` (confirm email -> phone -> code) or "sign in again".
+  A lost phone: another Admin uses "Reset two-step" in Manage Access
+  (`resetTwoStep`). Other roles don't need it (`TWO_STEP_ROLES`).
+
 **Correspondence / email intake**
 - Never block Tim's emails — only skip the automatic website form notices.
 - Voicemails (phone system emails) never link to a customer.

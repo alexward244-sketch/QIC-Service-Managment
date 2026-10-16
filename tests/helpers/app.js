@@ -56,7 +56,7 @@ const realInit=firebase.initializeApp.bind(firebase);
 firebase.initializeApp=(cfg,...rest)=>realInit({...cfg,projectId:'${PROJECT_ID}'},...rest);
 const realFirestore=firebase.firestore.bind(firebase);
 let fsInst=null;
-const fsFn=function(){if(!fsInst){fsInst=realFirestore();const [h,p]=params.get('fs').split(':');const role=params.get('role');const token={sub:'test-user',email:params.get('email')||'tester@qicampark.com'};if(role)token.role=role;fsInst.useEmulator(h,Number(p),{mockUserToken:token});}return fsInst;};
+const fsFn=function(){if(!fsInst){fsInst=realFirestore();const [h,p]=params.get('fs').split(':');const role=params.get('role');const token={sub:'test-user',email:params.get('email')||'tester@qicampark.com'};if(role)token.role=role;if(role==='admin'&&!params.get('noTwoStep'))token.firebase={sign_in_provider:'password',sign_in_second_factor:'phone'};fsInst.useEmulator(h,Number(p),{mockUserToken:token});}return fsInst;};
 Object.assign(fsFn,firebase.firestore);
 firebase.firestore=fsFn;
 const testUser={uid:'test-user',email:params.get('email')||'tester@qicampark.com',getIdTokenResult:()=>Promise.resolve({claims:params.get('role')?{role:params.get('role')}:{}})};
