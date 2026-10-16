@@ -1054,7 +1054,8 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
 
 test("winterizing how-to: the master list's codes in plain words, imported onto sites, shown and edited on the checklist", async () => {
   const page = await openApp(browser, "stub");
-  // The real SheetJS (the app's own version), so a real .xlsx goes through the import.
+  // The real SheetJS (the app's own version, 0.20.3 - from npm as @e965/xlsx, since
+  // SheetJS only publishes it on its own CDN), so a real .xlsx goes through the import.
   await page.addScriptTag({ path: require.resolve("xlsx/dist/xlsx.full.min.js", { paths: [__dirname] }) });
   const decoded = await page.evaluate(() => ["BP", "IN BT P D", "IN KT W", "BP (ot)", "OD", "DT Left of unit", "BP cz1010", "IN P D"].map((c) => winterHowToSteps(c).steps));
   assert.deepEqual(decoded, [

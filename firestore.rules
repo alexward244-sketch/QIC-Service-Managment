@@ -149,6 +149,13 @@ service cloud.firestore {
     // Parts (moved out of campground/data so a save can't wipe other
     // people's part edits): any signed-in user, as before.
     match /parts/{id} { allow read, write: if isSignedIn(); }
+    // Site Map equipment (Hydro / Water / Sewer views): everyone can see
+    // it; only the roles that edit map pins in the app (isAdminOrManager:
+    // Admin, Service Manager, Accounting) place or change it.
+    match /mapEquipment/{id} {
+      allow read: if isSignedIn();
+      allow write: if isMoneyRole();
+    }
     // Hydro readings: anyone can enter one (office meter screen, field
     // hydro pad); confirming and invoicing it happens on the Hydro Review
     // screen, which only Accounting and Admin have.
@@ -205,6 +212,13 @@ service cloud.firestore {
         && request.resource.data.subject is string && request.resource.data.subject.size() <= 300
         && request.resource.data.sentAt is string && request.resource.data.sentAt.size() <= 40;
       allow read, update, delete: if false;
+    }
+    // The permanent activity history (Admin > Activity History), written
+    // only by the audit Cloud Functions as records change. Admins read it;
+    // nobody, Admin included, can change or delete an entry.
+    match /auditLog/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
     match /hydroReadings/{id} {
       allow read, create: if isSignedIn();

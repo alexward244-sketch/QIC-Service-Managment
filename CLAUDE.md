@@ -276,6 +276,18 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   numbers with `sameSiteNumber` / `signupSiteKey` (server: `matchSiteKey`),
   never with `===`, so "site 20" still finds 0020.
 
+**Site Map services**
+- The Site Map switches between Customers and Hydro / Water / Sewer views.
+  Equipment (transformers, panels, valves, lift stations...) is its own
+  document in `mapEquipment` (like parts; linking a site is an
+  `arrayUnion`/`arrayRemove`, never a whole-list write). A site hangs off one
+  piece per service; pieces chain up to the main. Admin / Service Manager /
+  Accounting edit it (firestore.rules), everyone sees it.
+- An inbound email that reads like a hydro / water / sewer problem shows a
+  "Staff only" card in Correspondence: what feeds the site, other sites on
+  it, and other reports on the same piece within 12 hours. Nothing goes to
+  the customer.
+
 **Customers**
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".
@@ -368,12 +380,34 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   non-Admin screen needs a new setting). A non-Admin's `persist()` keeps
   the saved copy of the rest (`keepLockedSettings`), so a stale screen
   can't undo an Admin's change.
+- Activity History (Admin > System > Activity History, `ActivityHistoryView`)
+  is the permanent record: the `audit` Cloud Functions group
+  (`onDocumentWrittenWithAuthContext`) writes `auditLog` entries as records
+  change - who (from their sign-in), when, which fields went from what to
+  what, and a copy of anything deleted. Full history for customers,
+  invoices, quotes, work orders, sites, cottages, hydro readings, parts and
+  sales records; deletes only for emails, propane/tree/winterizing requests
+  and web sign-ups; settings changes, sign-in code changes (never the codes),
+  the app's own activity notes, and Manage Access (written by those
+  functions). Admins read it; nobody can change or delete it (rules). No
+  cap - the in-app `activityLog` (200, in campground/data) is still the
+  dashboards' "Recent activity". Deploy: `--only functions:audit`.
+- Export backup / Import backup / Export as Excel (and the "backup is
+  stale" banner) are Admin only.
 - Only money roles create invoices, except the two the app makes itself:
   "Propane Fill" (workOrder) and "Anode Rod Replacement" (winterizing),
   parts only, not sent (`isAutoInvoice`).
 - Cloud Functions use firebase-admin's modular imports (`getFirestore`,
   `getAuth`, `FieldValue` from `firebase-admin/firestore`...); v14 dropped
   `admin.firestore()`. Tests swap `getAuth()`'s methods in place.
+
+- GitHub security checks are on (Dependabot alerts + security updates,
+  CodeQL default scanning, secret scanning). Dependabot PRs: check, test,
+  merge; ones in `functions/` need a deploy. `tests/` packages are test
+  tools only (never reach the app). SheetJS (Excel import/export, 0.20.3 -
+  cdnjs stopped at 0.18.5, which has known issues) and PDF.js are kept in
+  `vendor/` and served with the app, not loaded from another site (see
+  `vendor/README.md`); tests use the same SheetJS from npm (`@e965/xlsx`).
 
 ## Ideas parked for later
 
@@ -384,8 +418,3 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Service Manager's list misses them. Plan: let them look up just the unsold
   delivered display models' sites (rules change + deploy), not the rest of
   the sales records. Alex said to remind him another time (Oct 2026).
-- Turn on GitHub's free security checks for the repo (Settings → Security:
-  Dependabot alerts / security updates and code scanning), so outdated or
-  risky server packages get flagged on their own. Alex does it in GitHub's
-  settings; walk him through it when he's ready (from the Oct 2026 security
-  check).

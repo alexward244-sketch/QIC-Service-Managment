@@ -114,3 +114,26 @@ test("A save by someone who can't change app settings keeps the saved settings a
   assert.equal(saved.activityLog[0].text, "hi");
   await page.close();
 });
+
+test("Activity History: Admins page through the server's record, newest first, with what changed and deleted copies", async () => {
+  for (let i = 0; i < 205; i++) await writeDoc(`auditLog/p${String(i).padStart(3, "0")}`, { ts: new Date(Date.UTC(2026, 8, 1, 12, 0, i)).toISOString(), by: "dave@qicampark.com", collection: "parts", docId: "x", action: "changed", label: `Part ${i}`, changes: [{ field: "price", from: "1", to: "2" }] });
+  await writeDoc("auditLog/new1", { ts: "2026-10-14T15:00:00.000Z", by: "sue@qicampark.com", collection: "customers", docId: "c1", action: "changed", label: "Jane Doe", changes: [{ field: "phone", from: "6135550148", to: "6135550199" }] });
+  await writeDoc("auditLog/new2", { ts: "2026-10-14T16:00:00.000Z", by: "dave@qicampark.com", collection: "invoices", docId: "i1", action: "deleted", label: "INV-26-0010 \u00b7 Furnace", deletedCopy: JSON.stringify({ invoiceNumber: "INV-26-0010", total: 120 }) });
+  const page = await openApp(browser, "emulator", { role: "admin", email: "boss@qicampark.com" });
+  await mountWithDb(page, `(api) => React.createElement(ActivityHistoryView, null)`);
+  await page.getByText("Jane Doe").waitFor();
+  const text = await page.locator("#root").textContent();
+  assert.ok(text.indexOf("INV-26-0010") < text.indexOf("Jane Doe"), "newest first");
+  assert.match(text, /phone: 6135550148 \u2192 6135550199/);
+  await page.getByRole("button", { name: "Show what it was" }).click();
+  await page.getByText('"total": 120').waitFor();
+  // 200 at a time; the oldest few come with "Show older".
+  assert.equal(await page.getByText("Part 2", { exact: true }).count(), 0);
+  await page.getByRole("button", { name: /Show older/ }).click();
+  await page.getByText("Part 2", { exact: true }).waitFor();
+  await page.locator("select").nth(1).selectOption("sue@qicampark.com");
+  assert.equal(await page.getByText("Part 2", { exact: true }).count(), 0, "filtered to one person");
+  await page.getByText("Jane Doe").waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
