@@ -34,6 +34,7 @@ async function seed() {
     await db.doc("serverState/zohoInbox").set({ checkedAt: "x" });
     await db.doc("serverState/zohoToken").set({ token: "secret" });
     await db.doc("aiUsage/u1").set({ count: 1 });
+    await db.doc("auditLog/e1").set({ ts: "2026-10-14T15:00:00Z", by: "a@x.com", action: "changed" });
   });
 }
 const as = (role) => role === "signedOut" ? env.unauthenticatedContext().firestore() : env.authenticatedContext("u-" + role, role === "noRole" ? {} : { role }).firestore();
@@ -78,6 +79,10 @@ test("money, sales, hydro and alerts are limited to the right roles", async () =
   await expect("read deals", (db) => db.doc("deals/d1").get(), ["admin", "salesmanager"]);
   await expect("correct a hydro reading", (db, role) => db.doc("hydroReadings/h1").update({ reading: 200 + [...ROLES, "noRole"].indexOf(role) }), ["admin", "accounting"]);
   await expect("read server alerts", (db) => db.doc("serverAlerts/a1").get(), ["admin", "manager"]);
+  await expect("read the activity history", (db) => db.doc("auditLog/e1").get(), ["admin"]);
+  await expect("change the activity history", (db) => db.doc("auditLog/e1").update({ by: "someone@x.com" }), []);
+  await expect("delete from the activity history", (db) => db.doc("auditLog/e1").delete(), []);
+  await expect("add to the activity history", (db, role) => db.doc("auditLog/new-" + role).set({ by: "me" }), []);
   await expect("read the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").get(), ["admin", "manager"]);
   await expect("read the Zoho login", (db) => db.doc("serverState/zohoToken").get(), []);
   await expect("change the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").set({ checkedAt: "y" }), []);

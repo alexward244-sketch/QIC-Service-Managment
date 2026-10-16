@@ -8964,7 +8964,8 @@ function DashboardView({ db, onGoToTab, onSearchJump, persist, allowedTabKeys, p
   const emailUsageTone = emailUsagePct >= 90 ? "text-[#a8532a]" : emailUsagePct >= 60 ? "text-[#9A6B1F]" : "text-[#28633C]";
   const emailUsageBarTone = emailUsagePct >= 90 ? "bg-[#a8532a]" : emailUsagePct >= 60 ? "bg-[#9A6B1F]" : "bg-[#377249]";
   const daysSinceBackup = db.lastBackupAt ? Math.floor((Date.now() - new Date(db.lastBackupAt).getTime()) / (24 * 60 * 60 * 1e3)) : null;
-  const backupStale = daysSinceBackup === null || daysSinceBackup >= 7;
+  // Exports (the backup and Excel buttons) are Admin only.
+  const backupStale = summaryRole === "admin" && (daysSinceBackup === null || daysSinceBackup >= 7);
   return /* @__PURE__ */ React.createElement(React.Fragment, null, reviewChooserOpen && /* @__PURE__ */ React.createElement(ReviewTypeChooserModal, { options: activeReviewTypes, onSelect: (tabKey) => { setReviewChooserOpen(false); onGoToTab(tabKey); }, onClose: () => setReviewChooserOpen(false) }), unrecognizedOpen && /* @__PURE__ */ React.createElement(UnrecognizedSignupsModal, { entries: unrecognizedSignups, onDiscard: (id) => removePendingSignup(id), onClose: () => setUnrecognizedOpen(false) }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-start justify-between gap-4 flex-wrap" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Dashboard"), /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#75716A]" }, "Today's overview across the campground.")), /* @__PURE__ */ React.createElement(DashboardSearch, { db, onJump: onSearchJump })), /* @__PURE__ */ React.createElement(MorningSummaryCard, { canRefresh: summaryRole === "admin" || summaryRole === "manager", season: getSummarySeason(db) }), backupStale && /* @__PURE__ */ React.createElement("div", { className: "mb-5 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-[#e0bfa6] bg-[#F5E3D9] px-4 py-2.5" }, /* @__PURE__ */ React.createElement("p", { className: "text-xs text-[#a8532a]" }, db.lastBackupAt ? `It's been ${daysSinceBackup} days since your last backup.` : "You haven't exported a backup yet.", " ", "Worth grabbing a fresh copy."), /* @__PURE__ */ React.createElement(
     "button",
     {
@@ -20275,6 +20276,127 @@ function ServerAlertsPanel({ db }) {
     )
   );
 }
+// Admin > Activity History: the permanent record the server keeps of every
+// change (auditLog, written only by the audit Cloud Functions - nobody can
+// edit or delete it). Loads 200 at a time, newest first; "Show older" or a
+// date goes further back. Filters work on what's loaded.
+const AUDIT_TYPES = {
+  customers: "Customer", invoices: "Invoice", quotes: "Quote", workOrders: "Work order", sites: "Site",
+  cottages: "Cottage", hydroReadings: "Hydro reading", parts: "Part", deals: "Deal", cottageOrders: "Cottage order",
+  consignmentListings: "Listing", salesAppointments: "Sales appointment", correspondence: "Email",
+  propaneRequests: "Propane request", treeRequests: "Tree request", winterizingRequests: "Winterizing request",
+  pendingSignups: "Web sign-up", campground: "App", access: "Manage Access"
+};
+const AUDIT_ACTIONS = { created: ["Added", "bg-[#E4EFE6] text-[#28633C]"], changed: ["Changed", "bg-[#F1EEE9] text-[#4B4740]"], deleted: ["Deleted", "bg-[#F5E3D9] text-[#a8532a]"], note: ["Note", "bg-[#EAF0F7] text-[#2F5A85]"] };
+const AUDIT_PAGE = 200;
+function ActivityHistoryView() {
+  const [entries, setEntries] = useState([]);
+  const [lastDoc, setLastDoc] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [q, setQ] = useState("");
+  const [type, setType] = useState("");
+  const [person, setPerson] = useState("");
+  const [openCopy, setOpenCopy] = useState(null);
+  const load = (more) => {
+    setLoading(true);
+    setError("");
+    let query = db_.collection("auditLog").orderBy("ts", "desc");
+    if (fromDate) query = query.where("ts", "<=", new Date(fromDate + "T23:59:59.999").toISOString());
+    if (more && lastDoc) query = query.startAfter(lastDoc);
+    query.limit(AUDIT_PAGE).get().then((snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setEntries((prev) => more ? [...prev, ...rows] : rows);
+      setLastDoc(snap.docs[snap.docs.length - 1] || (more ? lastDoc : null));
+      setHasMore(snap.docs.length === AUDIT_PAGE);
+      setLoading(false);
+    }).catch(() => {
+      setError("Couldn't load the history. Check your connection and try again.");
+      setLoading(false);
+    });
+  };
+  useEffect(() => { load(false); }, [fromDate]);
+  const people = [...new Set(entries.map((e) => e.by).filter(Boolean))].sort();
+  const types = [...new Set(entries.map((e) => e.collection).filter(Boolean))].sort((a, b) => (AUDIT_TYPES[a] || a).localeCompare(AUDIT_TYPES[b] || b));
+  const needle = q.trim().toLowerCase();
+  const shown = entries.filter((e) => (!type || e.collection === type) && (!person || e.by === person) && (!needle || [e.label, e.note, e.by, e.actor, ...(e.changes || []).map((c) => `${c.field} ${c.from} ${c.to}`)].join(" ").toLowerCase().includes(needle)));
+  const dayOf = (ts) => new Date(ts).toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const timeOf = (ts) => new Date(ts).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit" });
+  const rows = [];
+  let lastDay = "";
+  shown.forEach((e) => {
+    const day = dayOf(e.ts);
+    if (day !== lastDay) {
+      lastDay = day;
+      rows.push(React.createElement("div", { key: "d" + e.id, className: "pt-4 pb-1 text-xs uppercase tracking-wider font-semibold text-[#75716A]" }, day));
+    }
+    const [actLabel, actCls] = AUDIT_ACTIONS[e.action] || [e.action, AUDIT_ACTIONS.changed[1]];
+    rows.push(React.createElement(
+      "div",
+      { key: e.id, className: "py-2 border-b border-[#EFECE6] text-sm" },
+      React.createElement(
+        "div",
+        { className: "flex items-baseline gap-2 flex-wrap" },
+        React.createElement("span", { className: "text-xs text-[#9A968D] w-16 flex-shrink-0" }, timeOf(e.ts)),
+        React.createElement("span", { className: `text-[11px] font-semibold px-1.5 py-0.5 rounded ${actCls}` }, actLabel),
+        React.createElement("span", { className: "text-[#75716A]" }, AUDIT_TYPES[e.collection] || e.collection),
+        e.label && React.createElement("span", { className: "font-medium text-[#1E1A13]" }, e.label),
+        e.note && React.createElement("span", { className: "text-[#1E1A13]" }, e.note),
+        React.createElement("span", { className: "flex-1" }),
+        React.createElement("span", { className: "text-xs text-[#75716A]", title: e.actor ? `Picked in the app as ${e.actor}` : void 0 }, e.by || "Unknown")
+      ),
+      e.changes && e.changes.length > 0 && React.createElement(
+        "div",
+        { className: "mt-1 ml-[4.5rem] space-y-0.5" },
+        e.changes.map((c, i) => React.createElement(
+          "div",
+          { key: i, className: "text-xs text-[#4B4740] break-words" },
+          React.createElement("span", { className: "font-medium" }, c.field, ": "),
+          React.createElement("span", { className: "text-[#a8532a] line-through decoration-[#e0bfa6]" }, c.from || "(blank)"),
+          " → ",
+          React.createElement("span", { className: "text-[#28633C]" }, c.to || "(blank)")
+        )),
+        e.moreChanges > 0 && React.createElement("div", { className: "text-xs text-[#75716A]" }, `…and ${e.moreChanges} more field${e.moreChanges === 1 ? "" : "s"}`)
+      ),
+      e.deletedCopy && React.createElement(
+        "div",
+        { className: "mt-1 ml-[4.5rem]" },
+        React.createElement("button", { type: "button", onClick: () => setOpenCopy(openCopy === e.id ? null : e.id), className: "text-xs text-[#377249] underline" }, openCopy === e.id ? "Hide what it was" : "Show what it was"),
+        openCopy === e.id && React.createElement("pre", { className: "mt-1 p-2 rounded bg-[#F7F5F0] text-[11px] text-[#4B4740] whitespace-pre-wrap break-words max-h-80 overflow-auto" }, (() => {
+          try { return JSON.stringify(JSON.parse(e.deletedCopy), null, 2); } catch (_) { return e.deletedCopy; }
+        })())
+      )
+    ));
+  });
+  const selCls = "px-2 py-1.5 text-sm rounded-md border border-[#E2DED5] bg-white text-[#4B4740]";
+  return React.createElement(
+    "div",
+    { className: "max-w-5xl" },
+    React.createElement("h2", { className: "font-serif text-2xl text-[#377249] font-semibold" }, "Activity History"),
+    React.createElement("p", { className: "text-sm text-[#75716A] mb-4" }, "Every change to customers, invoices, quotes, work orders, sites, cottages, hydro readings, parts and sales records, plus deleted emails and requests, settings and Manage Access. Recorded by the server under the person signed in, kept for good, and nobody can edit or delete it."),
+    React.createElement(
+      "div",
+      { className: "flex items-center gap-2 flex-wrap mb-2" },
+      React.createElement("input", { type: "text", value: q, onChange: (e) => setQ(e.target.value), placeholder: "Search names, invoice #s, values…", className: selCls + " w-64" }),
+      React.createElement("select", { value: type, onChange: (e) => setType(e.target.value), className: selCls }, React.createElement("option", { value: "" }, "All types"), types.map((t) => React.createElement("option", { key: t, value: t }, AUDIT_TYPES[t] || t))),
+      React.createElement("select", { value: person, onChange: (e) => setPerson(e.target.value), className: selCls }, React.createElement("option", { value: "" }, "Everyone"), people.map((p) => React.createElement("option", { key: p, value: p }, p))),
+      React.createElement("label", { className: "flex items-center gap-1.5 text-sm text-[#4B4740]" }, "On or before", React.createElement("input", { type: "date", value: fromDate, onChange: (e) => setFromDate(e.target.value), className: selCls })),
+      fromDate && React.createElement("button", { type: "button", onClick: () => setFromDate(""), className: "text-xs text-[#377249] underline" }, "Back to today")
+    ),
+    React.createElement("p", { className: "text-xs text-[#9A968D]" }, entries.length === 0 ? "" : `Showing ${shown.length} of the ${entries.length} most recent${fromDate ? " up to that date" : ""}. Search and filters look through what's loaded - "Show older" to go further back.`),
+    error && React.createElement("p", { className: "text-sm text-[#a8532a] mt-3" }, error),
+    !loading && !error && entries.length === 0 && React.createElement("p", { className: "text-sm text-[#75716A] mt-4" }, "Nothing recorded yet. Changes show up here from the day the history was turned on."),
+    React.createElement("div", null, rows),
+    entries.length > 0 && shown.length === 0 && React.createElement("p", { className: "text-sm text-[#75716A] mt-4" }, "Nothing loaded matches. Try “Show older”."),
+    React.createElement(
+      "div",
+      { className: "mt-4" },
+      loading ? React.createElement("p", { className: "text-sm text-[#75716A]" }, "Loading…") : hasMore && React.createElement("button", { type: "button", onClick: () => load(true), className: "px-3 py-1.5 text-sm rounded-md border border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]" }, `Show older (${AUDIT_PAGE} more)`)
+    )
+  );
+}
 function SystemHealthView({ db, persist }) {
   const actor = useCurrentActor();
   const [versionNote, setVersionNote] = useState("");
@@ -21187,6 +21309,7 @@ const TABS = [
   { key: "adminreports", label: "Reports", group: "admin" },
   { key: "seasonalfees", label: "Settings", group: "admin" },
   { key: "systemhealth", label: "System Health", group: "admin" },
+  { key: "activityhistory", label: "Activity History", group: "admin" },
   { key: "staff", label: "Staff", group: "admin" },
   { key: "hydroreview", label: "Hydro Meter Review", group: "accounting" },
   { key: "hydro", label: "Hydro Readings", group: "accounting" },
@@ -21204,7 +21327,7 @@ const ADMIN_NAV_GROUPS = [
   { label: "Overview", items: ["admindashboard", "adminreports"] },
   { label: "Park", items: ["seasonalfees"] },
   { label: "People", items: ["staff"] },
-  { label: "System", items: ["systemhealth"] }
+  { label: "System", items: ["systemhealth", "activityhistory"] }
 ];
 const SALES_NAV_GROUPS = [
   { label: "Overview", items: ["salesdashboard", "salesreport"] },
@@ -21317,6 +21440,10 @@ const NAV_ICON_SHAPES = {
   ],
   systemhealth: [
     React.createElement("path", { key: "a", d: "M3 12h4l2-8 4 16 2-8h6" })
+  ],
+  activityhistory: [
+    React.createElement("circle", { key: "a", cx: 12, cy: 12, r: 9 }),
+    React.createElement("path", { key: "b", d: "M12 7v5l3 2" })
   ],
   staff: [
     React.createElement("path", { key: "a", d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" }),
@@ -24659,10 +24786,10 @@ function AppContent() {
         className: `w-full text-left text-[11px] font-semibold px-2 py-1.5 rounded-md ${notifStatus === "granted" ? "text-[#28633C]" : notifStatus === "denied" ? "text-[#9A968D]" : "text-[#377249] hover:bg-[#F1EEE9]"}`
       },
       notifStatus === "granted" ? "\u2713 Notifications on" : notifStatus === "denied" ? "Notifications blocked (check browser settings)" : "Enable Notifications"
-    ), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => {
+    ), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] text-[#75716A] font-medium" }, openCount, " open work order", openCount === 1 ? "" : "s"), /* @__PURE__ */ React.createElement("div", { className: "flex items-center gap-3 text-[11px] flex-wrap" }, isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => exportDatabase(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export backup"), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => {
       var _a;
       return (_a = importInputRef.current) == null ? void 0 : _a.click();
-    }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen("other"), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setManageRolesOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Manage Access"), pinRequired && pinIdentity.name && /* @__PURE__ */ React.createElement("button", { onClick: () => pinIdentity.clearIdentity(), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline whitespace-nowrap" }, "Switch user"), /* @__PURE__ */ React.createElement(
+    }, className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Import backup"), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => exportExcel(db, persist), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Export as Excel"), isAdminOrManager && /* @__PURE__ */ React.createElement("button", { onClick: () => setTrashOpen("other"), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Trash", (db.trash || []).length > 0 ? ` (${db.trash.length})` : ""), isAdmin && /* @__PURE__ */ React.createElement("button", { onClick: () => setManageRolesOpen(true), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline" }, "Manage Access"), pinRequired && pinIdentity.name && /* @__PURE__ */ React.createElement("button", { onClick: () => pinIdentity.clearIdentity(), className: "text-[#75716A] hover:text-[#1E1A13] font-medium underline whitespace-nowrap" }, "Switch user"), /* @__PURE__ */ React.createElement(
       "button",
       {
         onClick: () => {
@@ -24683,7 +24810,7 @@ function AppContent() {
   ), (isAdmin || isManager) && React.createElement(PendingJobsPrompt, { db, persist, saveWorkOrder }), effectiveTab === "dashboard" && /* @__PURE__ */ React.createElement(DashboardView, { db, onGoToTab: selectTab, onSearchJump: jumpToSearchResult, persist, allowedTabKeys, pendingSignups, removePendingSignup, saveWorkOrder, saveCorrespondence }), effectiveTab === "incoming" && React.createElement(IncomingView, { db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest: isAdminOrManager ? saveWinterizingRequest : null, onGoToTab: selectTab }), effectiveTab === "workorders" && /* @__PURE__ */ React.createElement(WorkOrdersView, { db, persist, saveWorkOrder, deleteWorkOrder, saveCottage, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder"), workOrderPrefill, onConsumeWorkOrderPrefill: () => setWorkOrderPrefill(null), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "workorders" ? searchPrefill : null }), effectiveTab === "calendar" && /* @__PURE__ */ React.createElement(CalendarView, { db, persist, onGoToTab: selectTab }), isAdminOrManager && effectiveTab === "servicereports" && /* @__PURE__ */ React.createElement(ServiceReportsView, { db, persist, saveWinterizingRequest, savePropaneRequest, saveTreeRequest, saveQuote, saveWorkOrder, saveInvoice, saveCorrespondence, onCreateInvoice: (wo) => createInvoiceFromSource(wo, "workOrder") }), effectiveTab === "sites" && /* @__PURE__ */ React.createElement(SitesView, { db, persist, saveWorkOrder, saveSite, deleteSite, saveCottage, saveCorrespondence, bulkWriteSites, readOnly: !isAdminOrManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "sites" ? searchPrefill : null }), effectiveTab === "map" && /* @__PURE__ */ React.createElement(CampgroundMapView, { db, persist, saveWorkOrder, saveSite, saveCottage, saveCorrespondence, isAdminOrManager, onCreateWorkOrder: createWorkOrderFromSite, focus: mapFocus, onFocusUsed: () => setMapFocus(null) }), effectiveTab === "cottages" && /* @__PURE__ */ React.createElement(CottagesView, { db, persist, saveWorkOrder, saveCustomer, saveCottage, deleteCottage, saveSite, saveCorrespondence, readOnly: !isAdminOrManager, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "cottages" ? searchPrefill : null }), effectiveTab === "winterizing" && /* @__PURE__ */ React.createElement(WinterizingView, { db, persist, saveWinterizingRequest, deleteWinterizingRequest, saveInvoice, readOnly: !isAdminOrManager, pendingSignups: pendingSignups.filter((p) => p.type === "winterizing"), removePendingSignup, confirmPendingSignup, saveWorkOrder, saveSite: isAdminOrManager ? saveSite : null, bulkWriteSites: isAdminOrManager ? bulkWriteSites : null, saveCottage: isAdminOrManager ? saveCottage : null }), effectiveTab === "hydro" && /* @__PURE__ */ React.createElement(HydroMeterView, { db, persist }), effectiveTab === "propane" && /* @__PURE__ */ React.createElement(PropaneView, { db, persist, savePropaneRequest, deletePropaneRequest, saveWorkOrder, saveInvoice, pendingSignups: pendingSignups.filter((p) => p.type === "propane"), removePendingSignup, confirmPendingSignup }), effectiveTab === "trees" && /* @__PURE__ */ React.createElement(TreesView, { db, persist, saveTreeRequest, deleteTreeRequest, saveWorkOrder, saveCorrespondence }), effectiveTab === "generalservice" && /* @__PURE__ */ React.createElement(GeneralServiceView, { db, persist, saveWorkOrder, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, pendingSignups: pendingSignups.filter((p) => p.type === "generalservice"), removePendingSignup, confirmPendingSignup, onBackToDashboard: () => selectTab("dashboard") }), effectiveTab === "customers" && /* @__PURE__ */ React.createElement(CustomersView, { db, persist, saveCustomer, deleteCustomer, saveWorkOrder, saveQuote: isAdminOrManager ? saveQuote : null, saveInvoice: isAdminOrManager ? saveInvoice : null, saveCorrespondence, saveCottage, saveSite, canTransfer: isAdminOrManager || isSalesManager, filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "customers" ? searchPrefill : null }), effectiveTab === "correspondence" && /* @__PURE__ */ React.createElement(CorrespondenceInboxView, { db, persist, saveCorrespondence, deleteCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveCottage, saveInvoice: isAdminOrManager ? saveInvoice : null, onOpenEmailTrash: isAdminOrManager ? () => setTrashOpen("emails") : null, onShowEquipmentOnMap: (f) => {
     setMapFocus(f);
     selectTab("map");
-  } }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist })))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
+  } }), isAdminOrManager && effectiveTab === "parts" && /* @__PURE__ */ React.createElement(PartsView, { db, persist }), isAdminOrManager && effectiveTab === "quotes" && /* @__PURE__ */ React.createElement(QuotesView, { db, persist, saveWorkOrder, saveQuote, deleteQuote, onGoToWorkOrders: () => selectTab("workorders"), onCreateInvoice: (q) => createInvoiceFromSource(q, "quote"), filterPrefill: (searchPrefill == null ? void 0 : searchPrefill.tab) === "quotes" ? searchPrefill : null }), isAdminOrManager && effectiveTab === "invoices" && /* @__PURE__ */ React.createElement(InvoicesView, { db, persist, saveInvoice, deleteInvoice, saveWorkOrder, saveCorrespondence, invoicePrefill, onConsumeInvoicePrefill: () => setInvoicePrefill(null) }), isAdmin && effectiveTab === "staff" && /* @__PURE__ */ React.createElement(StaffView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesdashboard" && /* @__PURE__ */ React.createElement(SalesDashboardView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "salesreport" && /* @__PURE__ */ React.createElement(SalesReportView, { db }), (isAdmin || isSalesManager) && effectiveTab === "cottageorders" && /* @__PURE__ */ React.createElement(CottageOrdersView, { db, persist, saveCustomer, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "inventory" && /* @__PURE__ */ React.createElement(InventoryView, { db, persist, saveCottage }), (isAdmin || isSalesManager) && effectiveTab === "consignments" && /* @__PURE__ */ React.createElement(ConsignmentListingsView, { db, persist }), (isAdmin || isSalesManager) && effectiveTab === "sunspace" && /* @__PURE__ */ React.createElement(SunspaceOrdersView, { db, persist, saveCottage, onGoToWorkOrders: () => goToServiceTab("workorders") }), (isAdmin || isSalesManager) && effectiveTab === "deals" && /* @__PURE__ */ React.createElement(DealsView, { db, persist, saveWorkOrder, saveCustomer, saveSite, saveCottage, deleteCottage }), (isAdmin || isSalesManager) && effectiveTab === "salestransactions" && /* @__PURE__ */ React.createElement(SalesTransactionsView, { db }), isAdmin && effectiveTab === "admindashboard" && /* @__PURE__ */ React.createElement(AdminDashboardView, { db, persist }), isAdmin && effectiveTab === "adminreports" && /* @__PURE__ */ React.createElement(AdminReportsView, { db }), isAdmin && effectiveTab === "seasonalfees" && /* @__PURE__ */ React.createElement(AdminSettingsView, { db, persist, saveSite, bulkWriteSites }), (isAdmin || isAccounting) && effectiveTab === "hydroreview" && /* @__PURE__ */ React.createElement(HydroReviewView, { db, persist }), isAdmin && effectiveTab === "systemhealth" && /* @__PURE__ */ React.createElement(SystemHealthView, { db, persist }), isAdmin && effectiveTab === "activityhistory" && React.createElement(ActivityHistoryView, null)))), importPending && (importPending.__invalid ? /* @__PURE__ */ React.createElement(Modal, { title: "Import failed", onClose: () => setImportPending(null) }, /* @__PURE__ */ React.createElement("p", { className: "text-sm text-[#4B4740] mb-5" }, "That file doesn't look like a valid backup \u2014 it may be corrupted or not a JSON export from this app."), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: () => setImportPending(null),

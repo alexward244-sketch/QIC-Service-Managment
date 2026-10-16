@@ -370,6 +370,20 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   non-Admin screen needs a new setting). A non-Admin's `persist()` keeps
   the saved copy of the rest (`keepLockedSettings`), so a stale screen
   can't undo an Admin's change.
+- Activity History (Admin > System > Activity History, `ActivityHistoryView`)
+  is the permanent record: the `audit` Cloud Functions group
+  (`onDocumentWrittenWithAuthContext`) writes `auditLog` entries as records
+  change - who (from their sign-in), when, which fields went from what to
+  what, and a copy of anything deleted. Full history for customers,
+  invoices, quotes, work orders, sites, cottages, hydro readings, parts and
+  sales records; deletes only for emails, propane/tree/winterizing requests
+  and web sign-ups; settings changes, sign-in code changes (never the codes),
+  the app's own activity notes, and Manage Access (written by those
+  functions). Admins read it; nobody can change or delete it (rules). No
+  cap - the in-app `activityLog` (200, in campground/data) is still the
+  dashboards' "Recent activity". Deploy: `--only functions:audit`.
+- Export backup / Import backup / Export as Excel (and the "backup is
+  stale" banner) are Admin only.
 - Only money roles create invoices, except the two the app makes itself:
   "Propane Fill" (workOrder) and "Anode Rod Replacement" (winterizing),
   parts only, not sent (`isAutoInvoice`).

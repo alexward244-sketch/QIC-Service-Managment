@@ -619,3 +619,58 @@ test("nameplate reader: staff only, sends the photo to Claude and tidies what co
   assert.equal(fromPdf.plate.serialNumber, "S1");
   assert.deepEqual(await call(fns.readCottageNameplate, { pdf: "aGVsbG8=" }), { error: "invalid-argument" }, "not a PDF");
 });
+
+// A Firestore write event the way the audit triggers receive it.
+const snap = (data) => ({ exists: data != null, data: () => data });
+const writeEvent = (before, after, who = { authType: "app_user", authId: "ud" }, docId = "c1") => ({ data: { before: snap(before), after: snap(after) }, params: { docId }, time: "2026-10-14T15:00:00.000Z", ...who });
+
+test("activity history: who changed what is recorded by the server, with before/after values", async () => {
+  auth.users = { "dave@qicampark.com": { uid: "ud", email: "dave@qicampark.com", customClaims: { role: "office" } } };
+  await fns.audit.customers(writeEvent(null, { name: "Jane Doe", phone: "6135550148" }));
+  await fns.audit.customers(writeEvent({ name: "Jane Doe", phone: "6135550148", updatedAt: "a" }, { name: "Jane Doe", phone: "6135550199", updatedAt: "b" }));
+  await fns.audit.customers(writeEvent({ name: "Jane Doe", updatedAt: "a" }, { name: "Jane Doe", updatedAt: "b" }));
+  await fns.audit.invoices(writeEvent({ invoiceNumber: "INV-26-0010", title: "Furnace", total: 120 }, null, { authType: "app_user", authId: "ud" }, "i1"));
+  await fns.audit.invoices(writeEvent({ invoiceNumber: "INV-26-0011", total: 50 }, { invoiceNumber: "INV-26-0011", total: 60 }, { authType: "service_account" }, "i2"));
+  const log = (await all("auditLog")).sort((a, b) => (a.collection + a.action).localeCompare(b.collection + b.action));
+  assert.equal(log.length, 4, "a save that changes nothing but the timestamp isn't recorded");
+  const created = log.find((e) => e.collection === "customers" && e.action === "created");
+  const changed = log.find((e) => e.collection === "customers" && e.action === "changed");
+  assert.equal(created.by, "dave@qicampark.com");
+  assert.equal(created.label, "Jane Doe");
+  assert.deepEqual(changed.changes, [{ field: "phone", from: "6135550148", to: "6135550199" }]);
+  const deleted = log.find((e) => e.action === "deleted");
+  assert.equal(deleted.label, "INV-26-0010 · Furnace");
+  assert.equal(JSON.parse(deleted.deletedCopy).total, 120, "a deleted record is kept as it was");
+  assert.equal(log.find((e) => e.docId === "i2").by, "System (automatic)");
+});
+
+test("activity history: busy lists only record deletes; settings, sign-in codes and app notes are recorded without the codes", async () => {
+  auth.users = { "boss@qicampark.com": { uid: "ua", email: "boss@qicampark.com", customClaims: { role: "admin" } } };
+  const admin = { authType: "app_user", authId: "ua" };
+  await fns.audit.correspondence(writeEvent({ subject: "Hi" }, { subject: "Hi", handled: true }, admin));
+  await fns.audit.correspondence(writeEvent({ subject: "Hi" }, null, admin));
+  await fns.audit.campgroundData(writeEvent(
+    { settings: { taxRate: 13 }, loginCodes: { a: "1111" }, activityLog: [{ id: "old", summary: "Old" }] },
+    { settings: { taxRate: 15 }, loginCodes: { a: "2222" }, activityLog: [{ id: "new", actor: "Boss", summary: "Restored customer \"Jane\" from trash" }, { id: "old", summary: "Old" }] },
+    admin, "data"));
+  const log = await all("auditLog");
+  assert.equal(log.filter((e) => e.collection === "correspondence").length, 1);
+  assert.equal(log.find((e) => e.collection === "correspondence").action, "deleted");
+  assert.deepEqual(log.find((e) => e.label === "Settings").changes, [{ field: "taxRate", from: "13", to: "15" }]);
+  assert.ok(!JSON.stringify(log).includes("2222") && !JSON.stringify(log).includes("1111"), "sign-in codes never copied");
+  assert.ok(log.find((e) => e.label === "Sign-in codes"));
+  const note = log.find((e) => e.action === "note");
+  assert.equal(note.note, "Restored customer \"Jane\" from trash");
+  assert.equal(note.by, "boss@qicampark.com");
+});
+
+test("activity history: Manage Access changes are recorded under the Admin who made them", async () => {
+  auth.users = {
+    "boss@qicampark.com": { uid: "ua", email: "boss@qicampark.com", customClaims: { role: "admin" } },
+    "dave@qicampark.com": { uid: "ud", email: "dave@qicampark.com", customClaims: { role: "office" } }
+  };
+  await call(fns.setUserRole, { email: "dave@qicampark.com", role: "manager" }, "admin", "ua");
+  const [e] = await all("auditLog");
+  assert.equal(e.by, "boss@qicampark.com");
+  assert.equal(e.note, "Gave dave@qicampark.com the manager role");
+});
