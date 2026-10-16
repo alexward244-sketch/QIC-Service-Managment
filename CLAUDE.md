@@ -199,6 +199,19 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   outside tap; Master X = our master key works. Unknown bits (e.g.
   "cz1010") show as written - don't guess at them.
 
+**Correspondence on phones**
+- The field app has its own Correspondence (`FieldCorrespondenceScreen`,
+  Admins / Service Managers, under More, with a count on More and a
+  "N emails need a reply" card on Today): conversations grouped by customer
+  (or sender), "Needs reply" first; a conversation reads like a text thread
+  (newest at the bottom, ours on the right) with Reply / Work order / Done
+  held at the bottom; Reply is a full-screen box (`FieldEmailComposer`,
+  Claude draft + canned replies, same saved draft as the computer). No Call
+  button - Alex's team doesn't call from their phones; "✉ Email" starts a
+  fresh email instead. A stranger has to be linked before replying. Alex
+  likes the Runs screens as they are - don't change them. The computer
+  keeps `CorrespondenceInboxView`.
+
 **Incoming**
 - The Incoming tab (`IncomingView`) lists every request waiting on us: new
   incoming emails/voicemails (not FYIs), website sign-ups (service, propane,
