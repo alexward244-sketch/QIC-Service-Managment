@@ -67,7 +67,7 @@ firebase.functions=()=>fnObj;
 firebase.messaging=Object.assign(()=>mk(),{isSupported:()=>false});
 `;
   } else {
-    prelude += `window.firebase=new Proxy(function(){},{get(t,k){if(k==='functions')return()=>fnObj;if(typeof k==='symbol'||k==='then')return undefined;return mk();}});`;
+    prelude += `window.firebase=new Proxy(function(){},{get(t,k){if(k==='functions')return()=>fnObj;if(k==='messaging'&&window.__messaging)return()=>window.__messaging;if(typeof k==='symbol'||k==='then')return undefined;return mk();}});`;
   }
   const [first, ...rest] = appScripts();
   return `<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root"></div><div id="test"></div>${head.join("")}<script>${prelude}</script>` +
@@ -97,6 +97,8 @@ async function openApp(browser, mode, opts = {}) {
   const page = await context.newPage();
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
+  // opts.initScript: runs in the page before the app's own scripts.
+  if (opts.initScript) await page.addInitScript(opts.initScript);
   const q = new URLSearchParams();
   if (mode === "emulator") {
     q.set("fs", process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080");
