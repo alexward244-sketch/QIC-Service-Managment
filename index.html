@@ -21313,6 +21313,44 @@ function WorkOrderPhotos({ wo, saveWorkOrder, actor, compact }) {
     )
   );
 }
+// What the crew needs to know at a job, under its main card: the
+// customer's notes (gate codes, pets, "call first"), the appliance it's for
+// with its last service visits, and the last few things done at this cottage.
+function FieldJobContext({ db, wo, site, cottage, customer }) {
+  const h = React.createElement;
+  const owners = customer ? [customer] : cottage ? cottageOwners(db, cottage) : site ? (db.customers || []).filter((c) => customerSiteIds(c).includes(site.id)) : [];
+  const withNotes = owners.filter((c) => (c.notes || "").trim());
+  const appliance = wo.applianceId && cottage ? (cottage.appliances || []).find((a) => a.id === wo.applianceId) : null;
+  const age = appliance ? applianceAge(appliance) : 0;
+  const log = appliance ? (appliance.serviceLog || []).slice().sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 3) : [];
+  const history = cottage ? cottageHistory(db, cottage).filter((e) => !(e.wo && e.wo.id === wo.id) && !String(e.key).startsWith("np") && !String(e.key).startsWith("x-")).slice(0, 4) : site ? (db.workOrders || []).filter((w) => w.siteId === site.id && w.id !== wo.id).sort((a, b) => String(b.date || "").localeCompare(String(a.date || ""))).slice(0, 4).map((w) => ({ key: w.id, date: w.status === "Completed" ? w.completedDate || w.date : w.date, open: w.status !== "Completed", text: `${w.workOrderNumber ? w.workOrderNumber + " \xB7 " : ""}${w.title || "Work order"}${w.status === "Completed" ? "" : ` \u2014 ${w.status}`}` })) : [];
+  const label = (t) => h("div", { className: "text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A] mb-1.5" }, t);
+  return h(
+    React.Fragment,
+    null,
+    withNotes.length > 0 && h(
+      "div",
+      { className: "rounded-xl border border-[#E9C46A] bg-[#FBEEDA] p-4 mb-3", "data-job-customer-notes": true },
+      label("Customer notes"),
+      withNotes.map((c) => h("div", { key: c.id, className: "text-[15px] text-[#1E1A13] whitespace-pre-line leading-snug" }, withNotes.length > 1 || owners.length > 1 ? h("b", null, c.name, ": ") : null, c.notes.trim()))
+    ),
+    appliance && h(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3", "data-job-appliance": true },
+      label("The appliance"),
+      h("div", { className: "text-[15px] font-semibold text-[#1E1A13]" }, appliance.type, age >= 1 ? h("span", { className: `ml-2 text-[11px] font-bold px-1.5 py-0.5 rounded-full ${age >= 15 ? "bg-[#F5E3D9] text-[#a8532a]" : "bg-[#F1EEE9] text-[#75716A]"}` }, `${age} yr${age === 1 ? "" : "s"}`) : null),
+      h("div", { className: "text-sm text-[#4B4740]" }, [[appliance.make, appliance.model].filter(Boolean).join(" "), appliance.fuel].filter(Boolean).join(" \xB7 ") || "Make / model not on file"),
+      appliance.serialNumber && h("div", { className: "text-sm text-[#4B4740]" }, "Serial # ", h("span", { className: "font-mono" }, appliance.serialNumber)),
+      log.length > 0 && h("div", { className: "mt-2 pt-2 border-t border-[#EEEBE5] space-y-1" }, log.map((e, i) => h("div", { key: e.id || i, className: "text-[13px] text-[#4B4740] flex gap-2" }, h("span", { className: "text-[#9A968D] flex-shrink-0" }, e.date || ""), h("span", null, e.description || e.notes || "Service"))))
+    ),
+    history.length > 0 && h(
+      "div",
+      { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] p-4 mb-3", "data-job-history": true },
+      label(cottage ? "Last time we were here" : "Other jobs on this site"),
+      h("div", { className: "space-y-1.5" }, history.map((e) => h("div", { key: e.key, className: "text-[13.5px] flex gap-2" }, h("span", { className: "text-[#9A968D] flex-shrink-0 w-[78px]" }, e.date || ""), h("span", { className: e.open ? "text-[#9A6B1F] font-medium" : "text-[#1E1A13]" }, e.text))))
+    )
+  );
+}
 function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, onCreateInvoice, onGoToSiteMap, setToast }) {
   const [addPartOpen, setAddPartOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -21425,6 +21463,7 @@ function FieldJobDetailScreen({ db, persist, actor, wo, saveWorkOrder, onBack, o
         React.createElement("button", { type: "button", onClick: onGoToSiteMap, className: "min-h-[44px] rounded-xl text-sm font-semibold border border-[#E2DED5] text-[#4B4740]" }, "Site map")
       )
     ),
+    React.createElement(FieldJobContext, { db, wo, site, cottage, customer }),
     React.createElement(
       "div",
       { className: card },
