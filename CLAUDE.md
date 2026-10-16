@@ -266,6 +266,18 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   numbers with `sameSiteNumber` / `signupSiteKey` (server: `matchSiteKey`),
   never with `===`, so "site 20" still finds 0020.
 
+**Site Map services**
+- The Site Map switches between Customers and Hydro / Water / Sewer views.
+  Equipment (transformers, panels, valves, lift stations...) is its own
+  document in `mapEquipment` (like parts; linking a site is an
+  `arrayUnion`/`arrayRemove`, never a whole-list write). A site hangs off one
+  piece per service; pieces chain up to the main. Admin / Service Manager /
+  Accounting edit it (firestore.rules), everyone sees it.
+- An inbound email that reads like a hydro / water / sewer problem shows a
+  "Staff only" card in Correspondence: what feeds the site, other sites on
+  it, and other reports on the same piece within 12 hours. Nothing goes to
+  the customer.
+
 **Customers**
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".
