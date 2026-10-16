@@ -59,7 +59,7 @@ const emails = [];
 // `zoho.inbox` / `zoho.inboxContent` are the service inbox (read directly
 // by zohoInbox).
 const ZOHO_INBOX = "50669000000002014";
-const zoho = { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {} };
+const zoho = { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {}, doneFolder: false, done: [] };
 const jsonResponse = (status, data) => ({ ok: status < 300, status, json: async () => data, text: async () => JSON.stringify(data) });
 global.fetch = async (url, opts) => {
   if (String(url).includes("api.emailjs.com")) {
@@ -70,7 +70,8 @@ global.fetch = async (url, opts) => {
   if (zoho.on && String(url).includes("zohocloud.ca")) {
     const u = new URL(url);
     if (u.pathname.endsWith("/oauth/v2/token")) return jsonResponse(200, { access_token: "zoho-token", expires_in: 3600 });
-    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }, { folderId: "trash1", folderName: "Trash", folderType: "Trash" }] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
+    if (u.pathname.endsWith("/folders")) return zoho.foldersStatus === 200 ? jsonResponse(200, { data: [{ folderId: "inbox1", folderName: "Inbox", folderType: "Inbox" }, { folderId: "sent1", folderName: "Sent", folderType: "Sent" }, { folderId: "trash1", folderName: "Trash", folderType: "Trash" }, ...(zoho.doneFolder ? [{ folderId: "done1", folderName: "Done", folderType: "Normal" }] : [])] }) : jsonResponse(zoho.foldersStatus, { status: { description: "Invalid scope" } });
+    if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "done1") return jsonResponse(200, { data: zoho.done });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "sent1") return jsonResponse(200, { data: zoho.sent });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === "trash1") return jsonResponse(200, { data: zoho.trash });
     if (u.pathname.endsWith("/messages/view") && u.searchParams.get("folderId") === ZOHO_INBOX) return jsonResponse(200, { data: zoho.inbox });
@@ -127,7 +128,7 @@ async function clearData() {
   claude.script.length = 0;
   claude.calls.length = 0;
   emails.length = 0;
-  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {} });
+  Object.assign(zoho, { on: false, sent: [], content: {}, foldersStatus: 200, trash: [], search: [], moved: [], moveStatus: 200, inbox: [], inboxContent: {}, doneFolder: false, done: [] });
   auth.users = {};
   auth.calls.length = 0;
 }

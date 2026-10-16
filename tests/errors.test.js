@@ -92,6 +92,11 @@ test("Email Intake: the Zoho inbox check shows how it compares with Flow, and sw
   await box.getByRole("button", { name: "Yes, switch on" }).click();
   await box.getByText("On", { exact: true }).waitFor();
   await waitFor(async () => { const d = await readDoc("campground/data"); return d && d.settings && d.settings.emailIntakeDirect === true; }, "the switch to be saved");
+  // The Done folder: how to set it up, then what it's done once it's there.
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: false, checkedAt: new Date().toISOString() } });
+  await box.locator("[data-zoho-done='off']").getByText('Make a folder called "Done"', { exact: false }).waitFor();
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: true, checkedAt: new Date().toISOString(), movedTotal: 4, handledTotal: 2 } });
+  await box.locator("[data-zoho-done='on']").getByText("4 moved to Done, 2 marked handled from Zoho", { exact: false }).waitFor();
   await page.close();
 });
 

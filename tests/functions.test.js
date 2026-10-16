@@ -397,12 +397,13 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   const at = (minAgo) => String(now - minAgo * 60e3);
   zoho.on = true;
   // Flow delivered Anne's email; Bob's never came through Flow; a form notice; one too new to compare yet.
-  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips." });
+  // Zoho's list escapes the apostrophe ("Quinte&#39;s"); Flow's copy has it plain.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Re: Quinte's Isle - Leak", body: "The tap drips." });
   zoho.inbox = [
-    { messageId: "m-anne", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
+    { messageId: "m-anne", subject: "Re: Quinte&#39;s Isle - Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
     { messageId: "m-bob", subject: "Deck boards", fromAddress: "bob@y.com", receivedTime: at(9) },
     { messageId: "m-form", subject: "New entry", fromAddress: "forms@zoho.com", receivedTime: at(8) },
-    { messageId: "m-new", subject: "Hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
+    { messageId: "m-new", subject: "Cy&#39;s hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
   ];
   zoho.inboxContent = { "m-bob": "<p>Two boards are soft.</p>", "m-form": "<p>Jo has submitted the following</p>", "m-new": "<p>When is my reading?</p>" };
   await fns.zohoInbox();
@@ -421,7 +422,7 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
 
   // Switched on: Flow's copies are ignored, the inbox is read directly.
   await db.doc("campground/data").set({ settings: { emailIntakeDirect: true } }, { merge: true });
-  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Hydro question", body: "When is my reading?" });
+  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Cy's hydro question", body: "When is my reading?" });
   assert.equal(flow.body.reason, "direct-intake");
   await fns.zohoInbox();
   await fns.zohoInbox();
@@ -432,8 +433,46 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   assert.equal(cy[0].zohoMessageId, "m-new");
   assert.equal(cy[0].status, "new");
   assert.equal(cy[0].body, "When is my reading?");
+  assert.equal(cy[0].subject, "Cy's hydro question", "the subject is saved readable");
   assert.equal(cy[0].receivedAt, new Date(Number(at(1))).toISOString(), "Zoho's own time");
   assert.equal(corr.length, 3);
+});
+
+test("Zoho's Done folder: handled emails move there, and emails moved there are marked handled", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const put = (c) => db.collection("correspondence").doc(c.id).set(c);
+  zoho.on = true;
+  await put({ id: "zoho_in_m1", direction: "in", status: "handled", handledAt: iso(now - 60e3), fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3), zohoMessageId: "m1" });
+  await put({ id: "zoho_in_m2", direction: "in", status: "new", fromEmail: "bob@y.com", subject: "Deck", receivedAt: iso(now - 3000e3), zohoMessageId: "m2" });
+  await put({ id: "webform_s1", direction: "in", status: "handled", handledAt: iso(now - 60e3), source: "webform", fromEmail: "carl@z.com", subject: "Form", receivedAt: iso(now - 3000e3) });
+  await put({ id: "out1", direction: "out", status: "handled", handledAt: iso(now - 60e3), toEmail: "anne@x.com", subject: "Re: Leak", receivedAt: iso(now - 60e3), zohoMessageId: "s1" });
+
+  // No Done folder in Zoho yet: nothing moves, and Admin is told how to set it up.
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 0);
+  assert.equal((await db.doc("serverState/zohoInbox").get()).data().done.folder, false);
+
+  // Someone made the folder; Bob's email was moved there in Zoho.
+  zoho.doneFolder = true;
+  zoho.done = [{ messageId: "m2", folderId: "done1", subject: "Deck", fromAddress: "bob@y.com", receivedTime: String(now - 3000e3) }];
+  await fns.zohoSentMail();
+  assert.deepEqual(zoho.moved, [{ mode: "moveMessage", messageId: ["m1"], destfolderId: "done1" }], "only Anne's handled email; not the web form or our reply");
+  const anne = (await db.doc("correspondence/zoho_in_m1").get()).data();
+  assert.ok(anne.zohoDoneAt);
+  const bob = (await db.doc("correspondence/zoho_in_m2").get()).data();
+  assert.equal(bob.status, "handled", "moved to Done in Zoho = handled here");
+  assert.equal(bob.handledInZoho, true);
+  const done = (await db.doc("serverState/zohoInbox").get()).data().done;
+  assert.deepEqual([done.folder, done.movedTotal, done.handledTotal], [true, 1, 1]);
+
+  // Runs again: nothing moves twice, and reopening Bob's here sticks.
+  zoho.done.push({ messageId: "m1", folderId: "done1", subject: "Leak", fromAddress: "anne@x.com", receivedTime: String(now - 3600e3) });
+  await db.doc("correspondence/zoho_in_m2").update({ status: "new" });
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 1);
+  assert.equal((await db.doc("correspondence/zoho_in_m2").get()).data().status, "new");
+  assert.equal((await all("serverAlerts")).length, 0);
 });
 
 test("an email moved to Zoho's Trash is removed from the app", async () => {
