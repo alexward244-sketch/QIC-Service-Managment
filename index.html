@@ -6385,7 +6385,7 @@ function CustomerPage({ customer, db, persist, saveCustomer, saveWorkOrder, save
       h("iframe", { title: "Hydro bill", "data-hydro-bill-view": v.hydro.id, srcDoc: buildHydroInvoiceEmailText(p.site, p.owner, p.usage, p.rate, p.subtotal, p.taxAmount, p.total, p.taxRate, db, p.meter, v.hydro.invoiceNumber), className: "w-full h-[70vh] rounded-lg border border-[#E2DED5] bg-white" }),
       h("div", { className: "flex justify-end gap-2 mt-3" }, h("button", { type: "button", onClick: () => setViewing(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, "Close"), h("button", { type: "button", onClick: () => printHydroBills([v.hydro], db), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, "Print")));
   })() : null;
-  const createEl = !creating ? null : creating.kind === "wo" ? h(QuickWorkOrderModal, { db, initial: creating.initial, saveWorkOrder: (wo) => {
+  const createEl = !creating ? null : creating.kind === "wo" ? h(QuickWorkOrderModal, { db, initial: creating.initial, fromEmail: creating.fromEmail || null, saveWorkOrder: (wo) => {
     saveWorkOrder(wo);
     if (creating.fromEmail) markHandled(creating.fromEmail, { workOrderId: wo.id });
   }, onClose: () => setCreating(null) }) : creating.kind === "quote" ? h(QuickQuoteModal, { db, initial: prefill, saveQuote, onClose: () => setCreating(null) }) : h(QuickInvoiceModal, { db, initial: prefill, saveInvoice, onClose: () => setCreating(null) });
@@ -6878,14 +6878,16 @@ function correspondencePrefill(db, item, customerId, kind) {
 // Shared by the customer correspondence thread and the Needs Review queue -
 // lets staff spin a "Create Work Order" shortcut off an inbound email
 // without retyping the subject/body into a blank form.
-function QuickWorkOrderModal({ db, initial, saveWorkOrder, onClose }) {
+function QuickWorkOrderModal({ db, initial, saveWorkOrder, onClose, fromEmail, pickedPhotos }) {
   const workGroups = Array.from(new Set((db.workOrders || []).map((w) => w.workGroup).filter(Boolean))).sort();
   const taxRate = (db.settings || {}).taxRate != null ? db.settings.taxRate : 13;
+  const photos = emailPhotos(fromEmail);
+  const [picked, setPicked] = useState(() => pickedPhotos || photos.map((a) => a.url));
   const save = (wo) => {
-    saveWorkOrder(wo);
+    saveWorkOrder(fromEmail ? withEmailPhotos(wo, fromEmail, picked) : wo);
     onClose();
   };
-  return /* @__PURE__ */ React.createElement(Modal, { title: "New Work Order", onClose, wide: true }, /* @__PURE__ */ React.createElement(WorkOrderForm, {
+  return /* @__PURE__ */ React.createElement(Modal, { title: "New Work Order", onClose, wide: true }, React.createElement(EmailPhotoPicker, { photos, picked, onChange: setPicked }), /* @__PURE__ */ React.createElement(WorkOrderForm, {
     initial,
     sites: db.sites,
     cottages: db.cottages,
@@ -7013,6 +7015,42 @@ function CorrespondenceCreateButton({ item, onCreateWorkOrder, onCreatePropane, 
 function isImageAttachment(a) {
   const s = ((a && a.name) || (a && a.url) || "").toLowerCase();
   return /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?)(\?|#|$)/.test(s);
+}
+// Photos a customer emailed in can go on the work order made from that
+// email ("Include the photos from their email?", all ticked to start): they
+// show with the job's photos (phone and computer) and on the printed work
+// order. Only kinds a browser shows and prints (not HEIC/TIFF). They stay
+// where the email keeps them - no copy, no `path`, so removing one from the
+// job never deletes the email's attachment.
+function emailPhotos(item) {
+  if (!item) return [];
+  const list = item.attachments && item.attachments.length ? item.attachments : item.attachmentUrl ? [{ url: item.attachmentUrl, name: item.attachmentName }] : [];
+  return list.filter((a) => a && a.url && /\.(png|jpe?g|gif|webp|bmp)(\?|#|$)/.test(((a.name || a.url) + "").toLowerCase()));
+}
+function withEmailPhotos(wo, item, urls) {
+  const have = new Set((wo.photos || []).map((p) => p.url));
+  const add = emailPhotos(item).filter((a) => urls.includes(a.url) && !have.has(a.url)).map((a) => ({ id: uid(), url: a.url, name: a.name || "", fromEmail: item.id, by: "From the customer's email", ts: item.receivedAt || (/* @__PURE__ */ new Date()).toISOString() }));
+  return add.length ? { ...wo, photos: [...wo.photos || [], ...add] } : wo;
+}
+function EmailPhotoPicker({ photos, picked, onChange }) {
+  const h = React.createElement;
+  if (!photos.length) return null;
+  const toggle = (url) => onChange(picked.includes(url) ? picked.filter((u) => u !== url) : [...picked, url]);
+  return h(
+    "div",
+    { className: "rounded-lg border border-[#E2DED5] bg-[#F9F7F3] px-3 py-2.5 mb-4", "data-email-photos": true },
+    h("div", { className: "text-sm font-semibold text-[#1E1A13]" }, photos.length === 1 ? "Include the photo from their email?" : `Include the ${photos.length} photos from their email?`),
+    h("div", { className: "text-xs text-[#75716A] mb-2" }, "Ticked ones go on the job and the printed work order. Untick any that don't help (like a logo)."),
+    h("div", { className: "flex flex-wrap gap-2" }, photos.map((a) => {
+      const on = picked.includes(a.url);
+      return h(
+        "button",
+        { key: a.url, type: "button", onClick: () => toggle(a.url), "aria-pressed": on, "aria-label": `${on ? "Leave out" : "Include"} ${a.name || "photo"}`, "data-email-photo": a.name || a.url, className: `relative w-20 h-20 rounded-md overflow-hidden border-2 ${on ? "border-[#377249]" : "border-[#E2DED5] opacity-50"}` },
+        h("img", { src: a.url, alt: "", loading: "lazy", className: "w-full h-full object-cover bg-[#F1EEE9]" }),
+        h("span", { className: `absolute top-1 right-1 w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${on ? "bg-[#377249] text-white" : "bg-white/90 text-[#9A968D] border border-[#C7C2B8]"}` }, on ? "\u2713" : "")
+      );
+    }))
+  );
 }
 // Full-screen preview for a correspondence photo attachment - opening the
 // raw file URL directly (in a new tab) forces a download rather than an
@@ -7254,6 +7292,7 @@ function CorrespondenceThread({ customer, db, persist, saveCorrespondence, saveW
   const markers = items.length ? correspondenceTimelineMarkers(db, customer, items, { includeInvoices: !!saveInvoice }) : [];
   const modal = creatingFrom && saveWorkOrder && /* @__PURE__ */ React.createElement(QuickWorkOrderModal, {
     db,
+    fromEmail: creatingFrom,
     saveWorkOrder: (wo) => {
       saveWorkOrder(wo);
       if (saveCorrespondence) saveCorrespondence({ ...creatingFrom, status: "handled", handledAt: (/* @__PURE__ */ new Date()).toISOString(), workOrderId: wo.id });
@@ -9577,6 +9616,9 @@ function buildWorkOrderHtml(wo, db) {
   const cottage = db.cottages.find((c) => c.id === wo.cottageId);
   const customer = wo.customerId ? db.customers.find((c) => c.id === wo.customerId) : site ? db.customers.find((c) => customerSiteIds(c).includes(site.id)) : null;
   const company = getCompanyProfile(db);
+  // Only the photos the customer emailed in print (the problem going in);
+  // the crew's own before/after photos stay in the app.
+  const customerPhotos = (wo.photos || []).filter((ph) => ph.fromEmail && ph.url);
   return `
     <div class="wo">
       ${company.name || company.logoUrl ? `<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #ddd;">
@@ -9612,6 +9654,8 @@ function buildWorkOrderHtml(wo, db) {
       </table>
       <div class="label">Description</div>
       <p class="desc">${escapeHtml(wo.description || "\u2014")}</p>
+      ${customerPhotos.length ? `<div class="label" style="margin-top:14px;">Photos from the customer</div>
+      <div class="wo-photos">${customerPhotos.map((ph) => `<img src="${escapeHtml(ph.url)}" alt="" />`).join("")}</div>` : ""}
       <div class="sign">
         <div class="sign-line">Completed by (signature)</div>
         <div class="sign-line">Date</div>
@@ -9978,6 +10022,8 @@ function buildPrintDocument(bodyHtml) {
   .wo-table td { padding: 4px 8px 4px 0; color: #111; }
   .wo-table td.k { color: #555; width: 120px; }
   .desc { font-size: 14px; line-height: 1.6; min-height: 60px; border-bottom: 1px solid #ccc; padding-bottom: 12px; white-space: pre-wrap; color: #111; }
+  .wo-photos { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+  .wo-photos img { box-sizing: border-box; width: calc(50% - 4px); max-height: 3.2in; object-fit: contain; border: 1px solid #ddd; background: #fff; page-break-inside: avoid; }
   .sign { margin-top: 40px; display: flex; justify-content: space-between; font-size: 12px; }
   .sign-line { width: 45%; border-top: 1px solid #333; padding-top: 4px; color: #111; }
   .print-hint { padding: 12px 32px; font-family: Georgia, serif; font-size: 12px; color: #666; background: #fff; }
@@ -20880,11 +20926,15 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
       laborHours: "",
       laborRateType: "N/A"
     };
-    saveWorkOrder(wo);
+    const withPhotos = withEmailPhotos(wo, it.email, pickedPhotos(it));
+    saveWorkOrder(withPhotos);
     markHandled(it.email, { workOrderId: wo.id });
     log(`Created work order ${wo.workOrderNumber} from Incoming (${it.name})`);
     finish(it, `Work order ${wo.workOrderNumber} created`, { wo, reply: "Thanks for letting us know — we've booked someone to take a look and will let you know when it's done." });
   };
+  // The customer's emailed photos, all ticked until someone unticks one.
+  const [photoPicks, setPhotoPicks] = useState({});
+  const pickedPhotos = (it) => photoPicks[it.key] || emailPhotos(it.email).map((a) => a.url);
   // A work order made through the full form ("Change…" / "Make a work order").
   const savedFromForm = (it) => (wo) => {
     saveWorkOrder(wo);
@@ -21026,6 +21076,7 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
         const cottage = draft.cottageId && (db.cottages || []).find((x) => x.id === draft.cottageId);
         const appliance = draft.applianceId && cottage && (cottage.appliances || []).find((a) => a.id === draft.applianceId);
         body = card("Work order, ready to create", h(React.Fragment, null, row("Title", draft.title), row("For", placeLine(it.customer, draft.siteId, draft.cottageId) || "No site yet — use Change…"), appliance && row("Appliance", [appliance.type, applianceDetails(appliance)].filter(Boolean).join(" — ")), row("Priority", draft.priority)), saveWorkOrder && h("button", { type: "button", onClick: () => setModal({ wo: it, initial: draft }), className: "text-xs font-semibold text-[#377249] hover:underline" }, "Change…"));
+        if (saveWorkOrder && emailPhotos(c).length) body = h(React.Fragment, null, body, h(EmailPhotoPicker, { photos: emailPhotos(c), picked: pickedPhotos(it), onChange: (urls) => setPhotoPicks((p) => ({ ...p, [it.key]: urls })) }));
         actionsEl = saveWorkOrder && btnMain("Create work order", () => createWorkOrder(it, draft), { "data-incoming-main": true });
         if (it.customer) sideActions.push(link("Reply only", () => setReplying(true)));
       } else if (it.group === "runs") {
@@ -21100,7 +21151,7 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
       onSend: (args) => sendSignupReply(db, saveCorrespondence, e, args)
     });
   } else if (modal && modal.wo) {
-    modalEl = h(QuickWorkOrderModal, { db, initial: modal.initial, saveWorkOrder: savedFromForm(modal.wo), onClose: () => setModal((m) => m && m.wo ? null : m) });
+    modalEl = h(QuickWorkOrderModal, { db, initial: modal.initial, fromEmail: modal.wo.email, pickedPhotos: pickedPhotos(modal.wo), saveWorkOrder: savedFromForm(modal.wo), onClose: () => setModal((m) => m && m.wo ? null : m) });
   } else if (modal && modal.propane) {
     modalEl = h(QuickPropaneRequestModal, { db, initial: modal.initial, onClose: () => setModal((m) => m && m.propane ? null : m), savePropaneRequest: (r) => {
       savePropaneRequest(r);
@@ -22235,8 +22286,9 @@ function WorkOrderPhotos({ wo, saveWorkOrder, actor, compact }) {
       { className: "grid grid-cols-3 gap-2 mb-2" },
       photos.map((p) => React.createElement(
         "button",
-        { key: p.id, type: "button", onClick: () => setViewing(p), className: "aspect-square rounded-lg overflow-hidden bg-[#F1EEE9] border border-[#E2DED5]", "aria-label": "View photo" },
-        React.createElement("img", { src: p.url, alt: "", loading: "lazy", className: "w-full h-full object-cover" })
+        { key: p.id, type: "button", onClick: () => setViewing(p), className: "relative aspect-square rounded-lg overflow-hidden bg-[#F1EEE9] border border-[#E2DED5]", "aria-label": p.fromEmail ? "View the customer's photo" : "View photo" },
+        React.createElement("img", { src: p.url, alt: "", loading: "lazy", className: "w-full h-full object-cover" }),
+        p.fromEmail && React.createElement("span", { className: "absolute left-1 bottom-1 rounded bg-[#1E1A13]/75 text-white text-[10px] font-semibold px-1.5 py-0.5" }, "Customer")
       ))
     ),
     React.createElement("input", { ref: inputRef, type: "file", accept: "image/*", multiple: true, className: "hidden", "data-testid": "wo-photo-input", onChange: (e) => {
@@ -23495,6 +23547,7 @@ function FieldCorrespondenceScreen({ db, persist, actor, saveCorrespondence, sav
       ),
       creatingWO && h(QuickWorkOrderModal, {
         db,
+        fromEmail: creatingWO,
         saveWorkOrder: (wo) => {
           saveWorkOrder(wo);
           saveCorrespondence({ ...creatingWO, status: "handled", handledAt: now(), workOrderId: wo.id });
