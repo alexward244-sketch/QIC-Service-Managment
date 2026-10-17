@@ -68,6 +68,7 @@ test("the work order form from an email asks about its photos; the job shows the
   await page.evaluate((wo) => {
     ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(WorkOrderPhotos, { wo: { ...wo, photos: [...wo.photos, { id: "own", url: wo.photos[0].url, path: "work-order-photos/x/own.jpg", by: "Dave" }] }, saveWorkOrder() {}, actor: "Dave" }));
   }, saved);
+  await page.getByRole("button", { name: "View photo", exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "View the customer's photo" }).count(), 2);
   assert.equal(await page.getByRole("button", { name: "View photo", exact: true }).count(), 1);
   assert.deepEqual(page.pageErrors, []);
