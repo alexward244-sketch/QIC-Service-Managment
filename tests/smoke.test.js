@@ -872,6 +872,60 @@ test("winterizing on a phone: picking a weekend in Planned for puts it on the Mo
   await page.close();
 });
 
+test("winterizing on a phone: Done for the day? emails everyone finished today (Admins / Service Managers only)", async () => {
+  const page = await openApp(browser, "stub", { viewport: { width: 390, height: 800 } });
+  const mount = (canEmail) => page.evaluate((canEmail) => {
+    window.__saved = [];
+    window.__sent = [];
+    window.__toasts = [];
+    window.sendEmail = async (m) => { if (m.toEmail === "bad@x.com") throw new Error("nope"); window.__sent.push(m); return { ok: true }; };
+    const today = todayISO();
+    let db = {
+      settings: { winterSeasonStart: winterAddDays(today, -10) }, activityLog: [], parts: [], trash: [], staff: [], workOrders: [], invoices: [],
+      sites: [{ id: "s1", number: "0126", section: "Pebble Beach Seasonal" }, { id: "s2", number: "0127", section: "Pebble Beach Seasonal" }, { id: "s3", number: "0128", section: "Pebble Beach Seasonal" }, { id: "s4", number: "0129", section: "Pebble Beach Seasonal" }, { id: "s5", number: "0130", section: "Pebble Beach Seasonal" }],
+      cottages: [{ id: "k1", name: "Willow", siteId: "s1" }, { id: "k2", name: "Birch", siteId: "s2" }, { id: "k3", name: "Oak", siteId: "s3" }, { id: "k4", name: "Rental", siteId: "s4" }, { id: "k5", name: "Pine", siteId: "s5" }],
+      customers: [{ id: "c1", name: "Bo Day", email: "bo@x.com", siteIds: ["s1"] }, { id: "c2", name: "Al Ray", email: "bad@x.com", siteIds: ["s2"] }, { id: "c3", name: "Cy Lo", email: "cy@x.com", siteIds: ["s3"] }, { id: "c5", name: "No Email", siteIds: ["s5"] }],
+      winterizingRequests: [
+        { id: "r1", cottageId: "k1", customerId: "c1", completed: true, completedDate: today, options: {} },
+        { id: "r2", cottageId: "k2", customerId: "c2", completed: true, completedDate: today, options: {} },
+        { id: "r3", cottageId: "k3", customerId: "c3", completed: true, completedDate: today, completionEmailedAt: "2026-01-01T00:00:00Z", options: {} },
+        { id: "r4", cottageId: "k4", parkOwned: "rental", completed: true, completedDate: today, options: {} },
+        { id: "r5", cottageId: "k5", customerId: "c5", completed: true, completedDate: today, options: {} }
+      ]
+    };
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    const save = (r) => { window.__saved.push(r); db = { ...db, winterizingRequests: db.winterizingRequests.map((x) => x.id === r.id ? r : x) }; render(); };
+    const render = () => root.render(React.createElement(FieldWinterTab, { db, persist: (n) => { db = { ...n, winterizingRequests: db.winterizingRequests }; window.__log = n.activityLog; render(); }, actor: "Dave", saveWinterizingRequest: save, saveInvoice() {}, saveWorkOrder() {}, onGoToDesktopTab() {}, setToast: (t) => window.__toasts.push(t), canEmail }));
+    render();
+    window.__root = root;
+  }, canEmail);
+  // The crew doesn't get it.
+  await mount(false);
+  await page.locator('[data-field-winter="r1"]').first().waitFor();
+  assert.equal(await page.locator("[data-done-for-day]").count(), 0);
+  await page.evaluate(() => window.__root.unmount());
+  // Already emailed, park cottages and no email on file aren't counted.
+  await mount(true);
+  const card = page.locator("[data-done-for-day]");
+  await card.getByText("Done for the day?").waitFor();
+  await card.getByRole("button", { name: "✉ Email 2 people" }).click();
+  const names = await page.locator("[data-done-email-list] li").allTextContents();
+  assert.deepEqual(names, ["Site 0126 — Bo Day", "Site 0127 — Al Ray"]);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390, "nothing runs off the side");
+  await page.getByRole("button", { name: "Send 2 emails" }).click();
+  await page.getByRole("status").getByText("Sent to 1. 1 couldn't be sent").waitFor();
+  const sent = await page.evaluate(() => window.__sent);
+  assert.deepEqual(sent.map((m) => m.toEmail), ["bo@x.com"]);
+  assert.equal(sent[0].source, "Winterizing completion email");
+  assert.deepEqual(await page.evaluate(() => window.__saved.map((r) => r.id)), ["r1"], "only the one that went is marked emailed");
+  assert.match(await page.evaluate(() => window.__log[0].summary), /1 customer finished today/);
+  await page.getByText("Close", { exact: true }).click();
+  // The one that failed is still offered.
+  await card.getByRole("button", { name: "✉ Email 1 person" }).waitFor();
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing: a new sign-up for a full day goes on it when its area has the most there and a smaller area's cottage didn't ask for the day (it moves, marked Moved); earlier sign-ups who asked keep it", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {

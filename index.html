@@ -16102,6 +16102,32 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
 // Runs wherever winterizing is open (computer or phone): cottages not
 // finished on their day move on to the next workday, and new sign-ups go
 // on the schedule once that's turned on. Returns the carry-over notice.
+// Everyone marked winterized today who hasn't had the completion email
+// (park cottages have no customer, so they're never on it). The computer's
+// "Email N finished today" and the phone's "Done for the day?" card both
+// send it: one after another, then logged once.
+function winterFinishedTodayToEmail(db, requests) {
+  const today = todayISO();
+  return requests.filter((r) => r.completed && r.completedDate === today && !r.completionEmailedAt && r.customerId && (db.customers.find((c) => c.id === r.customerId) || {}).email);
+}
+async function emailWinterFinishedToday({ db, list, actor, persist, saveWinterizingRequest, onProgress }) {
+  let sent = 0;
+  for (let i = 0; i < list.length; i++) {
+    const request = list[i];
+    const customer = db.customers.find((c) => c.id === request.customerId);
+    if (onProgress) onProgress(request, i, list.length, "sending");
+    try {
+      await sendEmail({ toEmail: customer.email, toName: customer.name, subject: winterizedEmailSubject(request, db), message: buildWinterizingEmailText(request, db), department: "service", source: "Winterizing completion email" });
+      saveWinterizingRequest({ ...request, completionEmailedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      if (onProgress) onProgress(request, i, list.length, "sent");
+      sent += 1;
+    } catch (e) {
+      if (onProgress) onProgress(request, i, list.length, "error");
+    }
+  }
+  if (sent) persist({ ...db, activityLog: addLog(db, actor, `Emailed winterizing completion to ${sent} customer${sent === 1 ? "" : "s"} finished today`) });
+  return { sent, total: list.length };
+}
 function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinterizingRequest }) {
   const [carryNotice, setCarryNotice] = useState("");
   const cottageName = (id) => {
@@ -16343,28 +16369,20 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
     });
   };
-  // Everyone marked winterized today who hasn't had the completion email:
-  // sent one after another, then logged once.
-  const finishedTodayToEmail = requests.filter((r) => r.completed && r.completedDate === todayISO() && !r.completionEmailedAt && (customerFor(r.customerId) || {}).email);
+  const finishedTodayToEmail = winterFinishedTodayToEmail(db, requests);
   const emailFinishedToday = async () => {
-    const list = finishedTodayToEmail.slice();
-    let sent = 0;
-    for (let i = 0; i < list.length; i++) {
-      const request = list[i];
-      const customer = customerFor(request.customerId);
-      setBatchEmail({ done: i, total: list.length });
-      setEmailStatus((s) => ({ ...s, [request.id]: "sending" }));
-      try {
-        await sendEmail({ toEmail: customer.email, toName: customer.name, subject: winterizedEmailSubject(request, db), message: buildWinterizingEmailText(request, db), department: "service", source: "Winterizing completion email" });
-        saveWinterizingRequest({ ...request, completionEmailedAt: (/* @__PURE__ */ new Date()).toISOString() });
-        setEmailStatus((s) => ({ ...s, [request.id]: "sent" }));
-        sent += 1;
-      } catch (e) {
-        setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
+    const result = await emailWinterFinishedToday({
+      db,
+      list: finishedTodayToEmail,
+      actor,
+      persist,
+      saveWinterizingRequest,
+      onProgress: (request, i, total, status) => {
+        if (status === "sending") setBatchEmail({ done: i, total });
+        setEmailStatus((s) => ({ ...s, [request.id]: status }));
       }
-    }
-    if (sent) persist({ ...db, activityLog: addLog(db, actor, `Emailed winterizing completion to ${sent} customer${sent === 1 ? "" : "s"} finished today`) });
-    setBatchEmail({ done: list.length, total: list.length, sent, failed: list.length - sent });
+    });
+    setBatchEmail({ done: result.total, total: result.total, sent: result.sent, failed: result.total - result.sent });
   };
   // Marking the anode rod replaced is one-way (matches the "can't double-invoice"
   // requirement): once set, this can't be un-checked from here. It records the
@@ -22741,7 +22759,7 @@ function FieldPropaneTab({ db, persist, actor, savePropaneRequest, saveWorkOrder
 }
 // Winterizing on a phone: the crew's day (‹ › to other days), each cottage
 // opening its checklist, plus every sign-up by day with a search.
-function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, saveSite, onGoToDesktopTab, setToast }) {
+function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, saveSite, onGoToDesktopTab, setToast, canEmail }) {
   const requests = (db.winterizingRequests || []).filter((r) => !r.archived);
   const today = todayISO();
   const season = winterSeason(db);
@@ -22751,6 +22769,9 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
   const [panelId, setPanelId] = useState(null);
   const [problemFor, setProblemFor] = useState(null);
   const [rainDay, setRainDay] = useState(null);
+  // "Done for the day?": the completion emails for everyone finished today,
+  // sent from the phone (Admins / Service Managers, same as the computer).
+  const [doneEmail, setDoneEmail] = useState(null);
   const [carryNotice, setCarryNotice] = useWinterAutoMoves({ db, requests, readOnly: false, persist, actor, saveWinterizingRequest });
   const cottageName = (id) => {
     const c = db.cottages.find((x) => x.id === id);
@@ -22852,6 +22873,21 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
   const dayTodo = todo.filter((r) => winterPlannedDate(r) === day).sort(winterSiteSort(db));
   const dayDone = requests.filter((r) => r.completed && r.completedDate === day).sort(winterSiteSort(db));
   const blocked = season.blocked[day];
+  const toEmail = canEmail ? winterFinishedTodayToEmail(db, requests).sort(winterSiteSort(db)) : [];
+  const emailSending = doneEmail && doneEmail.total != null && doneEmail.sent == null;
+  const emailEveryone = async () => {
+    const list = toEmail.slice();
+    setDoneEmail({ done: 0, total: list.length });
+    const result = await emailWinterFinishedToday({ db, list, actor, persist, saveWinterizingRequest, onProgress: (request, i, total) => setDoneEmail({ done: i, total }) });
+    setDoneEmail({ total: result.total, sent: result.sent, failed: result.total - result.sent });
+  };
+  const doneEmailCard = day === today && (toEmail.length > 0 || emailSending) && React.createElement(
+    "div",
+    { className: "rounded-xl border border-[#BFDCC6] bg-[#EEF7F0] px-3.5 py-3 mb-4", "data-done-for-day": true },
+    React.createElement("div", { className: "text-[15px] font-semibold text-[#1E1A13]" }, "Done for the day?"),
+    React.createElement("div", { className: "text-[13px] text-[#4B4740] mb-2.5" }, emailSending ? `Emailing ${doneEmail.done + 1} of ${doneEmail.total}\u2026` : `${toEmail.length} finished today ${toEmail.length === 1 ? "hasn't" : "haven't"} had the "your cottage is winterized" email yet.`),
+    React.createElement("button", { type: "button", disabled: emailSending, onClick: () => setDoneEmail({ confirm: true }), className: "w-full min-h-[44px] rounded-lg bg-[#377249] text-[#F9F5EC] text-[15px] font-semibold disabled:opacity-60" }, emailSending ? "Sending\u2026" : `\u2709 Email ${toEmail.length} ${toEmail.length === 1 ? "person" : "people"}`)
+  );
   const card = (r) => {
     const info = winterInfo(db, r);
     const st = winterStatus(r, today);
@@ -22899,6 +22935,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
       React.createElement("button", { type: "button", onClick: () => stepDay(1), "aria-label": "Next day", className: "w-11 h-11 flex-none rounded-lg border border-[#E2DED5] bg-[#FFFDFA] text-lg" }, "\u203A")
     ),
     React.createElement("div", { className: "text-center mb-4 min-h-[20px]" }, day !== winterBoardStart(season, today) && React.createElement("button", { type: "button", onClick: () => setDay(winterBoardStart(season, today)), className: "text-xs font-semibold text-[#377249]" }, season.start > today ? "Back to the first day" : "Back to today")),
+    doneEmailCard,
     dayTodo.length === 0 && dayDone.length === 0 ? React.createElement("p", { className: "text-sm text-[#9A968D] italic text-center py-6" }, day < today ? "Nothing was done this day." : "Nothing planned for this day.") : null,
     bySection(dayTodo).map((g) => React.createElement("div", { key: g.name, className: "mb-3" }, heading(g.name, g.list.length, "text-[#4B4740]"), g.list.map(card))),
     dayDone.length > 0 && React.createElement("div", { className: "mb-3" }, heading(day === today ? "Winterized today" : "Winterized this day", dayDone.length, "text-[#28633C]"), dayDone.map(card)),
@@ -22980,6 +23017,18 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
         initial: { siteId: info.site ? info.site.id : null, cottageId: problemFor.cottageId || null, customerId: problemFor.customerId || null, title: `Found while winterizing \u2014 ${info.cottage ? info.cottage.name : "cottage"}`, description: "" }
       });
     })(),
+    doneEmail && (doneEmail.confirm || doneEmail.sent != null) && React.createElement(
+      Modal,
+      { title: doneEmail.confirm ? "Email everyone finished today?" : "Emails sent", onClose: () => setDoneEmail(null) },
+      doneEmail.confirm ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `Send the "your cottage is winterized" email to ${toEmail.length === 1 ? "this customer" : `these ${toEmail.length} customers`}:`) : React.createElement("p", { className: "text-sm text-[#4B4740] mb-4", role: "status" }, `Sent to ${doneEmail.sent}.`, doneEmail.failed ? ` ${doneEmail.failed} couldn't be sent \u2014 try again from here or the computer.` : ""),
+      doneEmail.confirm && React.createElement("ul", { className: "text-sm text-[#4B4740] mb-4 max-h-[50vh] overflow-y-auto divide-y divide-[#F1EEE9]", "data-done-email-list": true }, toEmail.map((r) => React.createElement("li", { key: r.id, className: "py-1.5" }, React.createElement("span", { className: "font-semibold" }, placeLabel(r)), " \u2014 ", (db.customers.find((c) => c.id === r.customerId) || {}).name))),
+      React.createElement(
+        "div",
+        { className: "flex justify-end gap-2" },
+        React.createElement("button", { type: "button", onClick: () => setDoneEmail(null), className: "px-4 min-h-[44px] text-sm text-[#75716A] rounded-md" }, doneEmail.confirm ? "Cancel" : "Close"),
+        doneEmail.confirm && React.createElement("button", { type: "button", onClick: emailEveryone, className: "px-4 min-h-[44px] text-sm bg-[#377249] text-[#F9F5EC] rounded-md font-medium" }, `Send ${toEmail.length} email${toEmail.length === 1 ? "" : "s"}`)
+      )
+    ),
     rainDay && React.createElement(
       Modal,
       { title: "Rain day?", onClose: () => setRainDay(null) },
@@ -22998,7 +23047,7 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     )
   );
 }
-function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveSite, onGoToDesktopTab, setToast }) {
+function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizingRequest, saveWorkOrder, saveInvoice, saveSite, onGoToDesktopTab, setToast, isAdminOrManager }) {
   // Opens on the last one used; the first time, Winterizing when cottages
   // are planned for today.
   const [runTab, setRunTabState] = useState(() => {
@@ -23034,7 +23083,7 @@ function FieldRunsScreen({ db, persist, actor, savePropaneRequest, saveWinterizi
         k === "propane" ? "Propane" : "Winterizing"
       ))
     ),
-    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, saveSite, onGoToDesktopTab, setToast })
+    runTab === "propane" ? React.createElement(FieldPropaneTab, { db, persist, actor, savePropaneRequest, saveWorkOrder, saveInvoice, setToast }) : React.createElement(FieldWinterTab, { db, persist, actor, saveWinterizingRequest, saveInvoice, saveWorkOrder, saveSite, onGoToDesktopTab, setToast, canEmail: !!isAdminOrManager })
   );
 }
 function fieldParkResults(db, term) {
@@ -24027,7 +24076,8 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         saveInvoice,
         saveSite,
         onGoToDesktopTab,
-        setToast
+        setToast,
+        isAdminOrManager
       }),
       screen === "park" && React.createElement(FieldParkScreen, { db, persist, saveWorkOrder, saveCottage, saveSite, saveCorrespondence }),
       screen === "more" && React.createElement(FieldMoreScreen, { onNavigate: (key) => go({ screen: key }), onSignOut, isAdminOrManager }),
