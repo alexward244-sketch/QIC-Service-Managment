@@ -291,6 +291,14 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   never touch Zoho (`notFromZoho`).
 
 **Work orders**
+- Photos a customer emails in: making a work order from that email
+  (Incoming, Correspondence, customer page, phone Correspondence) asks
+  "Include the photos from their email?" (`EmailPhotoPicker`, all ticked).
+  Ticked ones go in the job's `photos` with `fromEmail` (no `path` - the file
+  stays the email's; removing it from the job never deletes it), tagged
+  "Customer" on the job. The printed work order shows only these ("Photos
+  from the customer", two per row); the crew's own photos stay in the app
+  (Alex's choice - the printout is for going out to the job).
 - Statuses: Open, In Progress, Pending, Completed. Pending is for jobs booked
   well ahead and needs a `startDate`. Pending jobs stay out of the open /
   urgent / overdue counts, the nav badge and the crew's lists (`woActive`)
