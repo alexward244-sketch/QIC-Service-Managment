@@ -40,6 +40,9 @@ Alex is the owner and the person you're working with; Tim
     `cd ~/QIC-Service-Managment && git pull origin main && firebase deploy --only ...`
     (folder assumed to be in the home folder - if Alex says otherwise,
     update this note).
+- Every command Alex needs to run goes in its own copy-paste code block
+  (one per machine, one per step) - never inline in a sentence. Alex asked
+  for this always.
 - Explain things in plain language; Alex isn't a developer. Keep replies
   short and lead with what changed for them.
 - A refresh keeps people where they were: the computer app's tab and menu
@@ -233,6 +236,33 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   outside tap; Master X = our master key works. Unknown bits (e.g.
   "cz1010") show as written - don't guess at them.
 
+**Correspondence on phones**
+- The field app has its own Correspondence (`FieldCorrespondenceScreen`,
+  Admins / Service Managers, under More, with a count on More and a
+  "N emails need a reply" card on Today): conversations grouped by customer
+  (or sender), "Needs reply" first; a conversation reads like a text thread
+  (newest at the bottom, ours on the right) with Reply / Work order / Done
+  held at the bottom; Reply is a full-screen box (`FieldEmailComposer`,
+  Claude draft + canned replies, same saved draft as the computer). No Call
+  button - Alex's team doesn't call from their phones; "✉ Email" starts a
+  fresh email instead. A stranger has to be linked before replying. Alex
+  likes the Runs screens as they are - don't change them. The computer
+  keeps `CorrespondenceInboxView`.
+- Incoming on phones: the same `IncomingView` with a `phone` prop (Admins /
+  Service Managers, under More above Correspondence). Today's card reads
+  "N waiting in Incoming" and More's count is Incoming's (it already holds
+  the emails needing a reply). One request per screen with the main button
+  pinned at the bottom; after it, the note to the customer is already
+  written (`FieldQuickNote`, Send / Skip) and "Next →". The phone's Back
+  steps between list and request (`phone.key` in history.state).
+- The phone's job screen (`FieldJobContext`, under the job's main card)
+  shows the customer's notes always open (from the work order's customer,
+  else the cottage's / site's owners), then one compact card with a
+  tap-to-open line each for the appliance the job is tagged to (make,
+  model, serial, age, last service visits) and "Last here …"
+  (`cottageHistory`, minus the job itself). Alex didn't want a long page -
+  keep it compact.
+
 **Incoming**
 - The Incoming tab (`IncomingView`) lists every request waiting on us: new
   incoming emails/voicemails (not FYIs), website sign-ups (service, propane,
@@ -425,3 +455,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   Service Manager's list misses them. Plan: let them look up just the unsold
   delivered display models' sites (rules change + deploy), not the rest of
   the sales records. Alex said to remind him another time (Oct 2026).
+- Claude API without a key: switch the Cloud Functions from the
+  `ANTHROPIC_API_KEY` secret to Anthropic identity federation (Google Cloud
+  issues short-lived tokens, so nothing expires or needs replacing). Needs
+  setup in Google Cloud and the Anthropic console plus a change to how
+  `getAnthropicClient` signs in. Alex renewed the key by hand in Oct 2026
+  and wants this eventually.
+- Hydro meter reading from a photo: the crew snaps the meter and Claude
+  reads the digits (keep leading zeros, the 4/5-digit rules by area), staff
+  check before saving - same pattern as the nameplate reader. Alex likes it
+  but isn't ready for it yet (Oct 2026).
