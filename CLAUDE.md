@@ -368,3 +368,7 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   setup in Google Cloud and the Anthropic console plus a change to how
   `getAnthropicClient` signs in. Alex renewed the key by hand in Oct 2026
   and wants this eventually.
+- Hydro meter reading from a photo: the crew snaps the meter and Claude
+  reads the digits (keep leading zeros, the 4/5-digit rules by area), staff
+  check before saving - same pattern as the nameplate reader. Alex likes it
+  but isn't ready for it yet (Oct 2026).
