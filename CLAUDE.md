@@ -213,12 +213,15 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   and All sign-ups). Carry-over and auto-place run from there too
   (`useWinterAutoMoves`), so they don't depend on someone opening the
   computer screen.
-- Completion emails for everyone finished today go in one go: "Email N
-  finished today" on the computer, and a "Done for the day?" card on the
-  phone's Winterizing Day view (today only, Admins / Service Managers -
-  Alex sends them from his phone at night). Both use
-  `winterFinishedTodayToEmail` / `emailWinterFinishedToday`; park cottages
-  and customers without an email aren't on it.
+- Completion emails go in one go: "Email N finished today" ("Email N not
+  sent yet" once earlier days are in it) on the computer, and a "Done for
+  the day?" card on the phone's Winterizing Day view (shown on today,
+  Admins / Service Managers - Alex sends them from his phone at night).
+  Both list every cottage finished in the last 14 days that hasn't had it
+  (`winterCompletionEmailsWaiting`, newest first), so a missed day can be
+  caught up the next day, with a tick each to leave out anyone already told
+  (`WinterEmailPickList`); sent by `emailWinterFinishedToday`. Park
+  cottages and customers without an email aren't on it.
 - Section maps: the Plan board's "Map" on a day prints each section's map
   (`maps/*.jpg`, `WINTER_MAPS` pins) with that day's cottages circled by how
   they're winterized - blue B bypass, orange I inside, green D drain tap,

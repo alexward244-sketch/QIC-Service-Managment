@@ -16148,13 +16148,36 @@ function WinterizingCottagePanel({ request, db, readOnly, emailStatus, onClose, 
 // Runs wherever winterizing is open (computer or phone): cottages not
 // finished on their day move on to the next workday, and new sign-ups go
 // on the schedule once that's turned on. Returns the carry-over notice.
-// Everyone marked winterized today who hasn't had the completion email
-// (park cottages have no customer, so they're never on it). The computer's
-// "Email N finished today" and the phone's "Done for the day?" card both
-// send it: one after another, then logged once.
-function winterFinishedTodayToEmail(db, requests) {
+// Everyone marked winterized in the last two weeks who hasn't had the
+// completion email (park cottages have no customer, so they're never on it),
+// newest first - so a day nobody sent them can still be caught up the next
+// day. The computer's "Email N ..." button and the phone's "Done for the
+// day?" card both list them with a tick each (untick anyone already told)
+// and send them one after another, then log once.
+const WINTER_EMAIL_CATCHUP_DAYS = 14;
+function winterCompletionEmailsWaiting(db, requests) {
   const today = todayISO();
-  return requests.filter((r) => r.completed && r.completedDate === today && !r.completionEmailedAt && r.customerId && (db.customers.find((c) => c.id === r.customerId) || {}).email);
+  const from = winterAddDays(today, -WINTER_EMAIL_CATCHUP_DAYS);
+  return requests.filter((r) => r.completed && r.completedDate && r.completedDate >= from && r.completedDate <= today && !r.completionEmailedAt && r.customerId && (db.customers.find((c) => c.id === r.customerId) || {}).email).sort((a, b) => b.completedDate.localeCompare(a.completedDate) || winterSiteSort(db)(a, b));
+}
+function winterEmailButtonLabel(list) {
+  const n = list.length;
+  return list.every((r) => r.completedDate === todayISO()) ? `Email ${n} finished today` : `Email ${n} not sent yet`;
+}
+function WinterEmailPickList({ db, list, picked, onChange }) {
+  const h = React.createElement;
+  const today = todayISO();
+  return h("div", { className: "mb-4 max-h-[50vh] overflow-y-auto divide-y divide-[#F1EEE9] border-y border-[#F1EEE9]", "data-done-email-list": true }, list.map((r) => {
+    const info = winterInfo(db, r);
+    const customer = db.customers.find((c) => c.id === r.customerId) || {};
+    const on = picked.includes(r.id);
+    return h(
+      "label",
+      { key: r.id, className: "flex items-center gap-3 py-2 text-sm text-[#4B4740] cursor-pointer", "data-done-email": r.id },
+      h("input", { type: "checkbox", checked: on, onChange: () => onChange(on ? picked.filter((id) => id !== r.id) : [...picked, r.id]), className: "w-5 h-5 accent-[#377249] flex-none" }),
+      h("span", { className: "min-w-0" }, h("span", { className: "font-semibold text-[#1E1A13]" }, info.site ? `Site ${info.site.number}` : info.cottage ? info.cottage.name : "Cottage"), " \u2014 ", customer.name || "", r.completedDate !== today && h("span", { className: "block text-xs text-[#9A6B1F]" }, `Finished ${winterShortDate(r.completedDate, { weekday: "short", month: "short", day: "numeric" })}`))
+    );
+  }));
 }
 async function emailWinterFinishedToday({ db, list, actor, persist, saveWinterizingRequest, onProgress }) {
   let sent = 0;
@@ -16171,7 +16194,7 @@ async function emailWinterFinishedToday({ db, list, actor, persist, saveWinteriz
       if (onProgress) onProgress(request, i, list.length, "error");
     }
   }
-  if (sent) persist({ ...db, activityLog: addLog(db, actor, `Emailed winterizing completion to ${sent} customer${sent === 1 ? "" : "s"} finished today`) });
+  if (sent) persist({ ...db, activityLog: addLog(db, actor, `Emailed winterizing completion to ${sent} customer${sent === 1 ? "" : "s"}`) });
   return { sent, total: list.length };
 }
 function useWinterAutoMoves({ db, requests, readOnly, persist, actor, saveWinterizingRequest }) {
@@ -16415,11 +16438,12 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
       setEmailStatus((s) => ({ ...s, [request.id]: "error" }));
     });
   };
-  const finishedTodayToEmail = winterFinishedTodayToEmail(db, requests);
+  const finishedTodayToEmail = winterCompletionEmailsWaiting(db, requests);
+  const emailPicked = batchEmail && batchEmail.picked ? finishedTodayToEmail.filter((r) => batchEmail.picked.includes(r.id)) : [];
   const emailFinishedToday = async () => {
     const result = await emailWinterFinishedToday({
       db,
-      list: finishedTodayToEmail,
+      list: emailPicked,
       actor,
       persist,
       saveWinterizingRequest,
@@ -16613,10 +16637,10 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
     },
     className: `hidden sm:inline-flex px-3 py-2 rounded-md border text-sm font-medium transition whitespace-nowrap ${selectMode ? "bg-[#C1652F] text-white border-[#C1652F]" : "border-[#E2DED5] text-[#4B4740] hover:bg-[#F1EEE9]"}`
   }, selectMode ? "Done Selecting" : "Select to Print"), !readOnly && (finishedTodayToEmail.length > 0 || batchEmail && batchEmail.sent == null) && React.createElement("button", {
-    onClick: () => setBatchEmail({ confirm: true }),
+    onClick: () => setBatchEmail({ confirm: true, picked: finishedTodayToEmail.map((r) => r.id) }),
     disabled: Boolean(batchEmail && batchEmail.sent == null && !batchEmail.confirm),
     className: "px-3 py-2 rounded-md border border-[#377249]/30 text-[#377249] text-sm font-medium hover:bg-[#377249]/10 transition whitespace-nowrap disabled:opacity-50"
-  }, batchEmail && batchEmail.total && batchEmail.sent == null ? `Emailing ${batchEmail.done + 1} of ${batchEmail.total}\u2026` : `Email ${finishedTodayToEmail.length} finished today`), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
+  }, batchEmail && batchEmail.total && batchEmail.sent == null ? `Emailing ${batchEmail.done + 1} of ${batchEmail.total}\u2026` : winterEmailButtonLabel(finishedTodayToEmail)), !readOnly && completed.length > 0 && /* @__PURE__ */ React.createElement("button", {
     onClick: () => setResetOpen(true),
     className: "px-3 py-2 rounded-md border border-[#a8532a]/30 text-[#a8532a] text-sm font-medium hover:bg-[#a8532a]/10 transition whitespace-nowrap"
   }, "Reset for New Season"), !readOnly && bulkWriteSites && React.createElement("button", {
@@ -16724,14 +16748,14 @@ function WinterizingView({ db, persist, saveWinterizingRequest, deleteWinterizin
   const remindersEl = remindersOpen && React.createElement(WinterizingReminderModal, { db, persist, rows: notSignedUp, actor, onClose: () => setRemindersOpen(false) });
   const batchEl = batchEmail && (batchEmail.confirm || batchEmail.sent != null) && React.createElement(
     Modal,
-    { title: batchEmail.confirm ? "Email everyone finished today?" : "Completion emails sent", onClose: () => setBatchEmail(null) },
-    batchEmail.confirm ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `Send the winterizing completion email to the ${finishedTodayToEmail.length} customer${finishedTodayToEmail.length === 1 ? "" : "s"} whose cottage was marked winterized today and who haven't had it yet:`) : React.createElement("p", { className: "text-sm text-[#4B4740] mb-3", role: "status" }, `Sent to ${batchEmail.sent}.`, batchEmail.failed ? ` ${batchEmail.failed} couldn't be sent \u2014 they're marked "Email failed" on the list.` : ""),
-    batchEmail.confirm && React.createElement("ul", { className: "text-sm text-[#4B4740] list-disc pl-5 mb-4 max-h-60 overflow-y-auto" }, finishedTodayToEmail.map((r) => React.createElement("li", { key: r.id }, cottageName(r.cottageId), " \u2014 ", customerFor(r.customerId).name))),
+    { title: batchEmail.confirm ? "Send the completion emails?" : "Completion emails sent", onClose: () => setBatchEmail(null) },
+    batchEmail.confirm ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, "These cottages are marked winterized and haven't had the completion email yet. Untick anyone who's already been told.") : React.createElement("p", { className: "text-sm text-[#4B4740] mb-3", role: "status" }, `Sent to ${batchEmail.sent}.`, batchEmail.failed ? ` ${batchEmail.failed} couldn't be sent \u2014 they're marked "Email failed" on the list.` : ""),
+    batchEmail.confirm && React.createElement(WinterEmailPickList, { db, list: finishedTodayToEmail, picked: batchEmail.picked || [], onChange: (picked) => setBatchEmail({ confirm: true, picked }) }),
     React.createElement(
       "div",
       { className: "flex justify-end gap-2" },
       React.createElement("button", { type: "button", onClick: () => setBatchEmail(null), className: "px-4 py-2 text-sm text-[#75716A] hover:bg-[#F1EEE9] rounded-md" }, batchEmail.confirm ? "Cancel" : "Close"),
-      batchEmail.confirm && React.createElement("button", { type: "button", onClick: () => emailFinishedToday(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium" }, `Send ${finishedTodayToEmail.length} email${finishedTodayToEmail.length === 1 ? "" : "s"}`)
+      batchEmail.confirm && React.createElement("button", { type: "button", disabled: !emailPicked.length, onClick: () => emailFinishedToday(), className: "px-4 py-2 text-sm bg-[#377249] text-[#F9F5EC] rounded-md hover:bg-[#135C30] font-medium disabled:opacity-50" }, `Send ${emailPicked.length} email${emailPicked.length === 1 ? "" : "s"}`)
     )
   );
   // The winterizing master list (Unit_ID, Master, Instructions, Notes) onto
@@ -22925,10 +22949,12 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
   const dayTodo = todo.filter((r) => winterPlannedDate(r) === day).sort(winterSiteSort(db));
   const dayDone = requests.filter((r) => r.completed && r.completedDate === day).sort(winterSiteSort(db));
   const blocked = season.blocked[day];
-  const toEmail = canEmail ? winterFinishedTodayToEmail(db, requests).sort(winterSiteSort(db)) : [];
+  const toEmail = canEmail ? winterCompletionEmailsWaiting(db, requests) : [];
+  const toEmailPicked = doneEmail && doneEmail.picked ? toEmail.filter((r) => doneEmail.picked.includes(r.id)) : [];
   const emailSending = doneEmail && doneEmail.total != null && doneEmail.sent == null;
+  const allToday = toEmail.every((r) => r.completedDate === today);
   const emailEveryone = async () => {
-    const list = toEmail.slice();
+    const list = toEmailPicked.slice();
     setDoneEmail({ done: 0, total: list.length });
     const result = await emailWinterFinishedToday({ db, list, actor, persist, saveWinterizingRequest, onProgress: (request, i, total) => setDoneEmail({ done: i, total }) });
     setDoneEmail({ total: result.total, sent: result.sent, failed: result.total - result.sent });
@@ -22937,8 +22963,8 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     "div",
     { className: "rounded-xl border border-[#BFDCC6] bg-[#EEF7F0] px-3.5 py-3 mb-4", "data-done-for-day": true },
     React.createElement("div", { className: "text-[15px] font-semibold text-[#1E1A13]" }, "Done for the day?"),
-    React.createElement("div", { className: "text-[13px] text-[#4B4740] mb-2.5" }, emailSending ? `Emailing ${doneEmail.done + 1} of ${doneEmail.total}\u2026` : `${toEmail.length} finished today ${toEmail.length === 1 ? "hasn't" : "haven't"} had the "your cottage is winterized" email yet.`),
-    React.createElement("button", { type: "button", disabled: emailSending, onClick: () => setDoneEmail({ confirm: true }), className: "w-full min-h-[44px] rounded-lg bg-[#377249] text-[#F9F5EC] text-[15px] font-semibold disabled:opacity-60" }, emailSending ? "Sending\u2026" : `\u2709 Email ${toEmail.length} ${toEmail.length === 1 ? "person" : "people"}`)
+    React.createElement("div", { className: "text-[13px] text-[#4B4740] mb-2.5" }, emailSending ? `Emailing ${doneEmail.done + 1} of ${doneEmail.total}\u2026` : `${toEmail.length} ${allToday ? "finished today" : "winterized lately"} ${toEmail.length === 1 ? "hasn't" : "haven't"} had the "your cottage is winterized" email yet.`),
+    React.createElement("button", { type: "button", disabled: emailSending, onClick: () => setDoneEmail({ confirm: true, picked: toEmail.map((r) => r.id) }), className: "w-full min-h-[44px] rounded-lg bg-[#377249] text-[#F9F5EC] text-[15px] font-semibold disabled:opacity-60" }, emailSending ? "Sending\u2026" : `\u2709 Email ${toEmail.length} ${toEmail.length === 1 ? "person" : "people"}`)
   );
   const card = (r) => {
     const info = winterInfo(db, r);
@@ -23071,14 +23097,14 @@ function FieldWinterTab({ db, persist, actor, saveWinterizingRequest, saveInvoic
     })(),
     doneEmail && (doneEmail.confirm || doneEmail.sent != null) && React.createElement(
       Modal,
-      { title: doneEmail.confirm ? "Email everyone finished today?" : "Emails sent", onClose: () => setDoneEmail(null) },
-      doneEmail.confirm ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `Send the "your cottage is winterized" email to ${toEmail.length === 1 ? "this customer" : `these ${toEmail.length} customers`}:`) : React.createElement("p", { className: "text-sm text-[#4B4740] mb-4", role: "status" }, `Sent to ${doneEmail.sent}.`, doneEmail.failed ? ` ${doneEmail.failed} couldn't be sent \u2014 try again from here or the computer.` : ""),
-      doneEmail.confirm && React.createElement("ul", { className: "text-sm text-[#4B4740] mb-4 max-h-[50vh] overflow-y-auto divide-y divide-[#F1EEE9]", "data-done-email-list": true }, toEmail.map((r) => React.createElement("li", { key: r.id, className: "py-1.5" }, React.createElement("span", { className: "font-semibold" }, placeLabel(r)), " \u2014 ", (db.customers.find((c) => c.id === r.customerId) || {}).name))),
+      { title: doneEmail.confirm ? "Send the completion emails?" : "Emails sent", onClose: () => setDoneEmail(null) },
+      doneEmail.confirm ? React.createElement("p", { className: "text-sm text-[#4B4740] mb-3" }, `Send the "your cottage is winterized" email to the ticked customers. Untick anyone who's already been told.`) : React.createElement("p", { className: "text-sm text-[#4B4740] mb-4", role: "status" }, `Sent to ${doneEmail.sent}.`, doneEmail.failed ? ` ${doneEmail.failed} couldn't be sent \u2014 try again from here or the computer.` : ""),
+      doneEmail.confirm && React.createElement(WinterEmailPickList, { db, list: toEmail, picked: doneEmail.picked || [], onChange: (picked) => setDoneEmail({ confirm: true, picked }) }),
       React.createElement(
         "div",
         { className: "flex justify-end gap-2" },
         React.createElement("button", { type: "button", onClick: () => setDoneEmail(null), className: "px-4 min-h-[44px] text-sm text-[#75716A] rounded-md" }, doneEmail.confirm ? "Cancel" : "Close"),
-        doneEmail.confirm && React.createElement("button", { type: "button", onClick: emailEveryone, className: "px-4 min-h-[44px] text-sm bg-[#377249] text-[#F9F5EC] rounded-md font-medium" }, `Send ${toEmail.length} email${toEmail.length === 1 ? "" : "s"}`)
+        doneEmail.confirm && React.createElement("button", { type: "button", disabled: !toEmailPicked.length, onClick: emailEveryone, className: "px-4 min-h-[44px] text-sm bg-[#377249] text-[#F9F5EC] rounded-md font-medium disabled:opacity-50" }, `Send ${toEmailPicked.length} email${toEmailPicked.length === 1 ? "" : "s"}`)
       )
     ),
     rainDay && React.createElement(
