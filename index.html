@@ -23263,9 +23263,6 @@ function fieldCorrConversations(db) {
     };
   }).sort((a, b) => b.at.localeCompare(a.at));
 }
-function fieldCorrWaitingCount(db) {
-  return fieldCorrConversations(db).filter((c) => c.waiting.length > 0).length;
-}
 function FieldEmailComposer({ db, customer, replyTo, conversation, saveCorrespondence, onClose, onSent }) {
   const h = React.createElement;
   const emailOptions = Array.from(new Set([replyTo && replyTo.fromEmail, customer.email, customer.email2, ...(customer.matchEmails || [])].filter((e) => e && !isParkEmail(e))));
