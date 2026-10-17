@@ -83,6 +83,9 @@ test("history: filter to bills, open a hydro bill to print, open a work order", 
   await mountWithDb(page, view, READY);
   await page.getByRole("button", { name: "Robert & Linda Smith" }).click();
   await page.getByRole("button", { name: "Bills & invoices" }).click();
+  // Both load on their own (hydro readings and invoices are separate collections).
+  await page.locator('[data-history="h-h1"]').waitFor();
+  await page.locator('[data-history="i-i1"]').waitFor();
   assert.equal(await page.locator("[data-history]").count(), 2, "the hydro bill and the invoice");
   await page.locator('[data-history="h-h1"] button').click();
   await page.locator('[data-hydro-bill-view="h1"]').waitFor();

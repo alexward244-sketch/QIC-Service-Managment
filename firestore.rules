@@ -28,9 +28,15 @@ service cloud.firestore {
     // enough - if Firebase Auth sign-up were ever left open, anyone could
     // create an account with the app's public API key, and that account
     // must not see or change anything until an Admin assigns it a role.
+    // An Admin must also have signed in with two-step (a code texted to
+    // their phone): Firebase marks that sign-in with sign_in_second_factor.
+    // An Admin's password alone - or a session from before they set it up -
+    // gets nothing; the app walks them through it.
     function isSignedIn() {
       return request.auth != null
-        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office'];
+        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office']
+        && (request.auth.token.role != 'admin'
+          || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null);
     }
 
     // The role stamped onto this user's token by setUserRole.
@@ -64,10 +70,30 @@ service cloud.firestore {
     // write it via the Admin SDK, which is trusted server-side code and
     // bypasses these rules entirely — so this is intentionally NOT
     // "if isAdmin()", it's a hard no from the client, full stop.
+    //
+    // App settings (prices, tax, company details, email intake, the Admin
+    // screens) and the sign-in codes are Admin only. Money roles may also
+    // change the winterizing plan's settings (the Plan board), and anyone
+    // may mark the couple-name tidy-up reviewed. The app keeps a non-Admin's
+    // save from touching the other settings (persist: keepLockedSettings).
+    function settingsOf(d) {
+      return d.get('settings', {});
+    }
+    function changedSettings() {
+      return settingsOf(request.resource.data).diff(settingsOf(resource.data)).affectedKeys();
+    }
+    function settingsYouMayChange() {
+      return isMoneyRole()
+        ? ['coupleNamesReviewed', 'winterSeasonStart', 'winterDailyLimit', 'winterAutoPlaceNew', 'winterKeyEmailOff', 'winterBlockedDays', 'winterizingReminderText', 'winterizingSeasonStart']
+        : ['coupleNamesReviewed'];
+    }
     match /campground/data {
       allow read: if isSignedIn();
       allow write: if isSignedIn()
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userRoles']);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userRoles'])
+        && (isAdmin()
+            || (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['loginCodes'])
+                && changedSettings().hasOnly(settingsYouMayChange())));
     }
 
     // Every other top-level collection the app uses, listed explicitly
@@ -94,11 +120,23 @@ service cloud.firestore {
     // Invoices: office and field screens create some automatically (a
     // prepaid propane fill or an anode rod marked done), and General
     // Service adds a note to an existing one - so any signed-in user may
-    // create an invoice or change only those note fields. Anything else
+    // create one of those or change only those note fields. Anything else
     // (amounts, paid/sent status, deleting) is money roles only.
+    // Only the two kinds the app makes on its own can be created by other
+    // roles: a propane fill and an anode rod (parts only - no labour,
+    // service call or shop supplies, not marked sent).
+    function isAutoInvoice(d) {
+      return ((d.get('title', '') == 'Propane Fill' && d.get('sourceType', '') == 'workOrder')
+              || (d.get('title', '') == 'Anode Rod Replacement' && d.get('sourceType', '') == 'winterizing'))
+        && d.get('laborHours', 0) == 0
+        && d.get('serviceCall', 0) == 0
+        && d.get('shopSuppliesAmount', 0) == 0
+        && d.get('shopSuppliesPercent', 0) == 0
+        && d.get('sentDate', null) == null;
+    }
     match /invoices/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn();
+      allow create: if isMoneyRole() || (isSignedIn() && isAutoInvoice(request.resource.data));
       allow update: if isMoneyRole()
         || (isSignedIn()
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -111,6 +149,13 @@ service cloud.firestore {
     // Parts (moved out of campground/data so a save can't wipe other
     // people's part edits): any signed-in user, as before.
     match /parts/{id} { allow read, write: if isSignedIn(); }
+    // Site Map equipment (Hydro / Water / Sewer views): everyone can see
+    // it; only the roles that edit map pins in the app (isAdminOrManager:
+    // Admin, Service Manager, Accounting) place or change it.
+    match /mapEquipment/{id} {
+      allow read: if isSignedIn();
+      allow write: if isMoneyRole();
+    }
     // Hydro readings: anyone can enter one (office meter screen, field
     // hydro pad); confirming and invoicing it happens on the Hydro Review
     // screen, which only Accounting and Admin have.
@@ -167,6 +212,13 @@ service cloud.firestore {
         && request.resource.data.subject is string && request.resource.data.subject.size() <= 300
         && request.resource.data.sentAt is string && request.resource.data.sentAt.size() <= 40;
       allow read, update, delete: if false;
+    }
+    // The permanent activity history (Admin > Activity History), written
+    // only by the audit Cloud Functions as records change. Admins read it;
+    // nobody, Admin included, can change or delete an entry.
+    match /auditLog/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
     match /hydroReadings/{id} {
       allow read, create: if isSignedIn();

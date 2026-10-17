@@ -25,9 +25,12 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
+    // Admins must have signed in with two-step, as in firestore.rules.
     function isStaff() {
       return request.auth != null
-        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office'];
+        && request.auth.token.role in ['admin', 'manager', 'salesmanager', 'accounting', 'office']
+        && (request.auth.token.role != 'admin'
+          || request.auth.token.get('firebase', {}).get('sign_in_second_factor', null) != null);
     }
     // The campground map image shown on the Site Map tab.
     match /campground-map/{fileName} {

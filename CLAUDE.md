@@ -75,6 +75,23 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
 
 ## Business rules (don't undo these)
 
+**Sign-in**
+- Admins use two-step sign-in: a code texted to their cell (Firebase SMS
+  multi-factor, needs Identity Platform + "SMS Multi-factor Authentication"
+  on in the Firebase console). Asked once per device at sign-in, not daily.
+  The rules and Cloud Functions refuse an Admin token without
+  `firebase.sign_in_second_factor` (`passedTwoStep`); the app shows
+  `TwoStepSetupScreen` (confirm email -> phone -> code) or "sign in again".
+  A lost phone: another Admin uses "Reset two-step" in Manage Access
+  (`resetTwoStep`). Other roles don't need it (`TWO_STEP_ROLES`).
+
+- Every Cloud Function call waits for `messagingReady`: on a device with
+  notifications allowed, the Functions SDK asks Messaging for a token on
+  each call, and without our `sw.js` Messaging tries the site root's
+  `firebase-messaging-sw.js` - the SDK bundle lets that error fail the call
+  (seen as Draft reply failing on a phone). `functions_.httpsCallable` is
+  wrapped to wait for it.
+
 **Correspondence / email intake**
 - Never block Tim's emails — only skip the automatic website form notices.
 - Voicemails (phone system emails) never link to a customer.
@@ -103,7 +120,23 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   compares (ties Flow's entries to their Zoho message id, lists what Flow
   didn't bring in in `serverState/zohoInbox`) and adds nothing; once on, it
   saves `zoho_in_<messageId>` entries and the Flow webhook skips email. The
-  Email Intake ignore list applies to any sender.
+  Email Intake ignore list applies to any sender. Flow checks the inbox on a
+  timer, so its copy (stamped when delivered) can be late: the compare
+  matches Flow copies up to 2 hours after Zoho's time (`FLOW_LATE_MS`) and
+  re-checks the "missed" list every run.
+- Zoho "Done" folder (`syncZohoDone`, in `zohoSentMail` every 5 min): on
+  once a folder named "Done" exists in the service mailbox. An incoming
+  email handled in the app (any way - `handledAt` in the last 3 days) has
+  its Zoho copy moved there (`zohoDoneAt` on the entry); an email moved to
+  Done in Zoho is marked handled in the app (`handledInZoho`, a green "Done
+  in Zoho" tag on the email). Each Done
+  message is looked at once (`serverState/zohoInbox.done.seen`), so
+  reopening one in the app sticks. Web forms / logged calls are skipped.
+  Status shows under Admin > Email Intake. Reading an email in Zoho does
+  not mark it handled - read isn't answered.
+- Zoho's message lists give subjects HTML-escaped ("Quinte&#39;s");
+  `zohoMessages` decodes them and `sameSubject` compares decoded text, so
+  they match Flow's copies and are saved readable.
 - The Zoho access token is shared through `serverState/zohoToken` (never
   readable by the app) - Zoho allows only 10 refreshes per 10 minutes.
 - Displayed bodies go through `displayEmailBody` (hides disclaimer,
@@ -187,6 +220,10 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   a whole section (Pebble Beach / By the Woods days). Cut from the park's
   vector map PDF with `tools/winter-maps/` (see its README). Pins match
   site numbers without leading zeros (`winterMapKey`).
+- Winterizing → Report (`WinterizingReport`): how many cottages were marked
+  done (by `completedDate`) per day, per week (Mon-Fri) and for the season
+  (per week + season total), with a column per section and totals. Counts
+  only, no site list. Printable; past seasons picked by year.
 - Admin > Settings > Files > Storage (`StoragePane`) keeps files for any
   use: the park's large map PDF (`maps/park-map.pdf`) and the section maps
   (open / print / download). Add future files there.
@@ -276,6 +313,18 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   numbers with `sameSiteNumber` / `signupSiteKey` (server: `matchSiteKey`),
   never with `===`, so "site 20" still finds 0020.
 
+**Site Map services**
+- The Site Map switches between Customers and Hydro / Water / Sewer views.
+  Equipment (transformers, panels, valves, lift stations...) is its own
+  document in `mapEquipment` (like parts; linking a site is an
+  `arrayUnion`/`arrayRemove`, never a whole-list write). A site hangs off one
+  piece per service; pieces chain up to the main. Admin / Service Manager /
+  Accounting edit it (firestore.rules), everyone sees it.
+- An inbound email that reads like a hydro / water / sewer problem shows a
+  "Staff only" card in Correspondence: what feeds the site, other sites on
+  it, and other reports on the same piece within 12 hours. Nothing goes to
+  the customer.
+
 **Customers**
 - Couple names: same last name → "Wayne & Yolande, McKinnon"; two last
   names → "Chris & Debbie Knox & Roberston".
@@ -359,6 +408,43 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   call (lines with `withServiceCall`). Older lines and the old
   shop-supplies fields stay parts + labour, so invoices already sent keep
   their totals.
+
+**Security**
+- App settings (`campground/data` `settings`) and sign-in codes
+  (`loginCodes`) are Admin only (firestore.rules). Money roles may also
+  change the winterizing plan's settings, everyone `coupleNamesReviewed`
+  (`settingsRoleMayChange`; add a key there and in the rules if a
+  non-Admin screen needs a new setting). A non-Admin's `persist()` keeps
+  the saved copy of the rest (`keepLockedSettings`), so a stale screen
+  can't undo an Admin's change.
+- Activity History (Admin > System > Activity History, `ActivityHistoryView`)
+  is the permanent record: the `audit` Cloud Functions group
+  (`onDocumentWrittenWithAuthContext`) writes `auditLog` entries as records
+  change - who (from their sign-in), when, which fields went from what to
+  what, and a copy of anything deleted. Full history for customers,
+  invoices, quotes, work orders, sites, cottages, hydro readings, parts and
+  sales records; deletes only for emails, propane/tree/winterizing requests
+  and web sign-ups; settings changes, sign-in code changes (never the codes),
+  the app's own activity notes, and Manage Access (written by those
+  functions). Admins read it; nobody can change or delete it (rules). No
+  cap - the in-app `activityLog` (200, in campground/data) is still the
+  dashboards' "Recent activity". Deploy: `--only functions:audit`.
+- Export backup / Import backup / Export as Excel (and the "backup is
+  stale" banner) are Admin only.
+- Only money roles create invoices, except the two the app makes itself:
+  "Propane Fill" (workOrder) and "Anode Rod Replacement" (winterizing),
+  parts only, not sent (`isAutoInvoice`).
+- Cloud Functions use firebase-admin's modular imports (`getFirestore`,
+  `getAuth`, `FieldValue` from `firebase-admin/firestore`...); v14 dropped
+  `admin.firestore()`. Tests swap `getAuth()`'s methods in place.
+
+- GitHub security checks are on (Dependabot alerts + security updates,
+  CodeQL default scanning, secret scanning). Dependabot PRs: check, test,
+  merge; ones in `functions/` need a deploy. `tests/` packages are test
+  tools only (never reach the app). SheetJS (Excel import/export, 0.20.3 -
+  cdnjs stopped at 0.18.5, which has known issues) and PDF.js are kept in
+  `vendor/` and served with the app, not loaded from another site (see
+  `vendor/README.md`); tests use the same SheetJS from npm (`@e965/xlsx`).
 
 ## Ideas parked for later
 

@@ -92,5 +92,48 @@ test("Email Intake: the Zoho inbox check shows how it compares with Flow, and sw
   await box.getByRole("button", { name: "Yes, switch on" }).click();
   await box.getByText("On", { exact: true }).waitFor();
   await waitFor(async () => { const d = await readDoc("campground/data"); return d && d.settings && d.settings.emailIntakeDirect === true; }, "the switch to be saved");
+  // The Done folder: how to set it up, then what it's done once it's there.
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: false, checkedAt: new Date().toISOString() } });
+  await box.locator("[data-zoho-done='off']").getByText('Make a folder called "Done"', { exact: false }).waitFor();
+  await writeDoc("serverState/zohoInbox", { checkedAt: new Date().toISOString(), direct: true, done: { folder: true, checkedAt: new Date().toISOString(), movedTotal: 4, handledTotal: 2 } });
+  await box.locator("[data-zoho-done='on']").getByText("4 moved to Done, 2 marked handled from Zoho", { exact: false }).waitFor();
+  await page.close();
+});
+
+test("A save by someone who can't change app settings keeps the saved settings and still goes through", async () => {
+  await writeDoc("campground/data", { settings: { taxRate: 13 }, activityLog: [], staff: [], parts: [], workOrderTemplates: [], loginCodes: { k: { required: true, codes: ["1"] } }, userRoles: { "boss@qicampark.com": "admin", "dave@qicampark.com": "office" } });
+  const page = await openApp(browser, "emulator", { role: "office", email: "dave@qicampark.com" });
+  await mountWithDb(page, "(api) => React.createElement('div', null, 'ready')");
+  // A screen holding an older copy (tax 10, no sign-in codes) saves the activity log.
+  const ok = await page.evaluate(() => window.__api.persist({ ...window.__api.db, settings: { taxRate: 10, coupleNamesReviewed: ["c1"] }, loginCodes: {}, activityLog: [{ id: "a1", text: "hi" }] }));
+  assert.equal(ok, true);
+  const saved = await readDoc("campground/data");
+  assert.equal(saved.settings.taxRate, 13);
+  assert.deepEqual(saved.settings.coupleNamesReviewed, ["c1"]);
+  assert.deepEqual(saved.loginCodes, { k: { required: true, codes: ["1"] } });
+  assert.equal(saved.activityLog[0].text, "hi");
+  await page.close();
+});
+
+test("Activity History: Admins page through the server's record, newest first, with what changed and deleted copies", async () => {
+  for (let i = 0; i < 205; i++) await writeDoc(`auditLog/p${String(i).padStart(3, "0")}`, { ts: new Date(Date.UTC(2026, 8, 1, 12, 0, i)).toISOString(), by: "dave@qicampark.com", collection: "parts", docId: "x", action: "changed", label: `Part ${i}`, changes: [{ field: "price", from: "1", to: "2" }] });
+  await writeDoc("auditLog/new1", { ts: "2026-10-14T15:00:00.000Z", by: "sue@qicampark.com", collection: "customers", docId: "c1", action: "changed", label: "Jane Doe", changes: [{ field: "phone", from: "6135550148", to: "6135550199" }] });
+  await writeDoc("auditLog/new2", { ts: "2026-10-14T16:00:00.000Z", by: "dave@qicampark.com", collection: "invoices", docId: "i1", action: "deleted", label: "INV-26-0010 \u00b7 Furnace", deletedCopy: JSON.stringify({ invoiceNumber: "INV-26-0010", total: 120 }) });
+  const page = await openApp(browser, "emulator", { role: "admin", email: "boss@qicampark.com" });
+  await mountWithDb(page, `(api) => React.createElement(ActivityHistoryView, null)`);
+  await page.getByText("Jane Doe").waitFor();
+  const text = await page.locator("#root").textContent();
+  assert.ok(text.indexOf("INV-26-0010") < text.indexOf("Jane Doe"), "newest first");
+  assert.match(text, /phone: 6135550148 \u2192 6135550199/);
+  await page.getByRole("button", { name: "Show what it was" }).click();
+  await page.getByText('"total": 120').waitFor();
+  // 200 at a time; the oldest few come with "Show older".
+  assert.equal(await page.getByText("Part 2", { exact: true }).count(), 0);
+  await page.getByRole("button", { name: /Show older/ }).click();
+  await page.getByText("Part 2", { exact: true }).waitFor();
+  await page.locator("select").nth(1).selectOption("sue@qicampark.com");
+  assert.equal(await page.getByText("Part 2", { exact: true }).count(), 0, "filtered to one person");
+  await page.getByText("Jane Doe").waitFor();
+  assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

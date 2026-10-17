@@ -20,12 +20,18 @@ before(async () => {
   });
 });
 after(async () => { await env.cleanup(); });
+// Signs in with the given claims. Admins have done two-step (Firebase marks
+// that sign-in with sign_in_second_factor) - see "an Admin needs two-step".
+function signIn(uid, claims) {
+  const twoStep = claims.role === "admin" ? { firebase: { sign_in_provider: "password", sign_in_second_factor: "phone" } } : {};
+  return env.authenticatedContext(uid, { ...claims, ...twoStep });
+}
 
 async function seed() {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
-    await db.doc("campground/data").set({ settings: {}, userRoles: { "a@x.com": "admin" } });
+    await db.doc("campground/data").set({ settings: { taxRate: 13 }, userRoles: { "a@x.com": "admin" }, loginCodes: {} });
     for (const c of ["workOrders", "customers", "correspondence", "pendingSignups", "sites", "parts", "dailySummaries"]) await db.doc(`${c}/x`).set({ id: "x", note: "" });
     await db.doc("invoices/i1").set({ id: "i1", lineItems: [{ quantity: 1, unitPrice: 85 }], notes: "" });
     await db.doc("deals/d1").set({ id: "d1" });
@@ -34,9 +40,10 @@ async function seed() {
     await db.doc("serverState/zohoInbox").set({ checkedAt: "x" });
     await db.doc("serverState/zohoToken").set({ token: "secret" });
     await db.doc("aiUsage/u1").set({ count: 1 });
+    await db.doc("auditLog/e1").set({ ts: "2026-10-14T15:00:00Z", by: "a@x.com", action: "changed" });
   });
 }
-const as = (role) => role === "signedOut" ? env.unauthenticatedContext().firestore() : env.authenticatedContext("u-" + role, role === "noRole" ? {} : { role }).firestore();
+const as = (role) => role === "signedOut" ? env.unauthenticatedContext().firestore() : signIn("u-" + role, role === "noRole" ? {} : { role }).firestore();
 async function allowed(role, op) {
   try { await op(as(role)); return true; } catch (e) { return false; }
 }
@@ -47,7 +54,7 @@ test("staff roles can use everyday data; accounts without a role and signed-out 
     assert.ok(await allowed(role, (db) => db.doc("workOrders/x").get()), `${role} read work orders`);
     assert.ok(await allowed(role, (db) => db.doc("workOrders/new").set({ id: "new", title: "t" })), `${role} create work order`);
     assert.ok(await allowed(role, (db) => db.doc("customers/x").update({ note: "hi" })), `${role} edit customer`);
-    assert.ok(await allowed(role, (db) => db.doc("campground/data").update({ settings: { a: 1 } })), `${role} save settings`);
+    assert.ok(await allowed(role, (db) => db.doc("campground/data").update({ activityLog: [role] })), `${role} save shared data`);
     assert.ok(await allowed(role, (db) => db.doc("parts/x").update({ sku: "A-1" })), `${role} edit a part`);
   }
   for (const role of ["noRole", "signedOut"]) {
@@ -78,16 +85,48 @@ test("money, sales, hydro and alerts are limited to the right roles", async () =
   await expect("read deals", (db) => db.doc("deals/d1").get(), ["admin", "salesmanager"]);
   await expect("correct a hydro reading", (db, role) => db.doc("hydroReadings/h1").update({ reading: 200 + [...ROLES, "noRole"].indexOf(role) }), ["admin", "accounting"]);
   await expect("read server alerts", (db) => db.doc("serverAlerts/a1").get(), ["admin", "manager"]);
+  await expect("read the activity history", (db) => db.doc("auditLog/e1").get(), ["admin"]);
+  await expect("change the activity history", (db) => db.doc("auditLog/e1").update({ by: "someone@x.com" }), []);
+  await expect("delete from the activity history", (db) => db.doc("auditLog/e1").delete(), []);
+  await expect("add to the activity history", (db, role) => db.doc("auditLog/new-" + role).set({ by: "me" }), []);
   await expect("read the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").get(), ["admin", "manager"]);
   await expect("read the Zoho login", (db) => db.doc("serverState/zohoToken").get(), []);
   await expect("change the Zoho inbox check", (db) => db.doc("serverState/zohoInbox").set({ checkedAt: "y" }), []);
   await expect("read AI usage counters", (db) => db.doc("aiUsage/u1").get(), []);
 });
 
+test("app settings and sign-in codes are Admin only, except the winterizing plan's and the couple-name check", async () => {
+  await seed();
+  const expect = async (desc, op, who) => {
+    for (const role of [...ROLES, "noRole"]) assert.equal(await allowed(role, (db) => op(db, role)), who.includes(role), `${desc}: ${role}`);
+  };
+  const n = (role) => [...ROLES, "noRole"].indexOf(role);
+  await expect("change the tax rate", (db, role) => db.doc("campground/data").update({ "settings.taxRate": 20 + n(role) }), ["admin"]);
+  await expect("add a new setting", (db, role) => db.doc("campground/data").update({ "settings.paymentInstructions": "pay " + role }), ["admin"]);
+  await expect("change sign-in codes", (db, role) => db.doc("campground/data").update({ loginCodes: { x: role } }), ["admin"]);
+  await expect("change the winterizing daily limit", (db, role) => db.doc("campground/data").update({ "settings.winterDailyLimit": 20 + n(role) }), ["admin", "manager", "accounting"]);
+  await expect("block a winterizing day", (db, role) => db.doc("campground/data").update({ "settings.winterBlockedDays": [{ date: "2026-10-2" + n(role) }] }), ["admin", "manager", "accounting"]);
+  await expect("mark couple names reviewed", (db, role) => db.doc("campground/data").update({ "settings.coupleNamesReviewed": [role] }), ROLES);
+  await expect("save other shared data", (db, role) => db.doc("campground/data").update({ activityLog: ["x" + role] }), ROLES);
+});
+
+test("invoices: only money roles create them, apart from the propane fill and anode rod the app makes", async () => {
+  await seed();
+  const expect = async (desc, make, who) => {
+    for (const role of [...ROLES, "noRole"]) assert.equal(await allowed(role, (db) => db.doc(`invoices/${desc.replace(/\W/g, "")}-${role}`).set(make())), who.includes(role), `${desc}: ${role}`);
+  };
+  const auto = { lineItems: [{ quantity: 1, unitPrice: 25 }], laborHours: 0, serviceCall: 0, shopSuppliesAmount: 0, shopSuppliesPercent: 0, sentDate: null };
+  await expect("propane fill", () => ({ ...auto, title: "Propane Fill", sourceType: "workOrder" }), ROLES);
+  await expect("anode rod", () => ({ ...auto, title: "Anode Rod Replacement", sourceType: "winterizing" }), ROLES);
+  await expect("propane fill with labour", () => ({ ...auto, title: "Propane Fill", sourceType: "workOrder", laborHours: 2 }), ["admin", "manager", "accounting"]);
+  await expect("propane fill marked sent", () => ({ ...auto, title: "Propane Fill", sourceType: "workOrder", sentDate: "2026-10-14" }), ["admin", "manager", "accounting"]);
+  await expect("any other invoice", () => ({ ...auto, title: "Furnace repair", sourceType: "workOrder" }), ["admin", "manager", "accounting"]);
+});
+
 test("device error reports: staff can add their own, only Admins and Service Managers read them", async () => {
   await seed();
   const report = (email, extra = {}) => ({ kind: "error", message: "Boom", stack: "at x", email, device: "phone", screen: "workorders", userAgent: "UA", ts: "2026-10-01T12:00:00Z", day: "2026-10-01", ...extra });
-  const withEmail = (role, email) => env.authenticatedContext("e-" + role, role ? { role, email } : { email }).firestore();
+  const withEmail = (role, email) => signIn("e-" + role, role ? { role, email } : { email }).firestore();
   await assertSucceeds(withEmail("office", "dave@qicampark.com").doc("clientErrors/a").set(report("dave@qicampark.com")));
   await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/b").set(report("boss@qicampark.com")));
   await assertFails(withEmail("office", "dave@qicampark.com").doc("clientErrors/c").set(report("dave@qicampark.com", { extra: 1 })));
@@ -102,7 +141,7 @@ test("device error reports: staff can add their own, only Admins and Service Man
 test("notes of emails the app sent: staff can add them in the set shape, nobody reads them", async () => {
   await seed();
   const note = (extra = {}) => ({ toEmail: "anne@x.com", subject: "Invoice 1001", sentAt: "2026-10-02T12:00:00Z", ...extra });
-  const as = (role) => env.authenticatedContext("s-" + role, role ? { role } : {}).firestore();
+  const as = (role) => signIn("s-" + role, role ? { role } : {}).firestore();
   await assertSucceeds(as("office").doc("appSentEmails/a").set(note()));
   await assertFails(as("office").doc("appSentEmails/b").set(note({ body: "x" })));
   await assertFails(as("").doc("appSentEmails/c").set(note()));
@@ -111,7 +150,7 @@ test("notes of emails the app sent: staff can add them in the set shape, nobody 
 });
 
 test("file storage needs a staff role", async () => {
-  const st = (role) => env.authenticatedContext("s-" + role, role === "noRole" ? {} : { role }).storage();
+  const st = (role) => signIn("s-" + role, role === "noRole" ? {} : { role }).storage();
   await assertSucceeds(st("office").ref("correspondence-attachments/a.txt").putString("hi"));
   await assertSucceeds(st("admin").ref("correspondence-attachments/a.txt").getMetadata());
   await assertFails(st("noRole").ref("correspondence-attachments/b.txt").putString("hi"));
@@ -119,7 +158,7 @@ test("file storage needs a staff role", async () => {
 });
 
 test("work order photos: staff can add images, not other files or huge ones; no role, no access", async () => {
-  const st = (role) => env.authenticatedContext("p-" + role, role === "noRole" ? {} : { role }).storage();
+  const st = (role) => signIn("p-" + role, role === "noRole" ? {} : { role }).storage();
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
   await assertSucceeds(st("office").ref("work-order-photos/w1/a.jpg").put(jpeg, { contentType: "image/jpeg" }));
   await assertSucceeds(st("manager").ref("work-order-photos/w1/a.jpg").getMetadata());
@@ -132,4 +171,33 @@ test("work order photos: staff can add images, not other files or huge ones; no 
   await assertSucceeds(st("office").ref("cottage-photos/k1/nameplate.jpg").put(jpeg, { contentType: "image/jpeg" }));
   await assertFails(st("office").ref("cottage-photos/k1/notes.txt").putString("hi", "raw", { contentType: "text/plain" }));
   await assertFails(st("noRole").ref("cottage-photos/k1/nameplate.jpg").getMetadata());
+});
+
+test("an Admin needs two-step: a password-only Admin sign-in gets nothing", async () => {
+  await seed();
+  const noTwoStep = env.authenticatedContext("a-no2fa", { role: "admin", firebase: { sign_in_provider: "password" } });
+  const noFirebaseField = env.authenticatedContext("a-bare", { role: "admin" });
+  for (const ctx of [noTwoStep, noFirebaseField]) {
+    await assertFails(ctx.firestore().doc("workOrders/x").get());
+    await assertFails(ctx.firestore().doc("campground/data").get());
+    await assertFails(ctx.firestore().doc("quotes/new").set({ id: "new" }));
+    await assertFails(ctx.storage().ref("correspondence-attachments/a.txt").putString("hi"));
+  }
+  // With two-step, the same Admin gets in; other roles never need it.
+  await assertSucceeds(signIn("a-2fa", { role: "admin" }).firestore().doc("workOrders/x").get());
+  await assertSucceeds(env.authenticatedContext("o-plain", { role: "office", firebase: { sign_in_provider: "password" } }).firestore().doc("workOrders/x").get());
+});
+
+test("Site Map equipment: every staff role can see it, only Admin, Service Manager and Accounting change it", async () => {
+  await seed();
+  await env.withSecurityRulesDisabled((ctx) => ctx.firestore().doc("mapEquipment/e1").set({ id: "e1", utility: "water", siteIds: [] }));
+  for (const role of ROLES) assert.ok(await allowed(role, (db) => db.doc("mapEquipment/e1").get()), `${role} read equipment`);
+  for (const role of ["admin", "manager", "accounting"]) {
+    assert.ok(await allowed(role, (db) => db.doc("mapEquipment/e1").update({ name: role })), `${role} edit equipment`);
+  }
+  for (const role of ["office", "salesmanager", "noRole", "signedOut"]) {
+    assert.equal(await allowed(role, (db) => db.doc("mapEquipment/e1").update({ name: "x" })), false, `${role} must not edit equipment`);
+    assert.equal(await allowed(role, (db) => db.doc("mapEquipment/new").set({ id: "new" })), false, `${role} must not add equipment`);
+  }
+  for (const role of ["noRole", "signedOut"]) assert.equal(await allowed(role, (db) => db.doc("mapEquipment/e1").get()), false, `${role} must not read equipment`);
 });

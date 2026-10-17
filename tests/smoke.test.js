@@ -765,6 +765,53 @@ test("winterized email: a friendly date, and the extras said as done (anode rod 
   await page.close();
 });
 
+test("winterizing report: how many were done each day of a week and each week of the season, by section, with totals", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    window.__printed = [];
+    window.open = () => ({ document: { open() {}, write(h) { window.__printed.push(h); }, close() {} } });
+    const sites = [["s1", "0101", "Front of Park"], ["s2", "0102", "Front of Park"], ["s3", "0490", "Limestone South"], ["s4", "0412", "4 Season"]].map(([id, number, section]) => ({ id, number, section }));
+    const done = (id, site, date, extra) => ({ id, cottageId: "k" + site, completed: true, completedDate: date, options: {}, ...extra });
+    const db = { settings: {}, sites, customers: [], cottages: sites.map((x) => ({ id: "k" + x.id, name: "C" + x.number, siteId: x.id })), winterizingRequests: [
+      done("a", "s1", "2026-10-13"), done("b", "s2", "2026-10-13"), done("c", "s3", "2026-10-13"),
+      done("d", "s3", "2026-10-15"), done("e", "s4", "2026-10-20", { parkOwned: "rental" }),
+      { id: "f", cottageId: "ks1", options: {} },
+      done("old", "s1", "2025-10-14", { archived: true })
+    ] };
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(WinterizingReport, { db }));
+  });
+  const table = () => page.locator("[data-report-table] tr").evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent.trim())));
+  await page.getByLabel("Report date").fill("2026-10-14");
+  await page.locator('[data-report-table="week"]').waitFor();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Mon, Oct 12", "–", "–", "–", "0"],
+    ["Tue, Oct 13", "1", "–", "2", "3"],
+    ["Wed, Oct 14", "–", "–", "–", "0"],
+    ["Thu, Oct 15", "1", "–", "–", "1"],
+    ["Fri, Oct 16", "–", "–", "–", "0"],
+    ["Week total", "2", "0", "2", "4"]
+  ]);
+  await page.locator('[data-report-period="day"]').click();
+  await page.getByLabel("Report date").fill("2026-10-13");
+  assert.deepEqual(await table(), [["Section", "Done"], ["Limestone South", "1"], ["Front of Park", "2"], ["Total", "3"]]);
+  await page.locator('[data-report-period="season"]').click();
+  assert.deepEqual(await table(), [
+    ["", "Limestone South", "4 Season", "Front of Park", "Total"],
+    ["Week of Oct 12", "2", "–", "2", "4"],
+    ["Week of Oct 19", "–", "1", "–", "1"],
+    ["Season total", "2", "1", "2", "5"]
+  ]);
+  assert.match(await page.locator("[data-report-summary]").innerText(), /5 of 6 signed up winterized · 1 still to do · includes 1 park cottage/);
+  // Last year's (archived) season.
+  await page.getByLabel("Season").selectOption("2025");
+  assert.deepEqual((await table()).pop(), ["Season total", "1", "1"]);
+  await page.getByRole("button", { name: /Print/ }).click();
+  assert.match(await page.evaluate(() => window.__printed.pop()), /Winterizing report[\s\S]*2025 season[\s\S]*Season total/);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
 test("winterizing daily tidy-up: a cottage on a weekend goes to Monday, a day over the limit moves its extras on, but not ones put there on purpose", async () => {
   const page = await openApp(browser, "stub");
   const out = await page.evaluate(() => {
@@ -912,7 +959,7 @@ test("winterizing plan board: season settings, day counts, blocking a day and th
     await blockBtn.click();
     await page.getByPlaceholder("e.g. Pebble Beach & By the Woods").fill("Pebble Beach");
     await page.getByRole("button", { name: "Block day" }).last().click();
-    await page.locator("[data-blocked-day]").first().getByText(/Pebble Beach/).waitFor();
+    await page.locator("[data-blocked-day]", { hasText: "Pebble Beach" }).first().waitFor();
   }
   // Print a day's forms in one click.
   await page.evaluate(() => {
@@ -1007,7 +1054,8 @@ test("winterizing on a computer: plan by dragging cottages onto days, and log a 
 
 test("winterizing how-to: the master list's codes in plain words, imported onto sites, shown and edited on the checklist", async () => {
   const page = await openApp(browser, "stub");
-  // The real SheetJS (the app's own version), so a real .xlsx goes through the import.
+  // The real SheetJS (the app's own version, 0.20.3 - from npm as @e965/xlsx, since
+  // SheetJS only publishes it on its own CDN), so a real .xlsx goes through the import.
   await page.addScriptTag({ path: require.resolve("xlsx/dist/xlsx.full.min.js", { paths: [__dirname] }) });
   const decoded = await page.evaluate(() => ["BP", "IN BT P D", "IN KT W", "BP (ot)", "OD", "DT Left of unit", "BP cz1010", "IN P D"].map((c) => winterHowToSteps(c).steps));
   assert.deepEqual(decoded, [
@@ -1237,6 +1285,53 @@ test("correspondence: voicemails show who called, are never linked or grouped, a
   await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
   await page.locator("#test").getByText("Hello there").waitFor();
   assert.equal(await page.locator("#test").getByText(/V-Mail/).count(), 0);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+test("server calls on a device with notifications on wait for Messaging to get our service worker first", async () => {
+  // A phone with notifications allowed: the Functions SDK asks Messaging for a
+  // token on every call, which failed every call (Draft reply) until Messaging
+  // had our sw.js.
+  const page = await openApp(browser, "stub", { initScript: () => {
+    window.__log = [];
+    Object.defineProperty(window, "Notification", { value: Object.assign(function () {}, { permission: "granted", requestPermission: async () => "granted" }), configurable: true });
+    let readyFn;
+    Object.defineProperty(navigator, "serviceWorker", { value: { ready: new Promise((r) => { readyFn = r; }), register: () => Promise.resolve({}) }, configurable: true });
+    setTimeout(() => readyFn({ scope: "sw.js" }), 300);
+    window.__messaging = { getToken: async (o) => { window.__log.push(["token", o.serviceWorkerRegistration && o.serviceWorkerRegistration.scope, !!o.vapidKey]); return "tok"; }, onMessage() {} };
+  } });
+  const out = await page.evaluate(async () => {
+    window.__callable = async (name) => { window.__log.push(["call", name]); return { data: { ok: true } }; };
+    const res = await functions_.httpsCallable("draftCorrespondenceReply")({});
+    return { res: res.data, log: window.__log };
+  });
+  assert.deepEqual(out.res, { ok: true });
+  assert.deepEqual(out.log.map((x) => x[0]), ["token", "call"], "Messaging gets our service worker before the call goes out");
+  assert.deepEqual(out.log[0], ["token", "sw.js", true]);
+  await page.close();
+});
+
+test("correspondence: an email someone moved to Done in Zoho is tagged \"Done in Zoho\"", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => {
+    const db = { settings: {}, activityLog: [], customers: [{ id: "c1", name: "Anne Lee", email: "anne@x.com", siteIds: [] }], sites: [], cottages: [], workOrders: [], invoices: [], quotes: [], parts: [], staff: [], cannedReplies: [], workOrderTemplates: [],
+      correspondence: [
+        { id: "z", direction: "in", status: "handled", handledInZoho: true, customerId: "c1", fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips", receivedAt: "2026-10-02T12:00:00Z" },
+        { id: "h", direction: "in", status: "handled", customerId: "c1", fromEmail: "anne@x.com", subject: "Deck", body: "Soft boards", receivedAt: "2026-10-01T12:00:00Z" },
+        { id: "u", direction: "in", status: "handled", handledInZoho: true, fromEmail: "news@shop.com", subject: "Sale", body: "Big sale", receivedAt: "2026-10-03T12:00:00Z" }
+      ] };
+    window.__db = db;
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(CorrespondenceInboxView, { db, persist() {}, saveCorrespondence() {}, deleteCorrespondence() {}, saveCustomer() {}, saveWorkOrder() {}, savePropaneRequest() {}, saveTreeRequest() {}, saveCottage() {} }));
+  });
+  await page.locator("[data-done-in-zoho]").first().waitFor();
+  assert.equal(await page.locator("[data-done-in-zoho]").count(), 2, "Anne's row (her newest was moved in Zoho) and the unmatched one");
+  // Opened: the unmatched email's page and the customer's conversation say so too.
+  await page.getByText("news@shop.com").first().click();
+  await page.getByText("Done in Zoho").nth(2).waitFor();
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "test" }))).render(React.createElement(CorrespondenceThread, { customer: window.__db.customers[0], db: window.__db, persist() {}, saveCorrespondence() {}, onReply() {} })));
+  await page.locator("#test").getByText("The tap drips").waitFor();
+  assert.equal(await page.locator("#test").getByText("Done in Zoho", { exact: true }).count(), 1);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });
@@ -1810,6 +1905,61 @@ test("a Save that can't save yet says what's missing", async () => {
   await page.getByRole("button", { name: "Save Site" }).click();
   await page.getByRole("alert").filter({ hasText: "Add a site number to save." }).waitFor();
   assert.equal(await page.evaluate(() => window.__saved), null);
+  assert.deepEqual(page.pageErrors, []);
+  await page.close();
+});
+
+// Two-step sign-in screens, with a faked Firebase user. In stub mode
+// Firebase's phone calls return stand-ins, so "sending" a code always works.
+const fakeUser = (extra) => `({ email: "boss@qicampark.com", emailVerified: true, multiFactor: { enrolledFactors: [], getSession: async () => ({}), enroll: async (a, name) => { window.__enrolled = name; } }, sendEmailVerification: async () => { window.__emailed = true; }, reload: async () => {}, ...${extra} })`;
+const showSetup = (page, extra = "{}") => page.evaluate(`ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(TwoStepSetupScreen, { user: ${fakeUser(extra)}, onSkip() {} }))`);
+
+test("an Admin sets up two-step: confirm email, then phone, then the texted code", async () => {
+  const page = await openApp(browser, "stub");
+  await showSetup(page, "{ emailVerified: false }");
+  await page.getByText("Set up two-step sign-in").waitFor();
+  await page.getByRole("button", { name: "Email me a link" }).click();
+  await page.getByText("We emailed a link to boss@qicampark.com").waitFor();
+  assert.equal(await page.evaluate(() => window.__emailed), true);
+  await page.close();
+
+  const page2 = await openApp(browser, "stub");
+  await showSetup(page2);
+  await page2.getByRole("button", { name: "Text me a code" }).click();
+  await page2.getByText("doesn't look right").waitFor();
+  await page2.getByPlaceholder("613 555 0148").fill("613 555 0148");
+  await page2.getByRole("button", { name: "Text me a code" }).click();
+  await page2.getByText("We texted a 6-digit code to 613 555 0148.").waitFor();
+  await page2.getByLabel("Code from the text").fill("123 456");
+  assert.equal(await page2.getByLabel("Code from the text").inputValue(), "123456");
+  await page2.getByRole("button", { name: "Turn on two-step" }).click();
+  await page2.getByText("Two-step is on").waitFor();
+  assert.equal(await page2.evaluate(() => window.__enrolled), "Phone");
+  assert.equal(await page2.evaluate(() => twoStepPhone("1 (613) 555-0148")), "+16135550148");
+  assert.deepEqual(page2.pageErrors, []);
+  await page2.close();
+});
+
+test("an Admin already set up but signed in without it is asked to sign in again", async () => {
+  const page = await openApp(browser, "stub");
+  await showSetup(page, `{ multiFactor: { enrolledFactors: [{ uid: "f1" }] } }`);
+  await page.getByText("Please sign in again").waitFor();
+  await page.getByRole("button", { name: "Sign in again" }).waitFor();
+  await page.close();
+});
+
+test("signing in with two-step: the texted code finishes the sign-in", async () => {
+  const page = await openApp(browser, "stub");
+  await page.evaluate(() => ReactDOM.createRoot(document.getElementById("test")).render(React.createElement(TwoStepSignIn, {
+    resolver: { hints: [{ phoneNumber: "+1******0148" }], session: {}, resolveSignIn: async () => { window.__signedIn = true; } },
+    onCancel() {}
+  })));
+  await page.getByText("We texted a 6-digit code to +1******0148.").waitFor();
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await page.getByText("Enter the 6-digit code").waitFor();
+  await page.getByLabel("Code from the text").fill("654321");
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await page.waitForFunction(() => window.__signedIn === true);
   assert.deepEqual(page.pageErrors, []);
   await page.close();
 });

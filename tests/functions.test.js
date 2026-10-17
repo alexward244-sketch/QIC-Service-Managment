@@ -226,6 +226,25 @@ test("only Admins change roles; Remove and Sign out everywhere end sessions", as
   assert.equal(roles["boss@qicampark.com"], "admin");
 });
 
+test("an Admin who hasn't signed in with two-step can't change roles or use staff functions", async () => {
+  auth.users = { "dave@qicampark.com": { uid: "ud", customClaims: { role: "office" } } };
+  await db.doc("campground/data").set({ settings: {}, userRoles: { "dave@qicampark.com": "office" } });
+  assert.deepEqual(await call(fns.setUserRole, { email: "dave@qicampark.com", role: "admin" }, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.signOutUserEverywhere, { email: "dave@qicampark.com" }, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.askThePark, { question: "hi" }, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.generateMorningSummary, {}, "admin-no2fa"), { error: "permission-denied" });
+  assert.deepEqual(auth.calls, []);
+});
+
+test("Reset two-step removes an Admin's phone and signs them out; Admins only", async () => {
+  auth.users = { "tim@quintesisle.ca": { uid: "ut", customClaims: { role: "admin" } } };
+  assert.deepEqual(await call(fns.resetTwoStep, { email: "tim@quintesisle.ca" }, "manager"), { error: "permission-denied" });
+  assert.deepEqual(await call(fns.resetTwoStep, { email: "nobody@x.com" }, "admin"), { error: "not-found" });
+  assert.deepEqual(auth.calls, []);
+  assert.deepEqual(await call(fns.resetTwoStep, { email: " Tim@quintesisle.ca " }, "admin"), { ok: true, email: "tim@quintesisle.ca" });
+  assert.deepEqual(auth.calls, [["update", "ut", { multiFactor: { enrolledFactors: null } }], ["revoke", "ut"]]);
+});
+
 test("the work order summary needs a staff role and returns Claude's text", async () => {
   auth.users = { "a@x.com": { uid: "staff1", customClaims: { role: "office" } }, "b@x.com": { uid: "norole", customClaims: {} } };
   const summarize = async (token, rawNotes) => {
@@ -397,12 +416,13 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   const at = (minAgo) => String(now - minAgo * 60e3);
   zoho.on = true;
   // Flow delivered Anne's email; Bob's never came through Flow; a form notice; one too new to compare yet.
-  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Leak", body: "The tap drips." });
+  // Zoho's list escapes the apostrophe ("Quinte&#39;s"); Flow's copy has it plain.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "anne@x.com", subject: "Re: Quinte's Isle - Leak", body: "The tap drips." });
   zoho.inbox = [
-    { messageId: "m-anne", subject: "Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
+    { messageId: "m-anne", subject: "Re: Quinte&#39;s Isle - Leak", fromAddress: "Anne Lee <anne@x.com>", receivedTime: at(10) },
     { messageId: "m-bob", subject: "Deck boards", fromAddress: "bob@y.com", receivedTime: at(9) },
     { messageId: "m-form", subject: "New entry", fromAddress: "forms@zoho.com", receivedTime: at(8) },
-    { messageId: "m-new", subject: "Hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
+    { messageId: "m-new", subject: "Cy&#39;s hydro question", fromAddress: "cy@z.com", receivedTime: at(1) }
   ];
   zoho.inboxContent = { "m-bob": "<p>Two boards are soft.</p>", "m-form": "<p>Jo has submitted the following</p>", "m-new": "<p>When is my reading?</p>" };
   await fns.zohoInbox();
@@ -412,9 +432,16 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   const compare = (await db.doc("serverState/zohoInbox").get()).data().compare;
   assert.deepEqual([compare.checked, compare.matched, compare.missedCount, compare.missed.map((x) => x.from)], [3, 1, 1, ["bob@y.com"]], "Bob's is listed as missed by Flow; the form notice isn't; the newest waits");
 
+  // Flow is late with Bob's (it checks the inbox on a timer): it counts as a match after all.
+  await callWebhook(fns.serviceCorrespondence, { fromEmail: "bob@y.com", subject: "Deck boards", body: "Two boards are soft." });
+  await fns.zohoInbox();
+  const after = (await db.doc("serverState/zohoInbox").get()).data().compare;
+  assert.deepEqual([after.checked, after.matched, after.missedCount, after.missed.length], [3, 2, 0, 0], "Bob's moves from missed to matched");
+  assert.equal((await all("correspondence")).find((c) => c.fromEmail === "bob@y.com").zohoMessageId, "m-bob");
+
   // Switched on: Flow's copies are ignored, the inbox is read directly.
   await db.doc("campground/data").set({ settings: { emailIntakeDirect: true } }, { merge: true });
-  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Hydro question", body: "When is my reading?" });
+  const flow = await callWebhook(fns.serviceCorrespondence, { fromEmail: "cy@z.com", subject: "Cy's hydro question", body: "When is my reading?" });
   assert.equal(flow.body.reason, "direct-intake");
   await fns.zohoInbox();
   await fns.zohoInbox();
@@ -425,8 +452,46 @@ test("reading the inbox from Zoho: first only compares with Flow; once switched 
   assert.equal(cy[0].zohoMessageId, "m-new");
   assert.equal(cy[0].status, "new");
   assert.equal(cy[0].body, "When is my reading?");
+  assert.equal(cy[0].subject, "Cy's hydro question", "the subject is saved readable");
   assert.equal(cy[0].receivedAt, new Date(Number(at(1))).toISOString(), "Zoho's own time");
-  assert.equal(corr.length, 2);
+  assert.equal(corr.length, 3);
+});
+
+test("Zoho's Done folder: handled emails move there, and emails moved there are marked handled", async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const put = (c) => db.collection("correspondence").doc(c.id).set(c);
+  zoho.on = true;
+  await put({ id: "zoho_in_m1", direction: "in", status: "handled", handledAt: iso(now - 60e3), fromEmail: "anne@x.com", subject: "Leak", receivedAt: iso(now - 3600e3), zohoMessageId: "m1" });
+  await put({ id: "zoho_in_m2", direction: "in", status: "new", fromEmail: "bob@y.com", subject: "Deck", receivedAt: iso(now - 3000e3), zohoMessageId: "m2" });
+  await put({ id: "webform_s1", direction: "in", status: "handled", handledAt: iso(now - 60e3), source: "webform", fromEmail: "carl@z.com", subject: "Form", receivedAt: iso(now - 3000e3) });
+  await put({ id: "out1", direction: "out", status: "handled", handledAt: iso(now - 60e3), toEmail: "anne@x.com", subject: "Re: Leak", receivedAt: iso(now - 60e3), zohoMessageId: "s1" });
+
+  // No Done folder in Zoho yet: nothing moves, and Admin is told how to set it up.
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 0);
+  assert.equal((await db.doc("serverState/zohoInbox").get()).data().done.folder, false);
+
+  // Someone made the folder; Bob's email was moved there in Zoho.
+  zoho.doneFolder = true;
+  zoho.done = [{ messageId: "m2", folderId: "done1", subject: "Deck", fromAddress: "bob@y.com", receivedTime: String(now - 3000e3) }];
+  await fns.zohoSentMail();
+  assert.deepEqual(zoho.moved, [{ mode: "moveMessage", messageId: ["m1"], destfolderId: "done1" }], "only Anne's handled email; not the web form or our reply");
+  const anne = (await db.doc("correspondence/zoho_in_m1").get()).data();
+  assert.ok(anne.zohoDoneAt);
+  const bob = (await db.doc("correspondence/zoho_in_m2").get()).data();
+  assert.equal(bob.status, "handled", "moved to Done in Zoho = handled here");
+  assert.equal(bob.handledInZoho, true);
+  const done = (await db.doc("serverState/zohoInbox").get()).data().done;
+  assert.deepEqual([done.folder, done.movedTotal, done.handledTotal], [true, 1, 1]);
+
+  // Runs again: nothing moves twice, and reopening Bob's here sticks.
+  zoho.done.push({ messageId: "m1", folderId: "done1", subject: "Leak", fromAddress: "anne@x.com", receivedTime: String(now - 3600e3) });
+  await db.doc("correspondence/zoho_in_m2").update({ status: "new" });
+  await fns.zohoSentMail();
+  assert.equal(zoho.moved.length, 1);
+  assert.equal((await db.doc("correspondence/zoho_in_m2").get()).data().status, "new");
+  assert.equal((await all("serverAlerts")).length, 0);
 });
 
 test("an email moved to Zoho's Trash is removed from the app", async () => {
@@ -572,4 +637,59 @@ test("nameplate reader: staff only, sends the photo to Claude and tidies what co
   assert.deepEqual(pdfReq.messages[0].content[0], { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } });
   assert.equal(fromPdf.plate.serialNumber, "S1");
   assert.deepEqual(await call(fns.readCottageNameplate, { pdf: "aGVsbG8=" }), { error: "invalid-argument" }, "not a PDF");
+});
+
+// A Firestore write event the way the audit triggers receive it.
+const snap = (data) => ({ exists: data != null, data: () => data });
+const writeEvent = (before, after, who = { authType: "app_user", authId: "ud" }, docId = "c1") => ({ data: { before: snap(before), after: snap(after) }, params: { docId }, time: "2026-10-14T15:00:00.000Z", ...who });
+
+test("activity history: who changed what is recorded by the server, with before/after values", async () => {
+  auth.users = { "dave@qicampark.com": { uid: "ud", email: "dave@qicampark.com", customClaims: { role: "office" } } };
+  await fns.audit.customers(writeEvent(null, { name: "Jane Doe", phone: "6135550148" }));
+  await fns.audit.customers(writeEvent({ name: "Jane Doe", phone: "6135550148", updatedAt: "a" }, { name: "Jane Doe", phone: "6135550199", updatedAt: "b" }));
+  await fns.audit.customers(writeEvent({ name: "Jane Doe", updatedAt: "a" }, { name: "Jane Doe", updatedAt: "b" }));
+  await fns.audit.invoices(writeEvent({ invoiceNumber: "INV-26-0010", title: "Furnace", total: 120 }, null, { authType: "app_user", authId: "ud" }, "i1"));
+  await fns.audit.invoices(writeEvent({ invoiceNumber: "INV-26-0011", total: 50 }, { invoiceNumber: "INV-26-0011", total: 60 }, { authType: "service_account" }, "i2"));
+  const log = (await all("auditLog")).sort((a, b) => (a.collection + a.action).localeCompare(b.collection + b.action));
+  assert.equal(log.length, 4, "a save that changes nothing but the timestamp isn't recorded");
+  const created = log.find((e) => e.collection === "customers" && e.action === "created");
+  const changed = log.find((e) => e.collection === "customers" && e.action === "changed");
+  assert.equal(created.by, "dave@qicampark.com");
+  assert.equal(created.label, "Jane Doe");
+  assert.deepEqual(changed.changes, [{ field: "phone", from: "6135550148", to: "6135550199" }]);
+  const deleted = log.find((e) => e.action === "deleted");
+  assert.equal(deleted.label, "INV-26-0010 · Furnace");
+  assert.equal(JSON.parse(deleted.deletedCopy).total, 120, "a deleted record is kept as it was");
+  assert.equal(log.find((e) => e.docId === "i2").by, "System (automatic)");
+});
+
+test("activity history: busy lists only record deletes; settings, sign-in codes and app notes are recorded without the codes", async () => {
+  auth.users = { "boss@qicampark.com": { uid: "ua", email: "boss@qicampark.com", customClaims: { role: "admin" } } };
+  const admin = { authType: "app_user", authId: "ua" };
+  await fns.audit.correspondence(writeEvent({ subject: "Hi" }, { subject: "Hi", handled: true }, admin));
+  await fns.audit.correspondence(writeEvent({ subject: "Hi" }, null, admin));
+  await fns.audit.campgroundData(writeEvent(
+    { settings: { taxRate: 13 }, loginCodes: { a: "1111" }, activityLog: [{ id: "old", summary: "Old" }] },
+    { settings: { taxRate: 15 }, loginCodes: { a: "2222" }, activityLog: [{ id: "new", actor: "Boss", summary: "Restored customer \"Jane\" from trash" }, { id: "old", summary: "Old" }] },
+    admin, "data"));
+  const log = await all("auditLog");
+  assert.equal(log.filter((e) => e.collection === "correspondence").length, 1);
+  assert.equal(log.find((e) => e.collection === "correspondence").action, "deleted");
+  assert.deepEqual(log.find((e) => e.label === "Settings").changes, [{ field: "taxRate", from: "13", to: "15" }]);
+  assert.ok(!JSON.stringify(log).includes("2222") && !JSON.stringify(log).includes("1111"), "sign-in codes never copied");
+  assert.ok(log.find((e) => e.label === "Sign-in codes"));
+  const note = log.find((e) => e.action === "note");
+  assert.equal(note.note, "Restored customer \"Jane\" from trash");
+  assert.equal(note.by, "boss@qicampark.com");
+});
+
+test("activity history: Manage Access changes are recorded under the Admin who made them", async () => {
+  auth.users = {
+    "boss@qicampark.com": { uid: "ua", email: "boss@qicampark.com", customClaims: { role: "admin" } },
+    "dave@qicampark.com": { uid: "ud", email: "dave@qicampark.com", customClaims: { role: "office" } }
+  };
+  await call(fns.setUserRole, { email: "dave@qicampark.com", role: "manager" }, "admin", "ua");
+  const [e] = await all("auditLog");
+  assert.equal(e.by, "boss@qicampark.com");
+  assert.equal(e.note, "Gave dave@qicampark.com the manager role");
 });

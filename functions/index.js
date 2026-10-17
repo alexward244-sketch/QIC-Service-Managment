@@ -1,12 +1,16 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentWrittenWithAuthContext } = require("firebase-functions/v2/firestore");
 const { defineSecret } = require("firebase-functions/params");
-const admin = require("firebase-admin");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, FieldValue, FieldPath } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
+const { getStorage } = require("firebase-admin/storage");
 const crypto = require("crypto");
 const Anthropic = require("@anthropic-ai/sdk");
 
-admin.initializeApp();
-const db = admin.firestore();
+initializeApp();
+const db = getFirestore();
 
 const WEBHOOK_SECRET = defineSecret("WINTERIZING_WEBHOOK_SECRET");
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
@@ -46,12 +50,17 @@ const ZOHO_MAIL_ACCOUNT_ID = "50669000000002002";
 const ZOHO_MAIL_INBOX_FOLDER_ID = "50669000000002014";
 
 const VALID_ROLES = ["admin", "manager", "salesmanager", "accounting", "office"];
-const ROLES_DOC = admin.firestore().doc("campground/data");
+const ROLES_DOC = getFirestore().doc("campground/data");
 
 // A staff member: signed in with a role an Admin has assigned. An account
 // that merely exists (e.g. one someone created for themselves) gets nothing.
+// An Admin must also have signed in with two-step (a texted code), as in
+// firestore.rules.
+function passedTwoStep(token) {
+  return Boolean(token && (token.role !== "admin" || (token.firebase && token.firebase.sign_in_second_factor)));
+}
 function isStaffToken(token) {
-  return Boolean(token && VALID_ROLES.includes(token.role));
+  return Boolean(token && VALID_ROLES.includes(token.role) && passedTwoStep(token));
 }
 function requireStaff(request, action) {
   if (!request.auth) throw new HttpsError("unauthenticated", `Sign in to ${action}.`);
@@ -65,6 +74,9 @@ function requireCallerIsAdmin(request) {
   if (!request.auth || callerRole !== "admin") {
     throw new HttpsError("permission-denied", "Only an Admin can change roles.");
   }
+  if (!passedTwoStep(request.auth.token)) {
+    throw new HttpsError("permission-denied", "Sign in again with two-step to change roles.");
+  }
 }
 
 // Counts how many *other* users currently hold the admin claim, so a caller
@@ -72,7 +84,7 @@ function requireCallerIsAdmin(request) {
 // app's own existing safety net (getUserRole treats "no admin assigned yet"
 // as "everyone is admin") from the other direction.
 async function otherAdminCount(excludeUid) {
-  const { users } = await admin.auth().listUsers(1000);
+  const { users } = await getAuth().listUsers(1000);
   return users.filter((u) => u.uid !== excludeUid && u.customClaims && u.customClaims.role === "admin").length;
 }
 
@@ -86,7 +98,7 @@ exports.setUserRole = onCall(async (request) => {
     throw new HttpsError("invalid-argument", `Role must be one of: ${VALID_ROLES.join(", ")}`);
   }
 
-  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (!user) {
     throw new HttpsError(
       "not-found",
@@ -102,7 +114,7 @@ exports.setUserRole = onCall(async (request) => {
     }
   }
 
-  await admin.auth().setCustomUserClaims(user.uid, { role });
+  await getAuth().setCustomUserClaims(user.uid, { role });
   // Mirror into the shared document so the existing "Manage Access" list (and
   // any other UI reading db.userRoles) keeps working unchanged. This write
   // uses the Admin SDK, which bypasses firestore.rules entirely — it's the
@@ -111,7 +123,8 @@ exports.setUserRole = onCall(async (request) => {
   // paths on dots, so the old form wrote userRoles["name@example"]["com"]
   // instead of updating the email's entry. checkUserRoles cleans up the
   // entries that left behind.
-  await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), role);
+  await ROLES_DOC.update(new FieldPath("userRoles", email), role);
+  await auditAccess(request, `Gave ${email} the ${role} role`);
 
   return { ok: true, email, role };
 });
@@ -122,7 +135,7 @@ exports.removeUserRole = onCall(async (request) => {
   const email = ((request.data && request.data.email) || "").trim().toLowerCase();
   if (!email) throw new HttpsError("invalid-argument", "Missing email.");
 
-  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (user) {
     const wasAdmin = user.customClaims && user.customClaims.role === "admin";
     if (wasAdmin) {
@@ -131,13 +144,14 @@ exports.removeUserRole = onCall(async (request) => {
         throw new HttpsError("failed-precondition", `${email} is the last Admin — assign another Admin first.`);
       }
     }
-    await admin.auth().setCustomUserClaims(user.uid, { role: null });
+    await getAuth().setCustomUserClaims(user.uid, { role: null });
     // Removing someone should take effect now, not when their sign-in
     // happens to renew: this ends every signed-in session they have, on
     // every device (the app notices within a few minutes and signs out).
-    await admin.auth().revokeRefreshTokens(user.uid);
+    await getAuth().revokeRefreshTokens(user.uid);
   }
-  await ROLES_DOC.update(new admin.firestore.FieldPath("userRoles", email), admin.firestore.FieldValue.delete());
+  await ROLES_DOC.update(new FieldPath("userRoles", email), FieldValue.delete());
+  await auditAccess(request, `Removed ${email}'s access`);
 
   return { ok: true };
 });
@@ -149,9 +163,25 @@ exports.signOutUserEverywhere = onCall(async (request) => {
   requireCallerIsAdmin(request);
   const email = ((request.data && request.data.email) || "").trim().toLowerCase();
   if (!email) throw new HttpsError("invalid-argument", "Missing email.");
-  const user = await admin.auth().getUserByEmail(email).catch(() => null);
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
   if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
-  await admin.auth().revokeRefreshTokens(user.uid);
+  await getAuth().revokeRefreshTokens(user.uid);
+  await auditAccess(request, `Signed ${email} out everywhere`);
+  return { ok: true, email };
+});
+
+// "Reset two-step" in Manage Access, for an Admin who lost or changed their
+// phone: removes the phone from their sign-in and signs them out everywhere.
+// Next time they sign in with their password, the app has them set it up
+// again with their new number.
+exports.resetTwoStep = onCall(async (request) => {
+  requireCallerIsAdmin(request);
+  const email = ((request.data && request.data.email) || "").trim().toLowerCase();
+  if (!email) throw new HttpsError("invalid-argument", "Missing email.");
+  const user = await getAuth().getUserByEmail(email).catch(() => null);
+  if (!user) throw new HttpsError("not-found", `No account found for ${email}.`);
+  await getAuth().updateUser(user.uid, { multiFactor: { enrolledFactors: null } });
+  await getAuth().revokeRefreshTokens(user.uid);
   return { ok: true, email };
 });
 
@@ -168,7 +198,7 @@ exports.checkUserRoles = onCall(async (request) => {
   const users = [];
   let pageToken;
   do {
-    const page = await admin.auth().listUsers(1000, pageToken);
+    const page = await getAuth().listUsers(1000, pageToken);
     users.push(...page.users);
     pageToken = page.pageToken;
   } while (pageToken);
@@ -182,7 +212,7 @@ exports.checkUserRoles = onCall(async (request) => {
   const mangledKeys = Object.keys(rawRoles).filter((k) => typeof rawRoles[k] !== "string");
   if (mangledKeys.length > 0) {
     const args = [];
-    mangledKeys.forEach((k) => args.push(new admin.firestore.FieldPath("userRoles", k), admin.firestore.FieldValue.delete()));
+    mangledKeys.forEach((k) => args.push(new FieldPath("userRoles", k), FieldValue.delete()));
     await ROLES_DOC.update(...args);
   }
   const appRoles = {};
@@ -319,7 +349,7 @@ function isContactFormName(name) {
 // from the subject. Returns { callerName, callerNumber, to } or null.
 function parseVoicemail(subject, plainBody) {
   const subj = toStr(subject);
-  if (!/^\s*((re|fwd?|fw)\s*:\s*)*v-?mail from\b/i.test(subj) && !/you have a new voicemail from/i.test(plainBody || "")) return null;
+  if (!/^\s*((?:re|fwd?)\s*:\s*)*v-?mail from\b/i.test(subj) && !/you have a new voicemail from/i.test(plainBody || "")) return null;
   const phone = "(\\(?\\d{3}\\)?[\\s.-]*\\d{3}[\\s.-]*\\d{4})";
   const nice = (name) => {
     const n = toStr(name).replace(/^from\s+/i, "");
@@ -488,24 +518,34 @@ async function triageCorrespondence(subject, body) {
 // correspondence arrives as full HTML (tags, signature markup, entities),
 // but the Correspondence thread in the app displays `body` as plain text
 // by design, so it needs to be clean before it's written to Firestore.
+// Repeats a replace until nothing changes, so a tag split around another
+// ("<scr<script></script>ipt>") can't survive one pass.
+function replaceAll(text, pattern, value) {
+  let prev;
+  do {
+    prev = text;
+    text = text.replace(pattern, value);
+  } while (text !== prev);
+  return text;
+}
 function htmlToPlainText(html) {
   if (!html) return "";
-  return html
-    // A plain-text "Name <name@example.com>" (e.g. a forwarded message's
-    // From: line) isn't a tag - set the address aside so it survives.
-    .replace(/<([\w.+-]+@[\w-]+(?:\.[\w-]+)+)>/g, "\u0001$1\u0002")
-    .replace(/<(script|style|head)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/<meta[^>]*>/gi, "")
-    .replace(/<(br|\/p|\/div|\/li|\/tr)\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
+  // A plain-text "Name <name@example.com>" (e.g. a forwarded message's
+  // From: line) isn't a tag - set the address aside so it survives.
+  let text = html.replace(/<([\w.+-]+@[\w-]+(?:\.[\w-]+)+)>/g, "\u0001$1\u0002");
+  text = replaceAll(text, /<(script|style|head)[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
+  text = text.replace(/<(br|\/p|\/div|\/li|\/tr)\s*\/?>/gi, "\n");
+  text = replaceAll(text, /<[^>]*>/g, "");
+  return text
     .replace(/\u0001/g, "<")
     .replace(/\u0002/g, ">")
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // Last, so "&amp;lt;" stays "&lt;" as written.
+    .replace(/&amp;/g, "&")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -777,8 +817,22 @@ function emailsIn(text) {
 }
 
 // Loose on purpose: an email template may wrap the subject it's given.
+// Zoho's message lists give subjects HTML-escaped ("Quinte&#39;s Isle");
+// Flow and the app have the plain text.
+function decodeZohoText(s) {
+  return toStr(s)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+// A Zoho message list with readable subjects.
+function zohoMessages(json) {
+  return ((json && json.data) || []).map((m) => ({ ...m, subject: decodeZohoText(m.subject) }));
+}
+
 function sameSubject(a, b) {
-  const norm = (s) => toStr(s).toLowerCase().replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+  const norm = (s) => decodeZohoText(s).toLowerCase().replace(/^\s*((?:re|fwd?)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
   const x = norm(a);
   const y = norm(b);
   return x === y || (x && y && (x.includes(y) || y.includes(x)));
@@ -861,7 +915,7 @@ async function syncZohoSentMail() {
 
   const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${folderId}&limit=50&sortBy=date`, accessToken);
   if (!listed.response) throw new Error(`Zoho wouldn't list the Sent folder (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
-  const all = ((await listed.response.json()).data || []).map((m) => ({ ...m, sentAt: zohoSentTime(m) }));
+  const all = zohoMessages(await listed.response.json()).map((m) => ({ ...m, sentAt: zohoSentTime(m) }));
   if (state.lastSentAt && !state.timesRepaired) {
     await repairZohoSentTimes(new Map(all.map((m) => [toStr(m.messageId), m])));
   }
@@ -978,7 +1032,7 @@ async function findZohoCopy(c, accessToken, trashId) {
       if (zohoNotAllowed(result)) return { notAllowed: true };
       throw new Error(`Zoho search failed (${result.status}): ${toStr(result.body).slice(0, 200)}`);
     }
-    for (const m of (await result.response.json()).data || []) {
+    for (const m of zohoMessages(await result.response.json())) {
       if (toStr(m.folderId) !== toStr(trashId) && isZohoCopyOf(m, c)) found.set(toStr(m.messageId), m);
     }
   }
@@ -1007,7 +1061,7 @@ async function trashZohoCopy(c) {
     throw new Error(`Zoho wouldn't move it to Trash (${moved.status}): ${toStr(moved.body).slice(0, 200)}`);
   }
   // Already gone from the app: the Trash check needn't look at it.
-  await ZOHO_SENT_STATE.set({ trashSeen: admin.firestore.FieldValue.arrayUnion(toStr(best.messageId)) }, { merge: true });
+  await ZOHO_SENT_STATE.set({ trashSeen: FieldValue.arrayUnion(toStr(best.messageId)) }, { merge: true });
   return { moved: 1 };
 }
 
@@ -1047,14 +1101,18 @@ async function directIntakeOn() {
 }
 
 // The Correspondence entry Flow made for a Zoho inbox message, if any.
+// Zoho Flow checks the inbox on a timer, so its copy (stamped when Flow
+// delivered it) can be well after the email reached Zoho.
+const FLOW_LATE_MS = 2 * 60 * 60 * 1000;
 async function flowEntryFor(m) {
   const t = zohoSentTime(m);
   const lo = new Date(t - ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
-  const hi = new Date(t + ZOHO_SENT_DUPLICATE_WINDOW_MS).toISOString();
+  const hi = new Date(t + FLOW_LATE_MS).toISOString();
   const nearby = await db.collection("correspondence").where("receivedAt", ">=", lo).where("receivedAt", "<=", hi).get();
+  const theirs = emailsIn(m.fromAddress);
   return nearby.docs.find((d) => {
     const c = d.data();
-    return c.direction !== "out" && !c.zohoMessageId && isZohoCopyOf(m, c);
+    return c.direction !== "out" && !c.zohoMessageId && theirs.some((e) => zohoAddressesFor(c).includes(e)) && sameSubject(m.subject, c.subject || "");
   }) || null;
 }
 
@@ -1067,7 +1125,7 @@ async function syncZohoInbox(now = Date.now()) {
   const until = direct ? Infinity : now - ZOHO_INBOX_COMPARE_DELAY_MS;
   const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${ZOHO_MAIL_INBOX_FOLDER_ID}&limit=50&sortBy=date`, accessToken);
   if (!listed.response) throw new Error(`Zoho wouldn't list the inbox (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
-  const messages = ((await listed.response.json()).data || [])
+  const messages = zohoMessages(await listed.response.json())
     .filter((m) => zohoSentTime(m) > since && zohoSentTime(m) <= until)
     .sort((a, b) => zohoSentTime(a) - zohoSentTime(b));
   let newest = since;
@@ -1109,12 +1167,25 @@ async function syncZohoInbox(now = Date.now()) {
     counts.added++;
   }
   const prior = state.compare || {};
+  // Ones listed as missed before: Flow may just have been late - if its copy
+  // has turned up since, it's a match after all.
+  let lateMatches = 0;
+  const stillMissed = [];
+  if (!direct) {
+    for (const x of prior.missed || []) {
+      const flow = x.messageId && x.at ? await flowEntryFor({ messageId: x.messageId, fromAddress: x.from, subject: x.subject, receivedTime: String(Date.parse(x.at)) }) : null;
+      if (flow) {
+        await flow.ref.update({ zohoMessageId: x.messageId });
+        lateMatches++;
+      } else stillMissed.push(x);
+    }
+  }
   const compare = direct ? prior : {
     since: prior.since || new Date(now).toISOString(),
     checked: (prior.checked || 0) + counts.checked,
-    matched: (prior.matched || 0) + counts.matched,
-    missed: [...missed, ...(prior.missed || [])].slice(0, 30),
-    missedCount: (prior.missedCount || 0) + missed.length
+    matched: (prior.matched || 0) + counts.matched + lateMatches,
+    missed: [...missed, ...stillMissed].slice(0, 30),
+    missedCount: Math.max(0, (prior.missedCount || 0) + missed.length - lateMatches)
   };
   await ZOHO_INBOX_STATE.set({ lastReceivedAt: newest, checkedAt: new Date(now).toISOString(), direct, compare, ...(direct ? { addedTotal: (state.addedTotal || 0) + counts.added } : {}) }, { merge: true });
   return { direct, ...counts, missed: missed.length };
@@ -1204,7 +1275,7 @@ async function syncZohoTrash(accessToken) {
   const stateSnap = await ZOHO_SENT_STATE.get();
   const seen = (stateSnap.exists && stateSnap.data().trashSeen) || [];
   const cutoff = Date.now() - ZOHO_TRASH_LOOKBACK_MS;
-  const fresh = ((await listed.response.json()).data || []).filter((m) => !seen.includes(toStr(m.messageId)) && zohoSentTime(m) > cutoff);
+  const fresh = zohoMessages(await listed.response.json()).filter((m) => !seen.includes(toStr(m.messageId)) && zohoSentTime(m) > cutoff);
   let removed = 0;
   for (const m of fresh) {
     const ours = emailsIn(m.fromAddress).some((e) => e === OWN_INBOX);
@@ -1237,7 +1308,7 @@ async function syncZohoTrash(accessToken) {
       const c = { id: snap.id, ...snap.data() };
       await target.delete();
       // Kept in the app's Trash, like an email deleted in the app.
-      await ROLES_DOC.set({ trash: admin.firestore.FieldValue.arrayUnion({
+      await ROLES_DOC.set({ trash: FieldValue.arrayUnion({
         id: `zoho_trash_${m.messageId}`,
         type: "correspondence",
         data: c,
@@ -1252,6 +1323,93 @@ async function syncZohoTrash(accessToken) {
     await ZOHO_SENT_STATE.set({ trashSeen: [...fresh.map((m) => toStr(m.messageId)), ...seen].slice(0, 300) }, { merge: true });
   }
   return { removed };
+}
+
+// ---------------------------------------------------------------------
+// The Zoho "Done" folder: the app and the Zoho inbox agree on what's dealt
+// with. Turned on by making a folder called "Done" in the service mailbox
+// (nothing happens until it exists).
+//  - An incoming email marked handled in the app (replied to, made into a
+//    work order, "Mark handled"...) has its Zoho copy moved to Done.
+//  - An email someone moves to Done in Zoho is marked handled in the app.
+// Each Zoho message in Done is looked at once (done.seen), so reopening an
+// email in the app doesn't get undone by it still sitting in Done.
+const ZOHO_DONE_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
+const ZOHO_DONE_SEEN_MAX = 500;
+async function zohoDoneFolderId(accessToken) {
+  const result = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/folders`, accessToken);
+  if (!result.response) throw new Error(`Zoho wouldn't list the mailbox's folders (${result.status}): ${toStr(result.body).slice(0, 200)}`);
+  const folder = ((await result.response.json()).data || []).find((f) => toStr(f.folderName).trim().toLowerCase() === "done");
+  return folder ? toStr(folder.folderId) : null;
+}
+// Website forms and calls/walk-ins logged in the app never went through Zoho.
+const NOT_FROM_ZOHO_SOURCES = ["webform", "phone", "walkin"];
+
+async function syncZohoDone(accessToken, now = Date.now()) {
+  const iso = new Date(now).toISOString();
+  const doneId = await zohoDoneFolderId(accessToken);
+  if (!doneId) {
+    await ZOHO_INBOX_STATE.set({ done: { folder: false, checkedAt: iso } }, { merge: true });
+    return { folder: false, moved: 0, handled: 0 };
+  }
+  const stateSnap = await ZOHO_INBOX_STATE.get();
+  const prior = (stateSnap.exists && stateSnap.data().done) || {};
+  const seen = Array.isArray(prior.seen) ? [...prior.seen] : [];
+  const trashId = await zohoFolderId(accessToken, "trash");
+
+  // App -> Zoho: recently handled incoming emails go to Done.
+  let moved = 0;
+  const recent = await db.collection("correspondence").where("handledAt", ">=", new Date(now - ZOHO_DONE_LOOKBACK_MS).toISOString()).get();
+  for (const d of recent.docs) {
+    const c = d.data();
+    if (c.direction === "out" || c.status !== "handled" || c.zohoDoneAt || NOT_FROM_ZOHO_SOURCES.includes(c.source)) continue;
+    let messageId = toStr(c.zohoMessageId);
+    if (!messageId) {
+      const copy = await findZohoCopy({ ...c, direction: "in" }, accessToken, trashId);
+      if (copy.notAllowed) return { notAllowed: true };
+      messageId = copy.best ? toStr(copy.best.messageId) : "";
+    }
+    if (!messageId) {
+      // Not in Zoho any more (or never was) - don't look again.
+      await d.ref.update({ zohoDoneAt: iso, zohoDoneMissing: true });
+      continue;
+    }
+    const result = await zohoMailSend("PUT", `/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/updatemessage`, accessToken, { mode: "moveMessage", messageId: [messageId], destfolderId: doneId });
+    if (!result.response) {
+      if (zohoNotAllowed(result)) return { notAllowed: true };
+      throw new Error(`Zoho wouldn't move an email to Done (${result.status}): ${toStr(result.body).slice(0, 200)}`);
+    }
+    await d.ref.update({ zohoDoneAt: iso, zohoMessageId: messageId });
+    if (!seen.includes(messageId)) seen.push(messageId);
+    moved++;
+  }
+
+  // Zoho -> app: emails moved to Done in Zoho are marked handled.
+  let handled = 0;
+  const listed = await zohoMailGet(`/api/accounts/${ZOHO_MAIL_ACCOUNT_ID}/messages/view?folderId=${doneId}&limit=50&sortBy=date`, accessToken);
+  if (!listed.response) throw new Error(`Zoho wouldn't list the Done folder (${listed.status}): ${toStr(listed.body).slice(0, 200)}`);
+  const cutoff = now - ZOHO_TRASH_LOOKBACK_MS;
+  for (const m of zohoMessages(await listed.response.json())) {
+    const messageId = toStr(m.messageId);
+    if (!messageId || seen.includes(messageId) || zohoSentTime(m) <= cutoff) continue;
+    seen.push(messageId);
+    const byId = await db.collection("correspondence").where("zohoMessageId", "==", messageId).limit(1).get();
+    const entry = byId.empty ? await flowEntryFor(m) : byId.docs[0];
+    if (!entry) continue;
+    const c = entry.data();
+    if (c.direction === "out" || c.status === "handled") continue;
+    await entry.ref.update({ status: "handled", handledAt: iso, followUpAt: null, handledInZoho: true, zohoDoneAt: iso, zohoMessageId: messageId });
+    handled++;
+  }
+
+  await ZOHO_INBOX_STATE.set({ done: {
+    folder: true,
+    checkedAt: iso,
+    movedTotal: (prior.movedTotal || 0) + moved,
+    handledTotal: (prior.handledTotal || 0) + handled,
+    seen: seen.slice(-ZOHO_DONE_SEEN_MAX)
+  } }, { merge: true });
+  return { folder: true, moved, handled };
 }
 
 exports.zohoSentMail = onSchedule(
@@ -1271,6 +1429,14 @@ exports.zohoSentMail = onSchedule(
     } catch (err) {
       console.error("Zoho trash sync failed:", err);
       await reportServerProblem("zohoDelete", `Couldn't check Zoho's Trash for emails deleted there: ${err.message || err}`);
+    }
+    try {
+      const done = await syncZohoDone(await getZohoAccessToken());
+      if (done.notAllowed) await reportServerProblem("zohoDone", "Couldn't move emails to Zoho's Done folder - the Zoho connection isn't allowed to move mail yet.");
+      else if (done.moved || done.handled) console.log(`Done folder: moved ${done.moved}, marked ${done.handled} handled.`);
+    } catch (err) {
+      console.error("Zoho Done folder sync failed:", err);
+      await reportServerProblem("zohoDone", `Couldn't sync Zoho's Done folder: ${err.message || err}`);
     }
   }
 );
@@ -1363,7 +1529,7 @@ async function getZohoAccessToken() {
 // URL) matching what the client SDK's getDownloadURL() returns, so inbound
 // and outgoing attachments render identically in the correspondence thread.
 async function uploadAttachmentToStorage(buffer, originalName, contentType) {
-  const bucket = admin.storage().bucket();
+  const bucket = getStorage().bucket();
   const safeName = (originalName || "attachment").replace(/\s+/g, "_");
   const path = `correspondence-attachments/${Date.now()}-${safeName}`;
   const token = crypto.randomUUID();
@@ -1698,7 +1864,7 @@ exports.generateWorkOrderSummary = onRequest(
     }
     let caller;
     try {
-      caller = await admin.auth().verifyIdToken(idToken);
+      caller = await getAuth().verifyIdToken(idToken);
     } catch (err) {
       res.status(401).json({ ok: false, error: "Invalid auth token" });
       return;
@@ -2512,7 +2678,7 @@ async function sendWinterKeyList(today, { resend = false } = {}) {
     : `Hi,\n\n${intro}No keys are needed for ${when} - our master key works for every cottage planned.\n\nSent by the QIC Service app.`;
   const to = toStr(settings.winterKeyEmailTo).trim() || WINTER_KEYS_TO;
   await sendSummaryEmail(to, subject, message);
-  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString(), ...(update ? { resentAt: new Date().toISOString(), resends: admin.firestore.FieldValue.increment(1) } : {}) }, { merge: true });
+  await sentRef.set({ to, days, count: rows.length, sentAt: new Date().toISOString(), ...(update ? { resentAt: new Date().toISOString(), resends: FieldValue.increment(1) } : {}) }, { merge: true });
   return { today, days, count: rows.length, when, to, update };
 }
 
@@ -2554,7 +2720,7 @@ exports.generateMorningSummary = onCall(
   { secrets: [ANTHROPIC_API_KEY, EMAILJS_PRIVATE_KEY], timeoutSeconds: 180 },
   async (request) => {
     const role = request.auth && request.auth.token && request.auth.token.role;
-    if (role !== "admin" && role !== "manager") {
+    if ((role !== "admin" && role !== "manager") || !passedTwoStep(request.auth.token)) {
       throw new HttpsError("permission-denied", "Only an Admin or Service Manager can refresh the morning summary.");
     }
     const summary = await buildMorningSummary({ sendEmail: !!(request.data && request.data.sendEmail) });
@@ -2833,3 +2999,151 @@ exports.askThePark = onCall(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// Permanent activity history (Admin > Activity History)
+// ---------------------------------------------------------------------------
+// Every change to the main records, written to `auditLog` by the server as
+// it happens: who (from their sign-in, not anything the app says), when,
+// what, and which fields went from what to what. Nobody can edit or delete
+// these entries from the app (firestore.rules: Admins read, nobody writes),
+// and there's no 200-entry cap like the in-app activity list. Deploy the
+// whole group with: firebase deploy --only functions:audit
+//
+// Every change is kept for these; for the busy ones only deletes are.
+const AUDIT_FULL = ["customers", "invoices", "quotes", "workOrders", "sites", "cottages", "hydroReadings", "parts", "deals", "cottageOrders", "consignmentListings", "salesAppointments"];
+const AUDIT_DELETES_ONLY = ["correspondence", "propaneRequests", "treeRequests", "winterizingRequests", "pendingSignups"];
+// Bookkeeping fields that change on every save and say nothing new.
+const AUDIT_SKIP_FIELDS = new Set(["updatedAt", "updatedBy", "lastModified", "lastModifiedAt", "lastModifiedBy", "_stockDelta"]);
+// Never copy these values into the history.
+const AUDIT_SECRET_FIELD = /^(loginCodes|pin|pinHash|password|token|accessToken|refreshToken)$/i;
+const AUDIT_MAX_CHANGES = 40;
+
+function auditValue(field, v) {
+  if (AUDIT_SECRET_FIELD.test(field)) return "(hidden)";
+  if (v === undefined || v === null || v === "") return "";
+  if (typeof v === "string") return v.length > 300 ? v.slice(0, 300) + "…" : v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v && typeof v.toDate === "function") return v.toDate().toISOString();
+  const s = JSON.stringify(v);
+  return s.length > 300 ? s.slice(0, 300) + "…" : s;
+}
+
+// Field-by-field differences between two versions of a record.
+function auditChanges(before, after) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  const changes = [];
+  for (const k of [...keys].sort()) {
+    if (AUDIT_SKIP_FIELDS.has(k)) continue;
+    const a = (before || {})[k];
+    const b = (after || {})[k];
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    changes.push({ field: k, from: auditValue(k, a), to: auditValue(k, b) });
+  }
+  return changes;
+}
+
+// A short name for the record, so the history reads "INV-26-0010 Propane Fill".
+function auditLabel(collection, d) {
+  d = d || {};
+  const site = d.siteNumber ? `Site ${d.siteNumber}` : "";
+  const parts = {
+    invoices: [d.invoiceNumber, d.title, d.customerName],
+    workOrders: [d.workOrderNumber, d.title],
+    sites: [site],
+    hydroReadings: [site, d.readingText || (d.reading != null ? String(d.reading) : ""), d.readingDate || d.date],
+    parts: [d.name, d.sku]
+  }[collection] || [d.name || d.title || d.customerName || d.subject || d.serialNumber || site];
+  return parts.filter(Boolean).join(" · ").slice(0, 200);
+}
+
+// Who made the change, from Firestore's own record of the sign-in.
+const auditEmailCache = new Map();
+async function auditEmailFor(uid) {
+  if (!auditEmailCache.has(uid)) {
+    const u = await getAuth().getUser(uid).catch(() => null);
+    auditEmailCache.set(uid, (u && u.email) || `user ${uid}`);
+  }
+  return auditEmailCache.get(uid);
+}
+async function auditWho(event) {
+  if (event.authType === "app_user" && event.authId) return { by: await auditEmailFor(event.authId), byUid: event.authId };
+  if (event.authType === "service_account" || event.authType === "api_key" || event.authType === "system") return { by: "System (automatic)", byUid: null };
+  return { by: "Unknown", byUid: null };
+}
+
+// Manage Access changes, recorded by the function that makes them (the
+// role list itself is written by the server, so the trigger can't say who).
+async function auditAccess(request, note) {
+  try {
+    const uid = (request.auth && request.auth.uid) || null;
+    const by = (request.auth && request.auth.token && request.auth.token.email) || (uid ? await auditEmailFor(uid) : "Unknown");
+    await writeAudit([{ ts: new Date().toISOString(), by, byUid: uid, collection: "access", docId: "", action: "note", label: "", note }]);
+  } catch (err) {
+    console.error("audit failed: access", err);
+  }
+}
+
+async function writeAudit(entries) {
+  if (!entries.length) return;
+  const batch = getFirestore().batch();
+  for (const e of entries) batch.set(getFirestore().collection("auditLog").doc(), e);
+  await batch.commit();
+}
+
+async function auditRecordChange(event, collection) {
+  const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() : null;
+  const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() : null;
+  const action = !before ? "created" : !after ? "deleted" : "changed";
+  if (action !== "deleted" && AUDIT_DELETES_ONLY.includes(collection)) return;
+  const changes = action === "changed" ? auditChanges(before, after) : [];
+  if (action === "changed" && !changes.length) return;
+  const entry = {
+    ts: event.time || new Date().toISOString(),
+    ...(await auditWho(event)),
+    collection,
+    docId: event.params.docId,
+    action,
+    label: auditLabel(collection, after || before)
+  };
+  if (changes.length) {
+    entry.changes = changes.slice(0, AUDIT_MAX_CHANGES);
+    if (changes.length > AUDIT_MAX_CHANGES) entry.moreChanges = changes.length - AUDIT_MAX_CHANGES;
+  }
+  // A deleted record is kept here as it was, even after the Trash empties.
+  if (action === "deleted") {
+    const copy = JSON.stringify(before, (k, v) => (AUDIT_SECRET_FIELD.test(k) ? "(hidden)" : v));
+    entry.deletedCopy = copy.length > 200000 ? copy.slice(0, 200000) : copy;
+  }
+  await writeAudit([entry]);
+}
+
+// The shared campground/data document: settings changes, sign-in code
+// changes (never the codes), and the app's own activity notes ("Restored
+// … from trash"), re-stamped with who really was signed in.
+async function auditSharedDoc(event) {
+  const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() : {};
+  const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() : {};
+  const who = await auditWho(event);
+  const ts = event.time || new Date().toISOString();
+  const base = { ts, ...who, collection: "campground", docId: "data" };
+  const entries = [];
+  const settingChanges = auditChanges(before.settings || {}, after.settings || {});
+  if (settingChanges.length) entries.push({ ...base, action: "changed", label: "Settings", changes: settingChanges.slice(0, AUDIT_MAX_CHANGES) });
+  if (JSON.stringify(before.loginCodes || {}) !== JSON.stringify(after.loginCodes || {})) {
+    entries.push({ ...base, action: "changed", label: "Sign-in codes", note: "Sign-in codes changed (codes aren't recorded)" });
+  }
+  const seen = new Set((before.activityLog || []).map((e) => e && e.id));
+  for (const e of (after.activityLog || []).slice(0, 50)) {
+    if (!e || !e.id || seen.has(e.id) || !e.summary) continue;
+    entries.push({ ...base, action: "note", label: "", note: String(e.summary).slice(0, 500), actor: e.actor || "" });
+  }
+  await writeAudit(entries);
+}
+
+const auditTrigger = (collection) => onDocumentWrittenWithAuthContext({ document: `${collection}/{docId}` }, (event) =>
+  auditRecordChange(event, collection).catch((err) => console.error("audit failed:", collection, err)));
+exports.audit = Object.fromEntries([
+  ...[...AUDIT_FULL, ...AUDIT_DELETES_ONLY].map((c) => [c, auditTrigger(c)]),
+  ["campgroundData", onDocumentWrittenWithAuthContext({ document: "campground/data" }, (event) => auditSharedDoc(event).catch((err) => console.error("audit failed: campground/data", err)))]
+]);
