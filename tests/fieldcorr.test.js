@@ -37,14 +37,17 @@ async function phone() {
   await mountWithDb(page, app, READY);
   return page;
 }
+// More → Correspondence.
+async function openCorrespondence(page) {
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("button", { name: /^Correspondence/ }).click();
+}
 const noSideways = async (page) => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390, "nothing runs off the side");
 
-test("Today shows the emails waiting; the list starts on Needs reply; Done marks a conversation handled", async () => {
+test("the list starts on Needs reply; Done marks a conversation handled", async () => {
   await seed();
   const page = await phone();
-  await page.locator("[data-today-emails]").getByText("2 emails need a reply").waitFor();
-  assert.equal(await page.locator('[data-tab-badge="more"]').innerText(), "2");
-  await page.locator("[data-today-emails]").click();
+  await openCorrespondence(page);
   await page.getByRole("button", { name: "Needs reply · 2" }).waitFor();
   assert.equal(await page.locator("[data-convo]").count(), 2);
   await page.locator('[data-convo="peer:stranger@x.com"]').getByText("who is this?").waitFor();
@@ -65,7 +68,7 @@ test("Today shows the emails waiting; the list starts on Needs reply; Done marks
 test("Reply opens full screen, sends, and marks what they sent as answered; ✉ Email starts a fresh one", async () => {
   await seed();
   const page = await phone();
-  await page.locator("[data-today-emails]").click();
+  await openCorrespondence(page);
   await page.locator('[data-convo="cust:c1"]').click();
   await page.locator("[data-corr-actions]").getByRole("button", { name: "Reply" }).click();
   await page.locator("[data-field-composer]").waitFor();
@@ -95,7 +98,7 @@ test("Reply opens full screen, sends, and marks what they sent as answered; ✉ 
 test("a stranger's email asks who it is; linking it lets you reply", async () => {
   await seed();
   const page = await phone();
-  await page.locator("[data-today-emails]").click();
+  await openCorrespondence(page);
   await page.locator('[data-convo="peer:stranger@x.com"]').click();
   assert.equal(await page.locator("[data-corr-actions]").getByRole("button", { name: "Reply" }).isDisabled(), true, "can't reply until it's linked");
   await page.getByRole("button", { name: "Search…" }).click();

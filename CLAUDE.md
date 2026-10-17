@@ -211,6 +211,13 @@ firebase emulators:exec --only firestore,storage --project demo-qic "node --test
   fresh email instead. A stranger has to be linked before replying. Alex
   likes the Runs screens as they are - don't change them. The computer
   keeps `CorrespondenceInboxView`.
+- Incoming on phones: the same `IncomingView` with a `phone` prop (Admins /
+  Service Managers, under More above Correspondence). Today's card reads
+  "N waiting in Incoming" and More's count is Incoming's (it already holds
+  the emails needing a reply). One request per screen with the main button
+  pinned at the bottom; after it, the note to the customer is already
+  written (`FieldQuickNote`, Send / Skip) and "Next →". The phone's Back
+  steps between list and request (`phone.key` in history.state).
 - The phone's job screen (`FieldJobContext`, under the job's main card)
   shows the customer's notes always open (from the work order's customer,
   else the cottage's / site's owners), then one compact card with a

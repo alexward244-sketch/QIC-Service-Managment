@@ -19937,16 +19937,64 @@ function LogCallModal({ db, onSave, onClose }) {
     )
   );
 }
-function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, onGoToTab }) {
+// The optional note to the customer after something's done in Incoming on a
+// phone - already written, Send or Skip.
+function FieldQuickNote({ customer, replyTo, initial, saveCorrespondence }) {
+  const h = React.createElement;
+  const to = replyTo && replyTo.fromEmail || customer.email || (customer.matchEmails || [])[0] || "";
+  const [message, setMessage] = useState(initial || "");
+  const [state, setState] = useState(null);
+  if (!to || state === "skipped") return null;
+  if (state === "sent") return h("p", { className: "text-[14px] text-[#28633C] font-semibold" }, "\u2713 Sent to ", to);
+  const send = async () => {
+    if (!message.trim()) return;
+    setState("sending");
+    try {
+      const subject = replyTo ? replyTo.subject && /^re:/i.test(replyTo.subject) ? replyTo.subject : `Re: ${replyTo.subject || "your message"}` : "Message from QIC";
+      await sendEmail({ toEmail: to, toName: customer.name, subject, message, department: "service", source: "Correspondence" });
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      await saveCorrespondence({ id: uid(), customerId: customer.id, direction: "out", fromEmail: "service@qicampark.com", toEmail: to, subject, body: message, receivedAt: now, status: "handled", handledAt: now });
+      setState("sent");
+    } catch (e) {
+      setState({ error: e && e.message || "Couldn't send it \u2014 try again." });
+    }
+  };
+  const first = (customer.name || "").split(/[ &,]/)[0];
+  return h(
+    "div",
+    { "data-incoming-note": true },
+    h("p", { className: "text-[14px] text-[#4B4740] mb-1.5" }, `Let ${replyTo && replyTo.fromName ? replyTo.fromName.split(" ")[0] : first} know? (optional)`),
+    h("textarea", { className: inputCls + " text-[15px] min-h-[110px]", value: message, onChange: (e) => setMessage(e.target.value), "aria-label": "Note to the customer" }),
+    state && state.error && h("p", { className: "text-sm text-[#a8532a] mt-1" }, state.error),
+    h("div", { className: "flex gap-2 mt-2" }, h("button", { type: "button", onClick: send, disabled: state === "sending" || !message.trim(), className: "flex-1 min-h-[46px] rounded-xl bg-[#377249] text-white font-bold disabled:opacity-50" }, state === "sending" ? "Sending\u2026" : "Send"), h("button", { type: "button", onClick: () => setState("skipped"), className: "flex-1 min-h-[46px] rounded-xl border border-[#E2DED5] bg-[#FFFDFA] text-[#377249] font-bold" }, "Skip"))
+  );
+}
+// `phone`: the field app's version ({ key, open(key), back() }) - the same
+// requests and buttons, laid out for a phone: the list, then one request on
+// its own screen with the main button held at the bottom (the phone's Back
+// steps between them).
+function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, removePendingSignup, saveCorrespondence, saveCustomer, saveWorkOrder, savePropaneRequest, saveTreeRequest, saveWinterizingRequest, onGoToTab, phone }) {
   const h = React.createElement;
   const actor = useCurrentActor();
-  const [selectedKey, setSelectedKey] = useSessionState("qic-incoming-selected", null);
+  const [savedKey, setSavedKey] = useSessionState("qic-incoming-selected", null);
+  const selectedKey = phone ? phone.key : savedKey;
+  const setSelectedKey = phone ? (k) => {
+    if (k) phone.open(k);
+  } : setSavedKey;
   const [filter, setFilter] = useState("");
   const [modal, setModal] = useState(null);
   const [replying, setReplying] = useState(false);
   const [linking, setLinking] = useState(false);
   const [done, setDone] = useState(null);
   const [logOpen, setLogOpen] = useState(false);
+  // On a phone, moving to another screen (Back included) leaves the
+  // finished one behind.
+  useEffect(() => {
+    if (!phone) return;
+    setDone(null);
+    setReplying(false);
+    setLinking(false);
+  }, [phone ? phone.key || "" : null]);
   const all = incomingItems(db, pendingSignups);
   const q = filter.trim().toLowerCase();
   const items = q ? all.filter((it) => `${it.name} ${it.title} ${it.text} ${it.site ? it.site.number : ""}`.toLowerCase().includes(q)) : all;
@@ -20081,8 +20129,8 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
   };
   const canWinterize = !!saveWinterizingRequest;
   // ---- detail pane ----
-  const btnMain = (label, onClick, attrs) => h("button", { type: "button", onClick, className: "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]", ...attrs || {} }, label);
-  const link = (label, onClick) => h("button", { type: "button", onClick, className: "text-sm font-semibold text-[#377249] hover:underline" }, label);
+  const btnMain = (label, onClick, attrs) => h("button", { type: "button", onClick, className: phone ? "w-full min-h-[52px] rounded-xl bg-[#377249] text-[#F9F5EC] text-[16px] font-bold" : "px-4 py-2 rounded-md bg-[#377249] text-[#F9F5EC] text-sm font-semibold hover:bg-[#135C30]", ...attrs || {} }, label);
+  const link = (label, onClick) => h("button", { type: "button", onClick, className: phone ? "min-h-[40px] text-[14px] font-bold text-[#377249]" : "text-sm font-semibold text-[#377249] hover:underline" }, label);
   const row = (k, v) => v ? h("div", { className: "flex gap-3 py-0.5" }, h("span", { className: "w-28 flex-shrink-0 text-[#75716A]" }, k), h("span", { className: "text-[#1E1A13] min-w-0" }, v)) : null;
   const card = (title, rows, corner) => h("div", { className: "rounded-lg border border-[#E2DED5] bg-white px-4 py-3 text-sm" }, h("div", { className: "flex items-center justify-between gap-2 mb-1.5" }, h("span", { className: "font-bold text-[#1E1A13]" }, title), corner), rows);
   const placeLine = (customer, siteId, cottageId) => {
@@ -20091,7 +20139,18 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
     return [customer && customer.name, site && `Site ${site.number}`, cot && cot.name].filter(Boolean).join(" \xB7 ");
   };
   let pane;
-  if (done) {
+  if (done && phone) {
+    const d = done;
+    const customer = d.it.customer || d.customer || (d.wo && d.wo.customerId ? (db.customers || []).find((c) => c.id === d.wo.customerId) : null);
+    const next = all.find((x) => x.key !== d.it.key);
+    pane = h(
+      "div",
+      null,
+      h("div", { className: "rounded-xl border border-[#B9D7C1] bg-[#EEF7F0] px-4 py-3 text-[15px] text-[#28633C] mb-4", "data-incoming-done": true }, h("b", null, "\u2713 ", d.message), h("div", { className: "text-[13px]" }, d.it.name, d.wo && h("button", { type: "button", onClick: () => setModal({ viewWO: d.wo }), className: "ml-2 font-semibold underline" }, "Open it"))),
+      customer && d.it.email && d.reply && saveCorrespondence ? h(FieldQuickNote, { key: d.it.key, customer, replyTo: d.it.email.fromEmail ? d.it.email : null, initial: d.reply, saveCorrespondence }) : d.signupReply ? link("Email " + (d.signupReply.submittedName || d.signupReply.submittedEmail) + " back", () => setModal({ signupReply: d.signupReply })) : null,
+      next && h("div", { className: "mt-4" }, link(`Next: ${next.name} \u2192`, () => select(next)))
+    );
+  } else if (done) {
     const d = done;
     const customer = d.it.customer || d.customer || (d.wo && d.wo.customerId ? (db.customers || []).find((c) => c.id === d.wo.customerId) : null);
     pane = h(
@@ -20162,7 +20221,18 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
         finish(it, "Marked done");
       }));
     }
-    pane = h(
+    if (phone) {
+      pane = replying && it.customer && c ? h(FieldEmailComposer, { db, customer: it.customer, replyTo: c, saveCorrespondence, onClose: () => setReplying(false), onSent: () => finish(it, "Reply sent") }) : h(
+        "div",
+        { className: "flex flex-col flex-1 -mb-5" },
+        header,
+        who,
+        original,
+        body,
+        h("div", { className: "flex-1" }),
+        h("div", { className: "sticky bottom-0 -mx-4 px-3 pt-2.5 pb-3 mt-3 bg-[#FFFDFA] border-t border-[#E2DED5]", "data-incoming-actions": true }, actionsEl, sideActions.length > 0 && h("div", { className: "flex justify-around flex-wrap gap-x-4" }, sideActions.map((a, i) => h(React.Fragment, { key: i }, a))))
+      );
+    } else pane = h(
       "div",
       { className: "p-6" },
       header,
@@ -20221,6 +20291,47 @@ function IncomingView({ db, persist, pendingSignups, confirmPendingSignup, remov
     } }));
   } else if (modal && modal.viewWO) {
     modalEl = h(WorkOrderViewModal, { wo: (db.workOrders || []).find((w) => w.id === modal.viewWO.id) || modal.viewWO, db, persist, saveWorkOrder, saveCorrespondence, onClose: () => setModal(null), variant: "drawer" });
+  }
+  // ---- phone ----
+  if (phone) {
+    const showing = !!(selected || done);
+    return h(
+      "div",
+      // Fills the screen between the header and the tabs, so the main button
+      // sits at the bottom.
+      showing ? { className: "flex flex-col", style: { minHeight: "calc(100dvh - 175px)" } } : null,
+      showing ? h(React.Fragment, null, h("button", { type: "button", onClick: () => {
+        setDone(null);
+        setReplying(false);
+        phone.back();
+      }, className: "min-h-[36px] text-sm font-bold text-[#377249] self-start" }, "\u2190 Incoming"), h("div", { className: "flex-1 flex flex-col" }, pane)) : h(
+        React.Fragment,
+        null,
+        h("div", { className: "flex items-center gap-2 mb-2.5" }, h("input", { className: inputCls + " flex-1", placeholder: "Search\u2026", value: filter, onChange: (e) => setFilter(e.target.value), "aria-label": "Search Incoming" }), saveCorrespondence && h("button", { type: "button", onClick: () => setLogOpen(true), className: "min-h-[42px] px-3 rounded-[10px] border border-[#E2DED5] bg-[#FFFDFA] text-[#377249] font-bold text-[13px] whitespace-nowrap" }, "\u260E Log a call")),
+        items.length === 0 ? h("p", { className: "text-sm text-[#9A968D] italic text-center py-8" }, q ? "Nothing matches that search." : "Nothing waiting \u2014 all caught up.") : h("div", { className: "rounded-xl border border-[#E2DED5] bg-[#FFFDFA] overflow-hidden" }, INCOMING_GROUPS.map((g) => {
+          const list = items.filter((it) => it.group === g.key);
+          if (!list.length) return null;
+          return h(
+            "div",
+            { key: g.key, "data-incoming-group": g.key },
+            h("div", { className: "px-3.5 py-1.5 bg-[#F3EFE7] text-[10.5px] uppercase tracking-wider font-bold text-[#75716A] border-b border-[#E2DED5]" }, g.label, " \xB7 ", list.length),
+            list.map((it) => {
+              const site = it.site ? it.site.number : it.source === "signup" && it.entry.submittedSiteNumber ? it.entry.submittedSiteNumber : "";
+              const unmatched = it.source === "signup" ? !it.customer : !it.customer && !it.vm;
+              return h(
+                "button",
+                { key: it.key, type: "button", onClick: () => select(it), "data-incoming-row": it.key, className: "w-full text-left flex items-start gap-2.5 px-3.5 py-3 border-b border-[#EEEBE5] last:border-0" },
+                h("span", { className: "w-5 text-center flex-shrink-0" }, INCOMING_ICON[it.source]),
+                h("span", { className: "min-w-0 flex-1" }, h("span", { className: "flex items-center gap-1.5 min-w-0" }, h("span", { className: "font-bold text-[15px] text-[#1E1A13] truncate" }, it.name, site ? ` \xB7 ${site}` : ""), unmatched && h("span", { className: "flex-shrink-0 text-[10.5px] font-extrabold px-1.5 py-0.5 rounded-full bg-[#F5E3D9] text-[#a8532a]" }, "who is this?")), h("span", { className: "block text-[13.5px] text-[#4B4740] truncate" }, it.title)),
+                h("span", { className: "text-[12px] text-[#9A968D] flex-shrink-0" }, it.at ? timeAgo(it.at) : "")
+              );
+            })
+          );
+        }))
+      ),
+      modalEl,
+      logOpen && h(LogCallModal, { db, onSave: logCall, onClose: () => setLogOpen(false) })
+    );
   }
   // ---- list ----
   const showingDetail = !!(selected || done);
@@ -20792,7 +20903,7 @@ function FieldTabBar({ screen, onSelect, badges }) {
     "div",
     { className: "flex-shrink-0 bg-[#FFFDFA] border-t border-[#E2DED5] flex px-1.5 pt-1.5", style: { paddingBottom: "max(8px, env(safe-area-inset-bottom))" } },
     FIELD_TABS.map((t) => {
-      const active = screen === t.key || t.key === "jobs" && screen === "job" || t.key === "more" && ["hydro", "hydropad", "parts", "quotes", "invoices", "correspondence"].includes(screen);
+      const active = screen === t.key || t.key === "jobs" && screen === "job" || t.key === "more" && ["hydro", "hydropad", "parts", "quotes", "invoices", "correspondence", "incoming"].includes(screen);
       return React.createElement(
         "button",
         { key: t.key, type: "button", onClick: () => onSelect(t.key), "aria-current": active ? "page" : void 0, className: `flex-1 min-h-[56px] flex flex-col items-center justify-center gap-0.5 ${active ? "text-[#28633C]" : "text-[#75716A]"}` },
@@ -21013,7 +21124,7 @@ function FieldJobGroups({ jobs, db, onOpenJob, Row, limitUpcoming }) {
     );
   });
 }
-function FieldTodayScreen({ db, actor, emailsWaiting, onOpenEmails, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
+function FieldTodayScreen({ db, actor, incomingWaiting, onOpenIncoming, pendingSignups, confirmPendingSignup, removePendingSignup, setToast, onOpenJob, onSeeAllJobs, onGoToRuns }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const signupsNeedingReview = (pendingSignups || []).length;
   const myOpenJobs = db.workOrders.filter((w) => woActive(w) && fieldIsMine(w, actor, db.staff));
@@ -21046,10 +21157,10 @@ function FieldTodayScreen({ db, actor, emailsWaiting, onOpenEmails, pendingSignu
       React.createElement(FieldStatCard, { label: "Urgent", value: urgentCount, color: urgentCount > 0 ? "#a8532a" : "#1E1A13", onClick: () => onSeeAllJobs() }),
       React.createElement(FieldStatCard, { label: "Overdue", value: overdueCount, color: overdueCount > 0 ? "#a8532a" : "#1E1A13", onClick: () => onSeeAllJobs() })
     ),
-    emailsWaiting > 0 && onOpenEmails && React.createElement(
+    incomingWaiting > 0 && onOpenIncoming && React.createElement(
       "button",
-      { type: "button", onClick: onOpenEmails, "data-today-emails": true, className: "w-full text-left rounded-[14px] border border-[#E9C46A] bg-[#FBEEDA] p-4 mb-4 flex items-center justify-between gap-3" },
-      React.createElement("span", null, React.createElement("span", { className: "block text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A]" }, "Correspondence"), React.createElement("span", { className: "block text-[16px] font-bold text-[#1E1A13] mt-0.5" }, `\u2709 ${emailsWaiting} email${emailsWaiting === 1 ? "" : "s"} need${emailsWaiting === 1 ? "s" : ""} a reply`)),
+      { type: "button", onClick: onOpenIncoming, "data-today-incoming": true, className: "w-full text-left rounded-[14px] border border-[#E9C46A] bg-[#FBEEDA] p-4 mb-4 flex items-center justify-between gap-3" },
+      React.createElement("span", null, React.createElement("span", { className: "block text-[11px] font-bold uppercase tracking-[0.07em] text-[#75716A]" }, "Incoming"), React.createElement("span", { className: "block text-[16px] font-bold text-[#1E1A13] mt-0.5" }, `\uD83D\uDCE5 ${incomingWaiting} waiting in Incoming`)),
       React.createElement("span", { className: "text-[#75716A]" }, "\u2192")
     ),
     React.createElement(
@@ -22575,6 +22686,7 @@ function FieldMoreScreen({ onNavigate, onSignOut, isAdminOrManager }) {
       { key: "parts", label: "Parts" },
       { key: "quotes", label: "Quotes" },
       { key: "invoices", label: "Invoices" },
+      { key: "incoming", label: "Incoming" },
       { key: "correspondence", label: "Correspondence" }
     ] : []
   ];
@@ -23048,7 +23160,8 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
     parts: ["Parts", null],
     quotes: ["Quotes", null],
     invoices: ["Invoices", null],
-    correspondence: ["Correspondence", null]
+    correspondence: ["Correspondence", null],
+    incoming: ["Incoming", null]
   };
   const [title, subtitle] = titles[screen] || ["QIC Field", null];
   const wo = jobId ? db.workOrders.find((w) => w.id === jobId) : null;
@@ -23063,8 +23176,8 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
       screen === "today" && React.createElement(FieldTodayScreen, {
         db,
         actor,
-        emailsWaiting: isAdminOrManager && saveCorrespondence ? fieldCorrWaitingCount(db) : 0,
-        onOpenEmails: () => go({ screen: "correspondence" }),
+        incomingWaiting: isAdminOrManager && saveCorrespondence ? incomingItems(db, pendingSignups).length : 0,
+        onOpenIncoming: () => go({ screen: "incoming" }),
         pendingSignups,
         confirmPendingSignup,
         removePendingSignup,
@@ -23126,6 +23239,21 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
         setToast
       }),
       screen === "invoices" && isAdminOrManager && React.createElement(FieldInvoicesScreen, { db, persist, actor, saveInvoice, deleteInvoice, onBack: () => back({ screen: "more" }), setToast }),
+      screen === "incoming" && isAdminOrManager && saveCorrespondence && React.createElement(IncomingView, {
+        db,
+        persist,
+        pendingSignups,
+        confirmPendingSignup,
+        removePendingSignup,
+        saveCorrespondence,
+        saveCustomer,
+        saveWorkOrder,
+        savePropaneRequest,
+        saveTreeRequest,
+        saveWinterizingRequest,
+        onGoToTab: () => selectTab("runs"),
+        phone: { key: corrKey || null, open: (key) => go({ screen: "incoming", corrKey: key }), back: () => back(corrKey ? { screen: "incoming" } : { screen: "today" }) }
+      }),
       screen === "correspondence" && isAdminOrManager && saveCorrespondence && React.createElement(FieldCorrespondenceScreen, {
         db,
         persist,
@@ -23142,7 +23270,7 @@ function FieldApp({ db, persist, actor, saveWorkOrder, savePropaneRequest, saveW
       })
     ),
     toast && React.createElement(Toast, { message: toast, onDismiss: () => setToast(null) }),
-    React.createElement(FieldTabBar, { screen, onSelect: selectTab, badges: isAdminOrManager && saveCorrespondence ? { more: fieldCorrWaitingCount(db) } : {} })
+    React.createElement(FieldTabBar, { screen, onSelect: selectTab, badges: isAdminOrManager && saveCorrespondence ? { more: incomingItems(db, pendingSignups).length } : {} })
   );
 }
 const SALES_FIELD_TABS = [
